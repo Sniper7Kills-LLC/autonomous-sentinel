@@ -1,0 +1,186 @@
+================================================================
+Autonomous Sentinel — Follow-up Questions (Round 2)
+================================================================
+
+Round 1 answers folded into CLAUDE.md. These are the new gaps + the
+unanswered Q6 from round 1, plus open-ended items where you asked me
+to recommend/research.
+
+Format: Q: question. A: blank for you. Same as before.
+
+================================================================
+TRANSCRIPTION BACKENDS
+================================================================
+
+Q6 (round 1, unanswered): Whisper model size — base (74M, fast/cheap, decent), small (244M), medium (769M, balanced), large-v3 (1.5GB, best). Recommend medium as default with hybrid AI fallback for low-confidence cases. OK?
+A: Thats fine.
+
+Q94: "Pluggable backend other than Whisper" — what alternatives should be supported? Confirm options to wire:
+  (a) Self-hosted OpenAI Whisper (container Lambda)
+  (b) OpenAI hosted Whisper API
+  (c) Amazon Transcribe (AWS-native, no container, supports custom vocab for callsigns)
+  (d) Bedrock multimodal (audio-in models, e.g. Claude with audio support)
+  Pick which to support at launch. Each adds Lambda code + admin UI option.
+A: A+B+C+D
+
+Q95: AI fallback provider for Linguistic Logic — Bedrock Claude (stays in AWS, easy IAM, $$), OpenAI GPT-4o (cheaper per-token, data leaves AWS), or pluggable with admin choice like the transcription backend?
+A: Keep data in AWS; use what ever model makes the most sense; allow configuring in the admin UI
+
+Q96: Audio pre-processing — implement as separate Lambda before Transcribe, or inline at start of Transcribe Lambda? Separate is more reusable + observable; inline saves one hop. Recommend separate.
+A: seperate
+
+Q97: Server-side canonical transcode — convert every uploaded recording to a single canonical format (e.g. Opus 16kHz mono, ~5x smaller) and store alongside the original? Original kept for archival; canonical used for browser playback + Whisper input. OK?
+A: Thats fine. Ensure what ever the cononical format is can be used to transcribe
+
+================================================================
+PAID FEATURES + DONATIONS
+================================================================
+
+Q98: You asked "what paid features can we have?" — proposing this catalog:
+  - Bulk recording download (e.g. zip of N recordings, capped per month for free users)
+  - Historical archive access beyond rolling window (Q103)
+  - Discord webhook relays (you flagged this as possibly premium)
+  - Higher-resolution / longer audio downloads (vs 16kHz mono for free)
+  - REST API rate-limit bumps (free tier capped at X req/min, paid bumped)
+  - Saved searches / advanced filters
+  - Per-sender push/email subscriptions (free gets digest only)
+  - Supporter badge on profile + comments
+  Pick which belong in v1 paid tier (probably 0 — defer Stripe), v2, or never.
+A: Those are good options;
+
+Q99: Donation flow — Stripe Checkout one-time only, Stripe recurring (subscriptions), Patreon, or all of the above? One-time donation button is simplest pre-paid-tier.
+A: Do a one-time only donation; but lets have multiple recurring monthly subsciption packages.
+
+Q100: Donation tiers + supporter visibility — flat "donate any amount" or tiered ($5/$10/$25)? Show supporter badge on user profile + comments, or anonymous?
+A: We can have an optional supporter badge for users who have donated; maybe that should be time-delayed to disappear; I.E. 1 dollar = badge for x days; 5 dollars = y days; etc.
+
+================================================================
+DATA RETENTION + ACCESS GATING
+================================================================
+
+Q101: "Free users always get last X days/weeks/months" — what is X? Suggest:
+  - Browse + listen: last 90 days free, older requires paid
+  - Transcripts + metadata: full history free (small)
+  - Bulk download: paid-only at any age
+  Tweak as needed.
+A: That looks perfect!
+
+Q102: Audit log retention — forever (DynamoDB cheap for small entries), or N years? Forever recommended.
+A: Forever
+
+Q103: Recording playback for unauthenticated visitors — fully open (cached via CloudFront), or signed URLs requiring at least anonymous tracking, or hard rate-limit per IP?
+A: signed URL's we should be able to put a hard rate-limit per IP to avoid abuse. (we should be able to tweek this in the admin UI and see stats of most played audio; user playing the most audio etc)
+
+================================================================
+LIVE TRANSCRIPTION UX
+================================================================
+
+Q104: Live transcription — your Q28 answer mentioned "watch the transcription on the website". Two readings:
+  (a) Live stream: as Whisper produces output, push partial transcript over AppSync subscription so a viewer sees text appear word-by-word during processing.
+  (b) Post-process: full transcript appears once Whisper finishes; web player just supports scrub-to-text sync via word-level timestamps.
+  (a) is much harder (Whisper is batch by default; needs faster-whisper streaming variant). (b) is standard. Recommend (b) for v1, (a) as a v2 polish.
+A: B - Post-Process
+
+================================================================
+LINGUISTIC LOGIC INTERNALS
+================================================================
+
+Q105: AI prompt versioning — your Q26 answer requires we don't re-send the same input through the same prompt twice. Storage shape proposed:
+  - Each Recording row tracks `linguistic_attempts: [{provider, prompt_version, prompt_hash, result_hash, timestamp}]`.
+  - Re-run blocked if (provider + prompt_version) already in attempts.
+  - Admin can bump prompt_version in the DDB config UI to trigger re-runs across the corpus.
+  Sound right?
+A: Yes; but if a bump of the prompt_version occurs; it should only re-process files that have failed; do not re-process succsffully processed files.
+
+Q106: Confidence threshold — what default cutoff between auto-publish-clean vs auto-publish-flagged? Suggest 0.8 (per-field weighted) with admin-tunable per message type. OK?
+A: Thats ok
+
+Q107: Custom EAM Whisper fine-tune — when does the corpus trigger a training run? Threshold ideas:
+  (a) After N (e.g. 1000) community-validated transcript corrections accumulate
+  (b) Manually triggered by admin UI
+  (c) Both
+  Training cost varies by GPU choice — non-trivial $$. Recommend (b) only at v1.
+A: C both;
+
+================================================================
+MAP + GEO
+================================================================
+
+Q108: Map provider — OpenStreetMap raster tiles (free, slow), MapLibre + free OSM tiles (free, modern vector), Mapbox (50k loads/mo free then $$), Google Maps (cheapest at low scale, $$ at scale). Recommend MapLibre + OSM for SDR location picker + propagation map.
+A: Free + open source only
+
+Q109: Transmitter location visibility — admin-managed transmitter list. Coordinates shown publicly on propagation map, or admin-only (just attribution shown)? US military broadcast sites are well-known anyway.
+A: Admin managed; publicly visable. (Pre-Populate with all of the known EAM broadcast locations)
+
+Q110: Region-block granularity for ban UI — country only (MaxMind GeoLite2 free), state-level (US), or arbitrary IP CIDR ranges? Recommend country + IP CIDR.
+A: Country + IP CIDR; that may be part of the WAF
+
+================================================================
+ACCOUNTS + PUBLIC PROFILE
+================================================================
+
+Q111: Public user profiles — legacy had per-user pages with submission stats. Keep at v1 (good for attribution + community), or skip (saves UI work)?
+A: Keep. Allows members to see their contributation amounts.
+
+Q112: Email verification at signup — required (recommended) or optional? Cognito supports both. Required cuts spam; optional reduces friction.
+A: Required.
+
+Q113: Discord federation — Discord is OAuth 2.0 but not full OIDC. Cognito needs custom OIDC bridge (small Lambda) or you accept a 3rd-party provider like Auth0 specifically for Discord. Tolerate the bridge complexity, or drop Discord login (keep Google + email/password)?
+A: Tollerate the bridge.
+
+================================================================
+NOTIFICATIONS DETAIL
+================================================================
+
+Q114: Web push audio alert — same audio as recording (auto-play first 10s? privacy concern with autoplay), or fixed canned alert tones per message type (e.g. SKYKING gets a distinct tone)?
+A: canned alert tones.
+
+Q115: Push subscription granularity — global "any new message", per-message-type, per-sender callsign, per-frequency, per-SDR? Each adds UI complexity. Recommend per-message-type + per-callsign at v1, others later.
+A: per message type add others later
+
+Q116: Discord webhook payload — embed with link to entry, or include audio file URL too? Including audio could be abused for bandwidth (Discord re-fetches).
+A: Embed with a link; Embed/upload the audio to the discord comment.
+
+================================================================
+ORCHESTRATION DETAILS
+================================================================
+
+Q117: Pipeline orchestration — for cost discipline + retries, recommend SQS queues between stages with DLQ on each, Lambda concurrency-capped per stage. Step Functions costs ~$0.025/1k state transitions; on a high-throughput broadcast day that adds up. Confirm SQS+Lambda over Step Functions?
+A: I'm not deciding on SQS+lambda over step functions; but we need the ability to reteive any recordings that got stuck
+
+Q118: Whisper Lambda timeout — Lambda 15min hard cap. Whisper large-v3 on ~1hr audio on CPU runs ~30-45min. Options:
+  (a) Reject audio > 10min upload-side (rare for SKYKING but auto-recordings hit this)
+  (b) Chunk audio into 5min segments in pre-process Lambda, transcribe each, stitch
+  (c) Move long audio to AWS Fargate (no time limit, ~$0.04/hr vCPU)
+  Recommend (b) — chunking is universal and keeps everything in Lambda.
+A: B - After we get the transcription we may want to break the recording up anyway. I.E. "More to follow standby" = seperate message following on the same recording
+
+Q119: DLQ admin UI — failed transcriptions surfaced where? Proposing:
+  - Admin queue page lists DLQ items with audio playback + error
+  - "Retry" button re-enqueues
+  - "Mark as static / unintelligible" button creates a Recording with `transcription_failed=true` flag, no Message
+A: This should be something admins can have more access to (retry button etc); but all users should have the ability to add a transcription to a recording that erroed while processing.
+
+================================================================
+DOMAIN GAPS
+================================================================
+
+Q120: Skybird page distinction — your Q84 answer mentioned a Skybird page. Legacy enum has SKYBIRD already. Confirm: Skybird = same enum value, just a separate filtered view alongside Skykings? Anything different about Skybird parsing rules?
+A: Nope; same thing.
+
+Q121: RSS / Atom feed — public RSS feed of new messages (cheap to add, useful for power users + integrations). Include at v1?
+A: Sure; add it in.
+
+Q122: Recording deletion semantics — admin deletes a Recording. If it was the only Recording for a Message, does the Message:
+  (a) cascade-delete (entry vanishes)
+  (b) soft-delete + flag "all recordings removed"
+  (c) keep Message with placeholder "recording removed by [reason]"
+  Recommend (c) — preserve transcript + metadata for record.
+A: IT should cascade; but when we delete a recording; the database should have it soft-deleted; and we can hard delete the S3 data. Keep the metadata; but delete the recoridng.
+
+Q123: Message deletion — separate from Recording. Allowed at all (admin-only soft-delete with audit), or messages are permanent and only "redact" / "hide from public" allowed?
+A: Soft-delete with audit; and hidden from public view. Admins should be able to filter/add deleted items back into the view.
+
+================================================================
+EOF
+================================================================

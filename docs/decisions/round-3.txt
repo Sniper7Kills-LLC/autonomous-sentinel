@@ -1,0 +1,181 @@
+================================================================
+Autonomous Sentinel — Follow-up Questions (Round 3)
+================================================================
+
+Round 2 folded into CLAUDE.md. These are the gaps that opened up
+from your round-2 answers, plus a few items I should have asked
+earlier.
+
+Format: Q: question. A: blank for you. Same as before.
+
+================================================================
+TRANSCRIPTION INTERNALS
+================================================================
+
+Q124: Canonical audio format — must work for ALL four backends (Whisper local, Whisper API, Amazon Transcribe, Bedrock multimodal).
+  (a) FLAC 16kHz mono — lossless, ~50% size of WAV, supported everywhere
+  (b) WAV PCM 16kHz mono — lossless, larger, universal, dead simple
+  (c) MP3 16kHz mono 64kbps — lossy, smallest (~10x smaller than WAV), supported everywhere
+  (d) FLAC for transcribe + MP3 for browser playback (two derivatives stored)
+  Recommend (d): FLAC sent to transcription, MP3 served to browser. Original WAV/source kept in S3 for archival.
+A: I guess that works; can we avoid saving multiple copies of the same file though that feels like it would generate a balloning storage cost especially if we aren't offloading to deep storage.
+
+Q125: Pluggable transcription backend — switching scope.
+  (a) Env-wide admin toggle — all new uploads use the currently-selected backend; in-flight uploads finish on whatever they started.
+  (b) Per-recording — admin can re-run a specific recording on a different backend (useful for comparing).
+  (c) Both: env-wide default + per-recording override button.
+  Recommend (c).
+A: C
+
+Q126: Whisper container Lambda cold start — large-v3 image is ~3 GB; first invocation after idle is 30-60s. Options:
+  (a) Tolerate cold start; it's <1% of requests once traffic warms.
+  (b) Pay for provisioned concurrency (~$15-30/mo for 1 always-warm instance).
+  (c) Use Lambda SnapStart-equivalent for container images (not yet available; ignore).
+  At low traffic (no current EAM traffic estimate), recommend (a).
+A: A - this is a back-end process that shoudn't "hold up" the user. Tollerate the cold start.
+
+================================================================
+DISCORD INTEGRATION
+================================================================
+
+Q127: Discord webhook audio attachment — Discord upload limits: 10 MB unauth, 25 MB with Nitro tier 1, 50 MB with tier 2. Average recording fits, but long auto-recordings (e.g. 30 min) at high quality won't. Fallback when audio exceeds limit:
+  (a) Send embed with link only, note "audio too large to attach"
+  (b) Send embed with link + a transcoded smaller MP3 (e.g. force 32 kbps mono)
+  (c) Always link only, never attach (simplest, no edge cases)
+A: A
+
+Q128: Discord OIDC bridge — Discord OAuth 2.0 needs adapting to Cognito's OIDC expectations.
+  (a) Build in-house Lambda (full control, ~150 LOC)
+  (b) Adopt existing OSS project (e.g. cognito-discord-oidc-bridge on GitHub) — depends on a third-party repo's maintenance
+  (c) Use Auth0 for Discord specifically, federated to Cognito (extra service, ~$23/mo)
+  Recommend (a).
+A: B (after code review) if issues are found then use A;
+
+================================================================
+DONATIONS + PAID TIER
+================================================================
+
+Q129: Recurring monthly subscription tiers — concrete shape needed. Proposing:
+  - Tier 1: $3/mo — supporter badge, longer historical access (180 days)
+  - Tier 2: $7/mo — above + bulk download (capped), advanced filters
+  - Tier 3: $15/mo — above + Discord webhook relays, REST API rate-limit bump, full historical
+  Tier names? Adjust prices? Different perk distribution?
+A: That looks good as an initial plan. We can change names etc later.
+
+Q130: Supporter badge time-delay formula — "$1 = X days, $5 = Y days." Options:
+  (a) Linear: 30 days per dollar ($1=30d, $5=150d, $25=750d)
+  (b) Tiered: $1-4 = 30d, $5-19 = 90d, $20-49 = 180d, $50+ = 365d
+  (c) Logarithmic / diminishing
+  For recurring subs: badge auto-renewed each month; expires N days after last payment.
+  Pick + tweak.
+A: C/A
+
+Q131: Stripe processing fee — Stripe takes 2.9% + $0.30 per transaction. On a $5 donation, $0.45 disappears.
+  (a) Eat the fee (donor's $5 = $4.55 to project)
+  (b) Default-on "cover the fee" toggle in Stripe Checkout (donor pays $5.45)
+  (c) Bump suggested amounts to cover fee in the math
+A: A, with the ability for the user to "cover the fee" at checkout
+
+================================================================
+SECURITY / ABUSE
+================================================================
+
+Q132: WAF — both options can do country + IP CIDR blocks (per Q110).
+  (a) AWS WAF — integrates natively with CloudFront + Amplify; per-rule pricing (~$1/rule/mo + $0.60/million requests)
+  (b) Cloudflare in front — free tier covers basic country/IP blocking + DDoS; better dashboard for ad-hoc rules
+  Recommend (b) Cloudflare for v1 (free + better UX), AWS WAF if we ever need fine-grained rules tied to specific Lambda routes.
+A: AWS WAF
+
+Q133: Region/IP block scope — when an admin bans a country or CIDR range, does the block apply to:
+  (a) All access (read + write — visitor can't even browse)
+  (b) Write only (visitor can browse, can't create account or submit)
+  (c) Configurable per ban (default write-only)
+  Recommend (c) with default write-only (don't break public archive for casual visitors from country X).
+A: C - But allow me to choose/design a landing/banned page for county.
+
+Q134: Ban evasion detection — banned user creates new account. Block by:
+  (a) Email match (trivial to evade)
+  (b) Email + IP (somewhat effective)
+  (c) Email + IP + browser fingerprint (e.g. fingerprintjs2; tracks across IPs)
+  (d) Email + IP + Cognito device tracking
+  Fingerprinting has cost (lib + runtime); recommend (b) at v1, escalate if ban evasion becomes a real problem.
+A: C/D if cognito does device/fingerprinting lets do that.
+
+================================================================
+DATA SEEDING
+================================================================
+
+Q135: Pre-populated transmitter list — source for "all known EAM broadcast locations":
+  (a) You provide a CSV / JSON at migration time
+  (b) Admin enters them post-launch
+  (c) I research from public sources (HFGCS Wikipedia, reference radio sites) and seed initial JSON for review
+  Recommend (c) with you reviewing before commit.
+A: C
+
+Q136: Pre-populated callsign dictionary — same question. Source:
+  (a) You provide a list
+  (b) Bootstrap from legacy DB during migration (pull distinct senders/receivers from existing Messages)
+  (c) Both
+  Recommend (b) — you already have years of real callsign data in the legacy DB.
+A:B - We may have some spelling mistakes/duplicate entries; we need to clean these up while processing we may need to use AI..
+
+================================================================
+SDR PRIVACY
+================================================================
+
+Q137: SDR public visibility on propagation map — SDR owners chose location granularity (Q12). Options:
+  (a) All registered SDRs visible publicly on propagation map at owner's chosen granularity
+  (b) Only SDR location visible to admins; map shows aggregate "active SDRs in this region" only
+  (c) Owner toggle per SDR: public / admins-only
+  Recommend (c). Some hams want recognition; others won't.
+A: C
+
+================================================================
+DELETION + UNDO
+================================================================
+
+Q138: Recording S3 hard-delete (per Q122) — deleted means gone. Want a recovery window?
+  (a) True hard-delete on admin click (no undo)
+  (b) S3 versioning enabled with 30-day retention; "delete" marks delete-marker, can be restored within 30d
+  (c) S3 lifecycle: delete-marker for 7d, then permanent
+  Recommend (b) or (c) — gives a small grace period for accidental deletes.
+A: B/C
+
+================================================================
+API SURFACE
+================================================================
+
+Q139: REST API authentication + rate limits.
+  (a) Auth: API keys for researchers (signed up via dev portal), Cognito JWT for user-context calls (e.g. submitting from upload client)
+  (b) Free tier rate limits — proposed: 60 req/min per key, 1000/day; paid tier bumps to 600/min, unlimited daily
+  (c) Cap for unauth read: e.g. 30 req/min per IP
+  OK shape? Tweak numbers?
+A: All Rest API needs authentication + rate limit. NO PUBLIC rest API access.
+
+================================================================
+OPERATIONAL
+================================================================
+
+Q140: AWS budget alarm thresholds — recommend:
+  - $50/mo soft alert (email)
+  - $100/mo loud alert (email + admin UI banner)
+  - $200/mo hard cap action (e.g. throttle Whisper Lambda concurrency to 1, page admin)
+  Adjust numbers to your comfort.
+A: That works. make it configurable in the future?
+
+Q141: Manual user transcription on failed recording (per Q119) — clarify scope:
+  (a) Only when transcription_failed=true (gates the manual entry path strictly)
+  (b) Anytime — anyone can submit an alternative transcript on any recording, treated as a revision proposal voted on by community
+  (a) preserves "no manual entry" rule strictly. (b) gives community more power but blurs the rule. Recommend (a).
+A: A (B is good; but that should be a flagged issue with a comment not a new transcription)
+
+Q142: User-facing pipeline status — when contributor uploads, do they see status of their recording in the upload client / web UI?
+  (a) Just "uploaded successfully" then they wait silently
+  (b) Status badge: queued → preprocessing → transcribing → parsing → published / failed
+  (c) Status + estimated time remaining
+  Recommend (b). Cheap to implement via DynamoDB status field + AppSync subscription.
+A: B/C They should see a list of all of their uploads and a status badge (processing/completed) if processing they should be able to see each step in the workflow and the status. This will generally be ignored; but if we have the data available lets use it.
+
+================================================================
+EOF
+================================================================

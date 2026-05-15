@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.*
+
+# Build output
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Amplify Gen 2 generated artifacts
+amplify_outputs.json
+.amplify/
+amplify/.amplify/
+
+# Electron build artifacts
+upload-client/release/
+upload-client/dist-electron/
+
+# Environment + secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Coverage
+coverage/
+*.lcov
+
+# Misc
+.cache/
+.turbo/
+
+# Claude Code per-developer overrides
+.claude/settings.local.json
+

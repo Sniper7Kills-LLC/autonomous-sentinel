@@ -1,0 +1,370 @@
+================================================================
+Autonomous Sentinel — Open Questions
+================================================================
+
+Fill in answers under each "A:" line. Partial answers fine. "skip",
+"default", "TBD" all valid. Once filled, answers fold into CLAUDE.md
+and the TBD list shrinks.
+
+================================================================
+ARCHITECTURE / STACK
+================================================================
+
+Q1: Frontend framework — React/Next.js (Amplify default), Vue 3 (closest legacy migration), or SvelteKit (smallest bundle)?
+A: Amplify Default
+
+Q2: Amplify Gen 1 vs Gen 2? Recommend Gen 2 (TypeScript-first, code-defined backend, per-dev sandbox).
+A: Gen 2
+
+Q3: Auth provider — (a) Cognito alone, (b) Cognito federated to Auth0/Clerk/Google/Discord, or (c) pure Auth0/Clerk skipping Cognito?
+A: B - Cognito + goole and Discord
+
+Q4: Database — DynamoDB (Amplify default, cheap, write-heavy friendly, weak ad-hoc query) vs Aurora Serverless v2 + Postgres (relational, closer to legacy MySQL, easier search/analytics, costs more idle)?
+A: DynamoDB
+
+================================================================
+WHISPER / LINGUISTIC LOGIC
+================================================================
+
+Q5: Whisper hosting — OpenAI hosted API ($0.006/min, simplest, data leaves AWS), self-hosted Whisper container Lambda (free per-call, ~10GB image, cold-start pain), or SageMaker async endpoint (warm, $$)?
+A: Self-Hosted OR using AWS backend other than whisper. Maybe have the option in the backend for administrators to select.
+
+Q6: Whisper model size — base (74M, fast), small (244M), medium (769M), or large-v3 (1.5GB, best accuracy)? EAM audio noisy + jargon-heavy.
+A:
+
+Q7: Linguistic Logic config storage — (a) JSON in S3 fetched per-invoke, (b) DynamoDB table with admin UI, or (c) versioned in git, deploy-time bundled? Who edits — admins via UI or eng-only via PR?
+A: DynamoDB It will be edited by admins via UI
+
+Q8: Validation failure path — when Linguistic Logic can't fully parse, should the entry (a) auto-publish flagged for review, or (b) hide until moderator approves?
+A: Auto-published flagged for review. Flag things for community review as needed. When a majority chooses an option assume that is the truth.
+
+================================================================
+DOMAIN / MIGRATION
+================================================================
+
+Q9: Drop Guest entirely? Mandatory recording → mandatory client → mandatory auth implies no anonymous submissions. Confirm?
+A: Correct; No Guest Submissions.
+
+Q10: Drop Twitter/Discord relays for v1? Twitter v1.1 dead. Cleanest: drop both, add back later as opt-in.
+A: Drop Twitter; Keep Discord
+
+Q11: Legacy account claim mechanism — (a) email match auto-link on signup, (b) admin-issued claim codes, (c) both? What about prior contributors with no email on file?
+A: A - On production there should be a way to create user accounts during migration and emailing the user.
+
+Q12: SDR location granularity — exact lat/lon, city only, region, or user-chooses? Exact coords on public site dox the contributor.
+A: User-Chooses allow a map selector (open maps?)
+
+Q13: Frequency normalization — kHz int + modulation enum (USB/LSB/AM/FM), or keep flexible string?
+A: kHz + modulation enum
+
+Q14: Recording authenticity — fully trust authenticated client metadata (timestamp/frequency), sign metadata + audio hash client-side, or moderator spot-check?
+A: Fully trust authenticated client metadata; its going to be up to the user to select/enter anyway
+
+================================================================
+REPO / OPS
+================================================================
+
+Q15: Mono vs poly repo — monorepo (web + amplify + upload-client together) or split (upload-client gets own release cadence for desktop binary)? Recommend monorepo for web+amplify, separate for upload-client.
+A: split the desktop binary to its own repo.
+
+Q16: CI/CD — Amplify Hosting auto-deploy from main only, or GH Actions for tests/lint pre-merge + Amplify for deploy?
+A: GH actions for tests/lint pre-merge Amplify for deploy
+
+Q17: Recording retention — S3 Standard forever, or lifecycle to Glacier Deep Archive after N days (cheap, 12-hr restore)? Average broadcast file size?
+A: Average broadcast file size is like 2Mb; on average its a 3 min recording.
+
+Q18: Paid tier in v1 — wire Stripe now, or defer until first paid feature actually ships?
+A: Defer until first paid feature actually ships, what paid features can we have?
+
+Q19: Domain rollout — v4 ships at eam.watch direct cutover, or beta.eam.watch parallel run while legacy keeps serving?
+A: beta in parallel until we cut over
+
+Q20: License — Sentinel public OSS like legacy, or private LLC project?
+A: Its an open source project sponsored and maintained and operated by an LLC
+
+================================================================
+SCHEMA / DATA MODEL (additional)
+================================================================
+
+Q21: Multi-SDR dedup — same broadcast captured by N contributors. One Message row with N Recordings attached, or one Recording per upload + grouping logic? Legacy was Message↔Recordings 1:N — keep?
+A: One message with multiple recordings
+
+Q22: Recording hash dedup — same file uploaded twice (retry, two SDRs at same site) — collapse by content hash, or always create new row?
+A: Collapse by content hash; don't allow the same file to be uploaded multiple times; thow an error and log it for review as a possible malicious user?
+
+Q23: Frequency + modulation list — defined enum (8992kHz USB, 11175kHz USB, etc.) or free-form?
+A: Frequency + Modulation List defined enum.
+
+Q24: Known callsign dictionary — Skykings + senders have known callsigns. Maintained where — DDB table editable by admins, JSON in repo, or learned from data?
+A: Allow a callsign dictionary for users to easy/quickly select;but allow free form
+
+Q25: Time / timezone display — UTC always, user-local toggle, or both side-by-side? (Storage assumed UTC.)
+A: UTC always; allow a user toggle for ease of display/use; but in the DB it should always be UTC.
+
+================================================================
+LINGUISTIC LOGIC INTERNALS
+================================================================
+
+Q26: Implementation style — pure rules/regex (deterministic, brittle, free), LLM-driven (Claude/GPT, $$ per call, flexible), or hybrid (rules first, LLM fallback)?
+A: Hybrid; It would be ideal for it to be pure rules + regex; but I have no issues possibly sending it though AI for review. We should have a flag though and a version of a prompt that was sent to the AI so we don't send the same recording/transcription though the same AI multiple times. I.E. if the rules handled it 100% with a proper match; no reason to send it though AI; but if we don't get a good match via the rules and regex send it through AI as wel to confirm.
+
+Q27: Whisper language hint — EAM broadcasts English-only? Setting language=en cuts hallucinations + speed. Confirm.
+A: Yes; English only.
+
+Q28: Whisper output granularity — final transcript only, segment+timestamp, or word-level timestamps? Word-level enables in-browser audio scrubbing to text.
+A: Give me the ability to watch the transcription on the website; but use what ever is best for both a web based transcription a for back-end processing.
+
+Q29: Confidence surfacing — Linguistic Logic confidence score per field. Auto-publish above threshold X, hold below? Threshold configurable per message type?
+A: It would be nice to have that displayed in the web; and it may be usefull for the backend? I have no preference, use common sense and best practice. We want to be able to get the transcription regardless. Maybe even have an area/form where users can correct/submit transcriptions that can be played/viewed while audio is playing.
+
+Q30: Transcript correction — community fixes Whisper errors. Replace original, append revision, or feed back into fine-tune corpus?
+A: Apend revision; we want everything to be auditable; what changes were made; how many approvals = truth; etc.
+
+================================================================
+REAL-TIME / UX
+================================================================
+
+Q31: Live updates — new entry on public site auto-pushed (AppSync subscription / WebSocket) or refresh required?
+A: AppSync subscription. Live updates are needed.
+
+Q32: Notifications — email digest? Web push for new SKYKING? Per-sender subscriptions? None in v1?
+A: Allow the user to select what options they want; we should have email; push; and discord webhooks (with discord webhooks being a premium feature?) The web push should be able to play an audio file as well.
+
+Q33: Search — full-text over transcripts. DynamoDB weak here. OpenSearch ($$$ idle), Postgres FTS (if Aurora chosen), or skip search in v1?
+A: We want to be able to do ful text search of transcriptions; start with DynamoDB as best as possible; and then we can expand or implement something better in the future.
+
+Q34: Mobile — native iOS/Android, PWA, or responsive web only?
+A: PWA so it can be installed on devices.
+
+Q35: Public API — legacy exposed REST routes for messages/recordings. Researchers depend on it? Keep public GraphQL API, gate behind API keys, or no public API in v1?
+A: We should create a public REST API; and allow public use to the GraphQL 
+
+================================================================
+UPLOAD CLIENT
+================================================================
+
+Q36: Audio format — typical SDR output (WAV PCM 48kHz?). Upload as-is, transcode to Opus/MP3 in client, or transcode server-side?
+A: We should transcode server side if needed; Generally yes we will have WAV files but we don't *know* what the user is recording on their system. We just know its an audio file of some type; Users could be uploading MP3 files for all we know.
+
+Q37: Max file size + chunked upload — SKYKING ~30s but auto-recordings could be hours. Multipart/resumable S3 upload? Per-file size cap?
+A: We should aim to keep files manageable; Ideally files should never be > 1GB; but we could have transcriptions back to back; or messages that take 30 minutes. Multi-Part Resumable S3 uplaods should absolutly be used.
+
+Q38: Auto-update mechanism — Electron auto-updater requires signed builds. Apple notarization (~$99/yr) + Windows Authenticode cert (~$200-400/yr). Budget? Or unsigned + user-warned?
+A: unsigned + user-warned with the ability to add signed builds later.
+
+Q39: Cross-platform priority — Win/Mac/Linux all v1, or Win-first?
+A: Cross-platform all in one.
+
+Q40: Token storage — OS keychain (keytar), Electron safeStorage, or plain config file? Refresh token lifetime?
+A: Best practices.
+
+================================================================
+MIGRATION / LAUNCH
+================================================================
+
+Q41: Existing data volume — approx row counts (Users / Messages / Recordings) + total S3 bytes? Drives migration time + cost estimate.
+A: Unknown. We will migrate all of the data regardless.
+
+Q42: Existing user emails — verified emails for all v3 users? Email-match claim only works if yes.
+A: Yes. Migrate their user accounts when the time comes.
+
+Q43: Legacy URL preservation — old message URLs (/messages/{uuid}) must still resolve in v4 (redirect to new entry), or break and rely on search?
+A: break and rely on search; if possible keep the same uuid's during the migration; if we can't then we can add an additional field for old_uuid.
+
+Q44: Cutover strategy — (a) big-bang, (b) parallel run with both v3+v4 collecting from same SDRs for N weeks, (c) v4 at beta.eam.watch until stable then DNS swap?
+A: C - develop on a subdomain and then do a cut-over once ready and migration completed.
+
+Q45: Launch target / budget — v1 ship date target? Monthly AWS budget ceiling for first 6 months?
+A: No ship date or budget. But we don't want our costs to expload.
+
+================================================================
+OPS / SECURITY
+================================================================
+
+Q46: First admin bootstrap — manually seeded post-deploy, or IS_ADMIN_EMAIL env var auto-grants on signup?
+A: this will be part of the migration, keep existing admins and moderators. If needed we can have an IS_ADMIN_EMAIL for auto-grants at signup.
+
+Q47: Moderator audit log — track every edit/delete/ban with actor + diff? Required for accountability or skip v1?
+A: Track everything; We want to be able to display the audit history to the users if there were edits. Yes; include diffs in the audit historu.
+
+Q48: Backups + DR — DynamoDB point-in-time recovery on, S3 cross-region replicate, or neither in v1?
+A: We should do backups; but we don't need cross-region replication for S3. Keep S3 simple; but ensure we can easily recover the core data if something occurs.
+
+Q49: Observability — CloudWatch only, or add Sentry for frontend + Lambda errors? Datadog/Honeycomb out of scope?
+A: Add Sentry + Glitch Tip as part of the deployment to track errors. We can use cloudwatch if needed, but keep in mind the cost.
+
+Q50: Recording license — public-access recordings need license attached (CC BY 4.0, public domain, all rights reserved)? Affects whether researchers can republish.
+A: Yes; everything should be CC for recordings; they are simply captured publicly broadcasted messages. No one should own any rights to this data/audio. I may restrict historic data or maps/chart data, to paid users but that would be due to resource limitations. I.E. downloading recordings/playing recordings from 5 years ago eats bandwidth etc, we may limit what audio users can retrieve without paying. (I.E. users will never pay to have access; but for usage. Free users will always be able to access the last X days/weeks/months of recordings.)
+
+================================================================
+LEGAL / COMPLIANCE
+================================================================
+
+Q51: GDPR data subject rights — required UI for self-serve account export + deletion at v1, or admin-handled on request? Any known EU contributors?
+A: Why should I care about GDPR? I'm a US person; hosting in the US; regarding US military braodcasts. If you signup you give up the right to be forgotten and have your work deleted. Data contributed stays. You can delete your account; but it stays so data doesn't disappear. data > GDPR
+
+Q52: Cookie consent banner — required (depends on EU traffic + analytics choice). Drop-in (Cookiebot/Osano) or build minimal own?
+A: No.
+
+Q53: Minimum signup age — COPPA threshold is 13 (US). Block under-13 at signup, or 16+ for stricter EU compliance?
+A: US - 13 years old; but we don't need to collect DOB's
+
+Q54: ToS + Privacy Policy — drafted already? Need legal review before public launch? Template (e.g. Termly) acceptable, or custom?
+A: Templates acceptable.
+
+Q55: Recording rebroadcast / scraping policy — robots.txt allow indexing? Explicit researcher access policy? Block AI training scrapers (GPTBot, Bytespider, etc.)?
+A: Allow indexing; block AI scrapers; block automated file downloading/scraping due to bandwidth useage.
+
+================================================================
+FRONTEND UX (additional)
+================================================================
+
+Q56: Theme — light only, dark only, or light/dark/auto (system pref)?
+A: light/dark/auto system pref. Shuld be a military/command style theme/design.
+
+Q57: Accessibility commitment — target WCAG 2.1 AA (standard), AAA (strict), or no formal target?
+A: Target WCAG 2.1 AA
+
+Q58: AdSense ads — legacy used vue-google-adsense. Keep ads in v4, drop entirely, or replace with donation/Patreon prompt?
+A:Replace with a donation button/stripe button. Keep in line w/ paid accounts, but alow donations.
+
+Q59: Analytics — keep self-hosted Matomo (legacy), switch to Plausible (paid, privacy-friendly), Cloudflare Web Analytics (free), GA4 (free, invasive), or none?
+A: Lets use Unami; keep it simple, we can upgrade to Matomo later.
+
+Q60: Audio player features — basic HTML5 play/pause, waveform visualization (wavesurfer.js), spectrogram (radio-nerd appeal), download MP3 button, scrub-to-text sync?
+A: Yes; allow all of them; with the scrub-to-text sync as well.
+
+Q61: HF propagation context — show solar flux index / K-index from NOAA alongside broadcast time? Niche but radio audience loves it.
+A: Yes include this data, especially for each of the SDR locations that feed data to us. I.E. if I register an SDR; I should have to select its locaiton on a map; use that data to get the related NOAA data live-streaming/updating on a map. Include other things like a HF propagation map/tool that shows the current signal strengths from different radios. Also allow administrators to put transmitters to help determin which transmitter a specific SDR is picking up.
+
+================================================================
+ACCOUNTS / SECURITY (additional)
+================================================================
+
+Q62: 2FA / MFA — required for all, optional opt-in, required for admin/mod only, or none in v1? Cognito supports TOTP + SMS out of box.
+A: Optional opt-in
+
+Q63: Password policy — Cognito defaults (8 char min) acceptable, or stricter? Or skip passwords entirely (OAuth-only via Google/Discord/GitHub)?
+A: Cognito defaults.
+
+Q64: Per-user upload rate limit + storage quota — files/day cap, bytes/month cap? Or unlimited until abuse seen?
+A: By default no unlimited until abuse seen, because they are submitting data for the public good.
+
+Q65: Ban appeal process — email admin, in-app appeal form, or no formal process?
+A: no formal process. We can ban users or IP's, Maybe have an admin UI where we can also block regions?
+
+Q66: User reporting / abuse flagging UI — let users flag spam/bad entries to mods, or skip in v1?
+A: Yes; allow users to report/flag abuse/spam/bad entries. 
+
+Q67: Account self-deletion — user can delete own account from settings (GDPR right of erasure)? What happens to their submitted Recordings — orphan, anonymize, or delete?
+A: We KEEP everything; if a user decides to be deleted; they can choose that; and we'll blank their email and name; but we keep the account for data records. That change should also be in the audit log.
+
+Q68: Self-serve data export — user downloads ZIP of own data (GDPR right of access) from settings, or admin-handled on request?
+A: No? We aren't going to package + bundle TB's of data the user uploaded for the community. They give up the rights to request that when they provided that data to the site.
+
+================================================================
+EMAIL / NOTIFICATIONS / OPS (additional)
+================================================================
+
+Q69: Email provider — AWS SES (cheapest, more setup), Postmark/Resend (easier, $$), or Cognito's default (limited, sender restrictions)?
+A: AWS SES.
+
+Q70: Custom email templates — branded welcome / verification / password-reset / claim-link emails, or accept Cognito defaults?
+A: Use custom templates.
+
+Q71: Ops alert channel — Discord webhook (easy, existing community), Slack, PagerDuty (real on-call), or just CloudWatch alarm emails?
+A: Just cloudwatch alarm emails? There shouldn't be any Ops alerts right?
+
+Q72: Status page — public statuspage (instatus.com / better-stack), self-hosted (cachet, statping), or none?
+A: None
+
+Q73: On-call rotation — single-person (you), small group, or no formal on-call in v1?
+A: None.
+
+================================================================
+ORCHESTRATION / LAMBDA
+================================================================
+
+Q74: Pipeline orchestration — AWS Step Functions (visual, easy retry/debug, $$ per state transition) vs chained EventBridge events (loose coupling, harder to trace) for upload→transcribe→linguistic→entry?
+A: Choose the process that makes the most sense; We want to be able to re-try if we have an error (a pending queue for each step); but we don't want to spend massive amounts of money if we have 3 people up
+
+Q75: Whisper Lambda timeout — Lambda max is 15min. Whisper large-v3 on long audio could hit that. Hard cap on audio duration, or move to Fargate/SageMaker for long files?
+A: Unsure; do best pracitce... If an audio file is 30 min; does it take 30 min to transcribe? Review + provide feedback on options if needed.
+
+Q76: Dead-letter queue strategy — failed transcriptions sit in DLQ. Need admin UI to inspect + reprocess, or just CloudWatch alarm + manual SQS console?
+A: Admin UI/User submissions? Transcription audio may just be static with no actual audio.
+
+Q77: Idempotency — upload submit retried by client. Idempotency key per upload to dedup, or rely on content hash (Q22)?
+A: Rely on content hash.
+
+Q78: GraphQL API versioning — breaking-change policy. Deprecate fields with @deprecated + 6mo sunset, or hard-version (v1/v2 endpoints)?
+A: Hard Version? Most of the things will be static and we will only be adding data.
+
+================================================================
+COST / CAPACITY
+================================================================
+
+Q79: CloudFront in front of Amplify Hosting + S3 audio — edge cache popular recordings (saves S3 GET costs at scale, faster global), or skip until proven need?
+A: Yes add edge cache
+
+Q80: Lambda reserved/provisioned concurrency — protect from runaway cost on viral spike, or AWS account budget alarm + concurrent execution limit alone?
+A: best practice
+
+Q81: WAF / DDoS protection — AWS Shield Standard (free, auto), CloudFront + AWS WAF rules ($5-10/mo + per-rule), Cloudflare in front (free tier OK), or skip in v1?
+A: Free tier is OK; we can expand later
+
+================================================================
+LEGACY FEATURES — KEEP / DROP
+================================================================
+
+Q82: SupporterMessage feature (donation thank-you wall) — keep, drop, or replace with simpler "supporters" page?
+A: Drop?
+
+Q83: Charts (character-count, codeword-count, daily-count) — keep all three, subset, or drop entirely (rebuild later if missed)?
+A: Keep all three; add additional ones that seem reasonable.
+
+Q84: Skykings tracker — separate dedicated page (legacy), or fold into Messages list with type=SKYKING filter? Skykings audience may have bookmarks.
+A: Seperate dedicated page (using the same query with a filter) lets also add a skybird page for those messages.
+
+================================================================
+AUDIO / TRANSCRIPTION EXTRAS
+================================================================
+
+Q85: Audio preprocessing before Whisper — silence trim, voice activity detection, noise reduction (improves accuracy, adds Lambda time/cost)? Or feed raw to Whisper?
+A: Yes pre-processing before whisper or other speech to text engine.
+
+Q86: Multi-language fallback — assume EAM is English-only (set language=en) and reject non-English, or auto-detect and transcribe whatever's there?
+A: Reject non-english; but we should attempt to transcribe anyway.
+
+Q87: ML feedback loop — community-corrected transcripts fed back to fine-tune a custom Whisper model (long-term accuracy gain), or just stored for the record?
+A: Currently just stored for the record; but we should introduce a ML feedback loop to generate a custom ML eam model.
+
+================================================================
+DOCS / COMMUNITY
+================================================================
+
+Q88: CONTRIBUTING.md + Code of Conduct — at v1 launch, or add later? Required if repo is public OSS.
+A: Add at v1 launch
+
+Q89: Public docs site — Docusaurus / VitePress / Astro Starlight for upload-client + API docs, or README-only until pressure to expand?
+A: README-only until pressure to expand
+
+Q90: Support channel — Discord (existing community), GitHub Discussions, in-app contact form, email, or all of the above?
+A: Discord (existing community)
+
+================================================================
+ITERATION / FEEDBACK
+================================================================
+
+Q91: Feature flags — LaunchDarkly ($$), Amplify Studio feature flags (free, basic), home-grown env vars in DDB, or none in v1?
+A: Amplify Studio; ? best practice
+
+Q92: Beta tester program — closed alpha (handpicked SDR contributors), public beta at beta.eam.watch, or straight to launch?
+A: public beta at beta.
+
+Q93: Telemetry on feature usage — track which UI features get used (Plausible/Matomo events), or no product analytics?
+A: yes.
+
+================================================================
+EOF
+================================================================

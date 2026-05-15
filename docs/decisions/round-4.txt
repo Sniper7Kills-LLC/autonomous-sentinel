@@ -1,0 +1,140 @@
+================================================================
+Autonomous Sentinel — Follow-up Questions (Round 4)
+================================================================
+
+Round 3 folded into CLAUDE.md. Smaller set this round — most
+architecture is locked. Remaining items are mostly product + edge.
+
+Format: Q: question. A: blank for you. Same as before.
+
+================================================================
+STORAGE / CANONICAL FORMAT
+================================================================
+
+Q143: You flagged storage cost concern on Q124 (multi-copy ballooning). Two real options:
+  (a) **Drop original after transcoding.** Pre-process Lambda transcodes incoming upload to one canonical file (e.g. MP3 96 kbps mono — small, browser-playable, accepted by all 4 transcription backends). Original deleted. ~10x storage savings vs WAV. Lossy — irreversible quality loss.
+  (b) **Keep original + canonical.** Original (WAV/whatever) stored once for archival, plus a derivative for browser/transcription. ~1.1-1.5x storage cost vs original-only. Reversible if we ever change canonical format.
+  (c) **No canonical.** Use whatever the user uploaded; pre-process Lambda transcodes in-memory at transcribe time, never persists a derivative. Storage = original only; CPU cost paid every transcribe call.
+  Recommend (a) — biggest cost win, archival fidelity matters less than bandwidth/storage at scale. EAM audio is 8 kHz voice anyway; 96 kbps MP3 is overkill for the source.
+A: C - Derive one standard connonical for web view though. Process as needd for pipelines even if saved as a temporary file in S3 thats fine with a delete when published.
+
+================================================================
+DONATIONS — CONCRETE FORMULA
+================================================================
+
+Q148: Pick a single concrete badge-duration formula. Suggested:
+  `days = max(30, round(60 * log2(amount + 1)))`
+  Examples:
+    - $1 donation → 60 days
+    - $5 → 155 days (~5 months)
+    - $10 → 207 days (~7 months)
+    - $25 → 282 days (~9 months)
+    - $100 → 399 days (~13 months)
+    - $500 → 538 days (~18 months)
+  Diminishing returns reward larger donors but cap unlimited badge from a single $1 sub. OK or tweak?
+A: Thats fine.
+
+================================================================
+API SURFACE
+================================================================
+
+Q149: GraphQL anon access — Q139 locked REST behind auth. Confirm GraphQL:
+  (a) Anonymous public read (browse messages/recordings without login) — same as legacy public site behavior
+  (b) Auth required for all GraphQL too — most aggressive
+  Recommend (a). Public archive is the whole point; locking it down would break the user experience.
+A: Yes GraphQL anon access is fine; thats what the website will be using. Ideally no one will realize the GraphQL api is there; vs the published REST API. We will accept this risk though as its required for guet website access.
+
+Q150: REST API scope — given REST is auth-only, is it worth building at v1?
+  (a) Skip REST in v1. Upload client uses GraphQL via Amplify natively. Build REST when an actual researcher requests it.
+  (b) Build REST in v1. Adds dev work but signals "we have an API" to researchers.
+  Recommend (a) — defer.
+A: B
+
+================================================================
+SECURITY / ABUSE
+================================================================
+
+Q145: Cognito Advanced Security Features (ASF) — $0.05/MAU. Adds:
+  - Compromised credential check (block known-pwned passwords)
+  - Risk scoring on signup/login (flags suspicious sessions)
+  - Adaptive MFA (auto-prompt 2FA on high-risk attempts)
+  - Required for built-in device-tracking / fingerprint signals
+  At ~1000 MAU = $50/mo. At 100 MAU = $5/mo.
+  (a) Enable from day one (better security + ban evasion)
+  (b) Skip until corpus + abuse signals justify cost
+  Recommend (a) — it's the only built-in path to the device-tracking we said we wanted (Q134).
+A: B
+
+Q146: Browser fingerprint library:
+  (a) FingerprintJS open-source (free, ~60% accuracy across browser updates)
+  (b) FingerprintPro paid (~$200/mo for 100k events, ~99.5% accuracy, hosted ID generation)
+  (c) Skip; rely only on Cognito ASF + IP
+  Recommend (c) at v1 if we enable Cognito ASF, escalate to (b) if ban evasion becomes real.
+A: C; with the ability to escalate to b in the future.
+
+================================================================
+DOMAIN / DATA
+================================================================
+
+Q147: Callsign migration cleanup — AI-assisted dedup (Bedrock Claude). Specifics:
+  (a) One-shot run during migration. Confidence-threshold auto-merge for clear duplicates ("SKYKING" / "Sky King" / "SKY KING" → SKYKING). Low-confidence merges queued for admin review.
+  (b) Ongoing process — every new freeform callsign entry checked against existing dictionary, suggest merge if AI confidence ≥ X.
+  Recommend (a) for v1 + (b) deferred. (a) handles the legacy mess; (b) prevents future drift.
+A: A+B
+
+Q151: SDR ownership on user account self-deletion (per Q67 we keep account + data with PII blanked). What about their registered SDRs?
+  (a) Orphan — stay in DB, owner = NULL, admin can claim/reassign
+  (b) Hard-delete the SDR registration (recordings stay, just no live SDR association)
+  (c) Soft-delete with admin restore option
+  Recommend (a). Recordings already attribute to the SDR; orphaning preserves history.
+A: Same as recordings; we keep the account with PII blanked.
+
+================================================================
+COMMUNITY / VOTING
+================================================================
+
+Q152: Vote weight on validation:
+  (a) All votes equal (1 vote per user per Message)
+  (b) Moderators count 2x or 3x
+  (c) Reputation-weighted (long-term contributors count more)
+  Recommend (a) — simplest, fairest, no gaming. Mods step in only on flagged or stalemate cases.
+A: C - But have the weight be a setting/variable admins/moderators can change.
+
+Q153: Vote visibility — when a Message is flagged for review:
+  (a) Public who-voted-what (transparent, may chill participation)
+  (b) Aggregate counts only ("12 say SKYKING, 3 say ALLSTATIONS"), individual votes hidden from public
+  (c) Aggregate public, who-voted visible to mods+admins
+  Recommend (c).
+A: B - The voting will be more on the transcripton. I.E. was it ABC or ADC?
+
+Q154: Comment threading — legacy had nested replies (parent_comment_id). Keep nested at v1, or flatten (saves UI complexity)?
+A: Nested is fine but limit the depth; otherwise flatten.
+
+================================================================
+PRODUCT POLISH
+================================================================
+
+Q155: Default landing page (root URL `/`):
+  (a) Latest messages feed (legacy default)
+  (b) HF propagation map with live activity
+  (c) Personalized dashboard if logged in, else (a)
+  Recommend (c).
+A: C
+
+Q156: Profanity / hate-speech filtering — auto-flag transcripts/comments with offensive content:
+  (a) None — military broadcasts won't have profanity, comments are mod-flagged via abuse report only
+  (b) Auto-flag comments only (community + mods see flag, can clear)
+  (c) Auto-flag both transcripts and comments
+  Recommend (a). Adds complexity for low-frequency edge case.
+A: C - Transcriptions should be free of this content; but we will get a spammer trying to post other things and that needs to be flagged; comments should be auto-flagged.
+
+Q157: Donations from banned users:
+  (a) Accept payment, no perks/badge granted, payment shows in audit log
+  (b) Block at Stripe Checkout (refuse payment)
+  (c) Accept and quietly grant perks anyway (money is money)
+  Recommend (a). Money's accepted, ban remains effective.
+A: B - Don't allow them to get made over still being banned. No returns for people who are banned after a donation
+
+================================================================
+EOF
+================================================================

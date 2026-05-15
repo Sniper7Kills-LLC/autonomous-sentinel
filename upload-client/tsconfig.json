@@ -1,0 +1,16 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "outDir": "./dist",
+    "noEmit": true,
+    "paths": {
+      "@/*": ["./src/*"],
+      "@amplify/*": ["../amplify/*"]
+    }
+  },
+  "include": ["electron/**/*.ts", "src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["node_modules", "dist", "dist-electron", "release"]
+}

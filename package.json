@@ -1,0 +1,34 @@
+{
+  "name": "autonomous-sentinel",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Autonomous Sentinel — EAM Watch v4.0 monorepo (web, amplify backend, upload client).",
+  "license": "Apache-2.0",
+  "author": "Sniper7Kills LLC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sniper7Kills-LLC/autonomous-sentinel.git"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "web",
+    "amplify",
+    "upload-client"
+  ],
+  "scripts": {
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "amplify:sandbox": "npm run sandbox --workspace amplify",
+    "web:dev": "npm run dev --workspace web",
+    "client:dev": "npm run dev --workspace upload-client"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "prettier": "^3.3.0"
+  }
+}

@@ -1,0 +1,97 @@
+================================================================
+Autonomous Sentinel — Follow-up Questions (Round 5)
+================================================================
+
+Round 4 folded into CLAUDE.md. Final round of plumbing details
+needed before scaffolding the actual repo. After this round we
+should have enough to start writing real code.
+
+Format: Q: question. A: blank for you. Same as before.
+
+================================================================
+WEB AUDIO + REST
+================================================================
+
+Q158: Web-canonical audio format — derived from original at upload, served to browser. Pick exact codec + bitrate:
+  (a) MP3 96 kbps mono — universal browser support, ~700 KB per 60s; "safe" choice
+  (b) MP3 64 kbps mono — adequate for voice, ~500 KB per 60s
+  (c) Opus 32 kbps mono — best quality-per-byte for voice (~250 KB per 60s), all modern browsers, no IE/old-Safari
+  (d) AAC 64 kbps mono — Apple-friendly, ~500 KB per 60s
+  Recommend (c) Opus — voice-optimized, smallest file. EAM listeners are technical and on modern browsers.
+A: C
+
+Q159: REST API v1 endpoint scope:
+  (a) Full read-mirror of GraphQL (messages, recordings, SDRs, transmitters, users, votes, comments)
+  (b) Subset: messages + recordings + transcripts only (the analyst-friendly read API)
+  (c) Subset above + write endpoint for upload-client recording submission (`POST /v1/recordings`)
+  Recommend (b) for v1 — keeps the upload-client on GraphQL via Amplify (which is its native path) and gives researchers the read endpoints they actually want.
+A: B
+
+================================================================
+COMMUNITY MECHANICS
+================================================================
+
+Q162: Vote target shape — your Q153 answer ("voting will be more on the transcription, was it ABC or ADC?") implies field-level voting on transcripts. Options:
+  (a) Per-character / per-word — overkill UI, very granular
+  (b) Per-field on the parsed Message (sender / receiver / body / type each get their own vote tally)
+  (c) Per proposed transcript revision — user submits a corrected transcript, others upvote/downvote that whole revision; majority wins
+  Recommend (b) for parsed fields + (c) for raw transcript text. Two distinct vote surfaces.
+A:B + C
+
+Q163: Reputation formula for vote weight (per Q152):
+  - Base weight: 1
+  - +0.1 per validated submission (recording uploaded that produced a successful Message), capped at +4
+  - +1 if role = moderator
+  - +2 if role = admin
+  - All numbers admin-tunable in admin UI
+  - Net cap: 5x weight max
+  Tweak any knob.
+A: That works; lets add a +0.5 for every accepted correction capped at +5 ?
+
+Q164: Comment nesting depth limit — beyond N levels, replies flatten into the deepest level.
+  (a) 2 levels (top + 1 reply)
+  (b) 3 levels (Reddit-comfortable)
+  (c) 5 levels (deep but not absurd)
+  Recommend (b) — Reddit-style.
+A: B
+
+Q165: Profanity / hate-speech moderation provider:
+  (a) AWS Comprehend (PII + sentiment + targeted-content detection; ~$0.0001 per unit, mature)
+  (b) AWS Bedrock with a moderation prompt to Claude Haiku (~$0.0008 per call, more flexible, costs more at scale)
+  (c) Open-source wordlist (e.g. obscenity-ts, free, ~30% false positives, no slang/context awareness)
+  (d) Hybrid: wordlist for fast cheap pre-filter; Comprehend on hits for confirmation
+  Recommend (d). Wordlist catches obvious cases free; Comprehend confirms before flagging publicly.
+A: D
+
+================================================================
+REPO + LICENSING
+================================================================
+
+Q166: GitHub repo placement:
+  (a) `sniper7kills/autonomous-sentinel` (under your existing user)
+  (b) New `Sniper7KillsLLC` GitHub Organization with `Sniper7KillsLLC/autonomous-sentinel`
+  (c) Different repo name (specify)
+  Recommend (b) — separates LLC project from personal account, clean for future LLC contributors. Org accounts are free.
+A: I already have a Sniper7KillsLLC organization; it will live in there. autonomous-sentinel is fine for the repo name.
+
+Q167: License — for the open-source code (recordings already CC):
+  (a) MIT — permissive, no patent grant, easiest for adoption
+  (b) Apache 2.0 — permissive + explicit patent grant (recommended for OSS w/ corporate backing)
+  (c) AGPL-3.0 — copyleft; anyone running a modified version (incl. as a hosted service) must publish source. Discourages closed-source forks.
+  Recommend (b) Apache 2.0 — LLC-backed project benefits from explicit patent grant; permissive license maximizes adoption.
+A: B is fine.
+
+================================================================
+TOOLING
+================================================================
+
+Q168: Default Node + TypeScript versions:
+  - Node 22 LTS (current; supports until 2027) or Node 20 LTS (mature; supports until 2026)
+  - TypeScript 5.x (current)
+  - pnpm vs npm vs yarn
+  Recommend Node 22 LTS + TS 5.x latest + pnpm (faster, disk-efficient, Amplify Gen 2 supports it).
+A: thats fine. Use standard/best practice.
+
+================================================================
+EOF
+================================================================
