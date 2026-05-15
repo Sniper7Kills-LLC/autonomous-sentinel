@@ -1,5 +1,10 @@
 # Autonomous Sentinel
 
+[![CI](https://github.com/Sniper7Kills-LLC/autonomous-sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/Sniper7Kills-LLC/autonomous-sentinel/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
+[![Node 22 LTS](https://img.shields.io/badge/node-22_LTS-339933?logo=node.js&logoColor=white)](./.nvmrc)
+[![Codename](https://img.shields.io/badge/codename-Autonomous_Sentinel-7057ff)](./CLAUDE.md)
+
 > **Codename for [eam.watch](https://eam.watch) v4.0** — a serverless rewrite of the EAM Watch platform on AWS Amplify, built around automated SDR ingest, Whisper transcription, and community-validated message entries.
 >
 > A Sniper7Kills LLC project. Public read access stays free.
