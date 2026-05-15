@@ -7,7 +7,7 @@
   "scripts": {
     "sandbox": "ampx sandbox",
     "deploy": "ampx pipeline-deploy",
-    "lint": "eslint . --ext .ts",
+    "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
     "test": "echo 'TODO: wire vitest'"
   },

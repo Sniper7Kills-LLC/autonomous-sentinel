@@ -18,9 +18,9 @@ function createWindow() {
   });
 
   if (process.env.NODE_ENV === 'development') {
-    win.loadURL('http://localhost:5173');
+    void win.loadURL('http://localhost:5173');
   } else {
-    win.loadFile(path.join(__dirname, '../dist/index.html'));
+    void win.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 
   win.on('close', (event) => {
@@ -51,12 +51,11 @@ function createTray() {
   );
 }
 
-app.whenReady().then(() => {
+void app.whenReady().then(() => {
   createWindow();
   createTray();
 });
 
-app.on('window-all-closed', (event: Event) => {
-  // Keep app alive in tray
-  event.preventDefault();
+app.on('window-all-closed', () => {
+  // Keep app alive in tray on all platforms — do not call app.quit().
 });

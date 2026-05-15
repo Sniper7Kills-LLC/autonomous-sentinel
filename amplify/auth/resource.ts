@@ -1,10 +1,13 @@
-import { defineAuth } from '@aws-amplify/backend';
+import { defineAuth, secret } from '@aws-amplify/backend';
 
 /**
  * Cognito User Pool. Email + Google + Discord (Discord via OIDC bridge — wired separately).
  *
  * Email verification is required at signup (per CLAUDE.md).
  * Cognito Advanced Security Features are intentionally OFF at v1 (cost — see CLAUDE.md).
+ *
+ * Secrets must be set via `npx ampx sandbox secret set GOOGLE_CLIENT_ID` etc.
+ * before this resource will deploy successfully.
  *
  * TODO once OIDC bridge for Discord is set up:
  *   - register the bridge as an OIDC identity provider here
@@ -29,9 +32,3 @@ export const auth = defineAuth({
   },
   groups: ['admin', 'moderator', 'member'],
 });
-
-function secret(name: string) {
-  // Placeholder — replace with `import { secret } from '@aws-amplify/backend'` once
-  // Amplify secrets are configured via `npx ampx sandbox secret set <NAME>`.
-  return { name } as unknown as string;
-}
