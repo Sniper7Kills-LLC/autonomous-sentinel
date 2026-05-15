@@ -17,27 +17,31 @@ jobs:
       web: ${{ steps.filter.outputs.web }}
       amplify: ${{ steps.filter.outputs.amplify }}
       client: ${{ steps.filter.outputs.client }}
+      root: ${{ steps.filter.outputs.root }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
         id: filter
         with:
           filters: |
+            root:
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig.base.json'
+              - 'eslint.config.mjs'
+              - '.github/workflows/ci.yml'
             web:
               - 'web/**'
-              - 'package.json'
-              - 'tsconfig.base.json'
             amplify:
               - 'amplify/**'
-              - 'package.json'
-              - 'tsconfig.base.json'
             client:
               - 'upload-client/**'
-              - 'package.json'
-              - 'tsconfig.base.json'
 
-  lint-typecheck-test:
+  web-checks:
     needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.web == 'true' ||
+      needs.detect-changes.outputs.root == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,9 +50,59 @@ jobs:
           node-version-file: '.nvmrc'
           cache: 'npm'
       - run: npm ci
-      - name: Lint
-        run: npm run lint
-      - name: Typecheck
-        run: npm run typecheck
-      - name: Test
-        run: npm run test
+      - run: npm -w web run lint
+      - run: npm -w web run typecheck
+      - run: npm -w web run test
+
+  amplify-checks:
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.amplify == 'true' ||
+      needs.detect-changes.outputs.root == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm -w amplify run lint
+      - run: npm -w amplify run typecheck
+      - run: npm -w amplify run test
+
+  client-checks:
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.client == 'true' ||
+      needs.detect-changes.outputs.root == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm -w upload-client run lint
+      - run: npm -w upload-client run typecheck
+      - run: npm -w upload-client run test
+
+  all-checks:
+    name: all-checks
+    needs: [web-checks, amplify-checks, client-checks]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify upstream jobs
+        run: |
+          set -e
+          for r in "${{ needs.web-checks.result }}" \
+                   "${{ needs.amplify-checks.result }}" \
+                   "${{ needs.client-checks.result }}"; do
+            case "$r" in
+              success|skipped) ;;
+              *) echo "::error::Upstream job failed (status: $r)"; exit 1 ;;
+            esac
+          done
+          echo "All checks passed (or skipped because no relevant changes)."
