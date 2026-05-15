@@ -9,7 +9,8 @@
     "deploy": "ampx pipeline-deploy",
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
-    "test": "echo 'TODO: wire vitest'"
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@aws-amplify/backend": "^1.4.0",
@@ -20,6 +21,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "aws-sdk-client-mock": "^4.1.0",
     "esbuild": "^0.24.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
