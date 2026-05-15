@@ -1,0 +1,65 @@
+name: Feature request
+description: Propose a new capability or enhancement.
+title: "[feat] "
+labels:
+  - "type:feat"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, scan `CLAUDE.md` for the architecture brief — Sentinel has explicit scope boundaries (no manual-entry flows, no GDPR plumbing, no Twitter relay, etc.) and your feature should fit within them or explain why the boundary needs to move.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the user need or operational gap. Avoid solution language here.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How would you address it? Sketch the UX or API.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What other approaches did you weigh? Why this one?
+  - type: dropdown
+    id: workspace
+    attributes:
+      label: Affected workspace(s)
+      multiple: true
+      options:
+        - "web (Next.js PWA)"
+        - "amplify (Gen 2 backend)"
+        - "upload-client (Electron)"
+        - "infra / CI / docs"
+        - "unsure"
+    validations:
+      required: true
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Suggested phase
+      description: Which Sentinel phase does this belong to? Phases tracked as milestones.
+      options:
+        - "phase 0 — repo setup"
+        - "phase 1 — auth"
+        - "phase 2 — data model"
+        - "phase 3 — pipeline"
+        - "phase 4 — web app"
+        - "phase 5 — notifications"
+        - "phase 6 — upload client"
+        - "phase 7 — migration"
+        - "phase 8 — search + API"
+        - "phase 9 — ops + cost"
+        - "phase 10 — cutover"
+        - "post-v1 / unscheduled"
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Mockups, links, references.

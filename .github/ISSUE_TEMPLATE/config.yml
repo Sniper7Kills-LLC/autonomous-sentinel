@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: General questions / community discussion
+    url: https://discord.gg/eamwatch
+    about: For non-bug, non-feature discussion. (Replace with current Discord invite when stable.)
+  - name: Security disclosure
+    url: https://github.com/Sniper7Kills-LLC/autonomous-sentinel/security/advisories/new
+    about: Please report vulnerabilities privately via GitHub Security Advisories instead of a public issue.
