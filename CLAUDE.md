@@ -261,17 +261,91 @@ Community-corrected transcripts stored as revisions. Custom EAM Whisper fine-tun
 
 ## Workflow
 
-**GitHub is the source of truth for all planning, tracking, and progress.** Specifically:
+**GitHub is the source of truth for all planning, tracking, and progress.** Issues drive work; PRs close issues; CI gates merge.
 
-- **All new work originates from a GitHub issue** in `Sniper7Kills-LLC/autonomous-sentinel`. If there is no issue, write one before starting.
-- **Do not create new markdown planning / tracking files** unless they are reference docs that belong in the repo for users (READMEs, CONTRIBUTING, decision-log additions, etc.). No `TODO.md`, `ROADMAP.md`, `PLAN.md`, `STATUS.md`, etc.
-- **Never duplicate issue content into the repo as markdown.** If you need a checklist, use the issue body.
-- Existing markdown files (this `CLAUDE.md`, `README.md`, package READMEs, `docs/decisions/*`) are reference material — keep them current but do not bloat them with status updates.
-- Labels in use: `area:web`, `area:amplify`, `area:client`, `area:infra`, `area:docs`; `type:feat`, `type:fix`, `type:chore`, `type:refactor`; `priority:p0/p1/p2`. Phases tracked as milestones (`phase 0 — repo setup` through `phase 10 — cutover`).
+### Session-start checklist (every new Claude session)
+
+1. **Read this file** (`CLAUDE.md`) end-to-end. It auto-loads in Claude Code; the working brief here is canonical.
+2. **Check for in-flight work**:
+   ```bash
+   git status                                  # uncommitted changes?
+   git branch --show-current                   # already on a feature branch?
+   gh pr list --state open --author @me        # open PRs awaiting CI/review?
+   ```
+   If a feature branch + open PR exist, resume that work before starting anything new.
+3. **Determine current phase**: scan open milestones — the lowest-numbered milestone with open issues is the active phase.
+   ```bash
+   gh issue list --milestone "phase N — ..." --state open
+   ```
+4. **List open issues for the current phase** (sorted by priority):
+   ```bash
+   gh issue list --milestone "phase N — ..." --state open \
+     --json number,title,labels --jq '.[] | "\(.labels|map(.name)|map(select(startswith("priority:")))|.[0])  #\(.number)  \(.title)"' \
+     | sort
+   ```
+5. **Prompt the user** which issue to pick up (or take the highest-priority unassigned one if explicitly told "next" / "auto"). Confirm choice before starting.
+6. **Begin work** following the per-issue PR cycle below.
+
+### Per-issue PR cycle
+
+1. **Read the issue body** in full — Context, Approach, Tasks, Acceptance criteria, Out of scope, References / dependencies. Re-read CLAUDE.md sections referenced.
+2. **Confirm dependencies** (issues listed under "Depends on") are merged. If not, either pick a different issue or pause and surface the blocker.
+3. **Branch from `main`**: `git checkout main && git pull --ff-only && git checkout -b <type>/<slug>-<issue-number>` (e.g. `feat/cognito-user-pool-12`).
+4. **Follow TDD**:
+   - Write a failing test that encodes the acceptance criterion you're about to satisfy.
+   - Run it; confirm red.
+   - Implement the minimum code to make it green.
+   - Refactor while keeping tests green.
+   - Repeat for the next acceptance criterion.
+5. **Verify locally** before pushing: `npm run lint && npm run typecheck && npm run test`. All green.
+6. **Commit** in conventional-commits style. Commit message body must contain `Closes #<issue-number>` (or `Resolves #N` / `Fixes #N`) so the issue auto-closes on merge.
+7. **Push + open PR**:
+   ```bash
+   git push -u origin <branch>
+   gh pr create --base main --head <branch> \
+     --title "<conventional-commit subject> (#<N>)" \
+     --body "<populated PR template — Resolves #N, Summary, Test plan, Doc updates>"
+   ```
+   PR body **must** include `Resolves #N` or `Closes #N`. PR template prompts for this.
+8. **Wait for CI to pass.** Even on rebase / force-push, CI must be re-run and report green before merging.
+   ```bash
+   gh pr checks <pr-number> --watch
+   ```
+9. **Hand off for merge.** Do not auto-merge unless the user has explicitly authorized it for this PR. Default is: surface the green PR + URL and let the user merge.
+10. **After merge**, sync local main, delete branch, and return to step 3 of the session-start checklist (find next issue).
+
+### Conflict / rebase handling
+
+- If a PR conflicts with `main` after another PR merges:
+  1. `git checkout <feature-branch> && git rebase main`
+  2. Resolve conflicts; remember rebase swaps `--ours` / `--theirs` semantics.
+  3. Re-run `npm run lint typecheck test` locally before force-pushing.
+  4. `git push --force-with-lease`
+  5. **Wait for CI to pass again**. Do not request merge until CI is green on the rebased commits.
+
+### Workflow non-negotiables
+
+- **All new work originates from a GitHub issue.** If there is no issue, open one before writing code.
+- **Do not create new markdown planning / tracking files** (no `TODO.md`, `ROADMAP.md`, `PLAN.md`, `STATUS.md`). Use issue bodies + comments.
+- **Never duplicate issue content into the repo as markdown.** Reference issue numbers instead.
+- **PR must close the issue** via `Closes #N` / `Resolves #N` / `Fixes #N` keyword.
+- **CI must be green** before merge — including after any rebase / force-push.
+- **TDD**: tests first, code second, refactor third. New code without tests is rejected at PR review.
+- Reference docs (this `CLAUDE.md`, `README.md`, package READMEs, `docs/decisions/*`) stay current but do not become status boards.
+
+### Labels + milestones in use
+
+- Areas: `area:web`, `area:amplify`, `area:client`, `area:infra`, `area:docs`
+- Types: `type:feat`, `type:fix`, `type:chore`, `type:refactor`
+- Priorities: `priority:p0` (blocker), `priority:p1` (high), `priority:p2` (normal)
+- Phases tracked as milestones: `phase 0 — repo setup` through `phase 10 — cutover`
+- Tracking issues per phase: `[phase N tracking] <name>` — ties detailed sub-issues together; auto-closes when all sub-issues close
 
 ## Conventions for Claude
 
-- **Always start from a GitHub issue** (see Workflow above). If asked to do work without an issue reference, ask which issue or open one first.
+- **Always start from a GitHub issue** (see Workflow above — full session-start checklist + per-issue PR cycle). If asked to do work without an issue reference, ask which issue or open one first.
+- **TDD is the default loop** — failing test → minimum code → refactor. New code without tests is rejected at PR review.
+- **PR must close the issue** via `Closes #N` / `Resolves #N` / `Fixes #N` in the PR body. Wait for CI to pass — including after any rebase — before requesting merge.
 - **Do not create git worktrees inside `.claude/` or `docs/decisions/`** — those paths hold config and immutable history. Worktrees there confuse settings discovery and pollute history.
 - **Do not modify `docs/decisions/round-*.txt`** — append-only history. New decisions update `CLAUDE.md` (here) and live in the issue thread that produced them.
 - **Amplify Gen 2 idioms only** — `defineBackend()`, `defineAuth()`, `defineData()`, `defineFunction()`, `defineStorage()`. No Gen 1 CLI artifacts.
