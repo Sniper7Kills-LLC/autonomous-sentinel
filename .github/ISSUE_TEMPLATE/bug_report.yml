@@ -1,0 +1,71 @@
+name: Bug report
+description: Something is broken or behaving unexpectedly.
+title: "[bug] "
+labels:
+  - "type:fix"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug report. The more concrete the repro, the faster we can fix it.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug. What did you observe?
+      placeholder: When I click X, the page shows Y instead of Z.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Numbered list. The exact sequence that triggers the bug.
+      placeholder: |
+        1. Sign in
+        2. Click Upload
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+    validations:
+      required: true
+  - type: dropdown
+    id: workspace
+    attributes:
+      label: Affected workspace
+      multiple: true
+      options:
+        - "web (Next.js PWA)"
+        - "amplify (Gen 2 backend)"
+        - "upload-client (Electron)"
+        - "infra / CI / docs"
+        - "unsure"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Git commit SHA or tag where the bug was observed.
+      placeholder: "abc1234 or v0.1.0"
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS / browser / Node version as relevant.
+      placeholder: "macOS 14 · Chrome 130 · Node 22.10"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / errors
+      render: shell
