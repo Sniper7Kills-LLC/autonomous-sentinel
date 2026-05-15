@@ -43,7 +43,87 @@ npm run client:dev        # start Electron client in dev mode
 ```
 
 ### Sandbox first
-Every backend change must run cleanly in a personal Amplify Gen 2 sandbox before opening a PR. The sandbox creates an isolated stack in your AWS account; tear it down with `npm run amplify:sandbox -- --once` when done.
+Every backend change must run cleanly in a personal Amplify Gen 2 sandbox before opening a PR. The sandbox creates an isolated stack in your AWS account; tear it down with `npx ampx sandbox delete` from inside `amplify/` when done.
+
+## AWS developer setup
+
+The Amplify backend (`amplify/` workspace) deploys to a personal AWS sandbox per developer. Set this up once.
+
+### 1. Install AWS CLI v2
+
+| OS | Command |
+|---|---|
+| Linux | `curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip && unzip awscliv2.zip && sudo ./aws/install` |
+| macOS | `brew install awscli` |
+| Windows | `winget install Amazon.AWSCLI` |
+
+Verify: `aws --version` should report ≥ 2.x.
+
+### 2. Configure a named profile
+
+```bash
+aws configure --profile autonomous-sentinel-dev
+# AWS Access Key ID:        <your dev IAM user access key>
+# AWS Secret Access Key:    <secret>
+# Default region name:      us-east-1
+# Default output format:    json
+```
+
+Then in your shell rc (`~/.bashrc`, `~/.zshrc`, or PowerShell `$PROFILE`):
+
+```bash
+export AWS_PROFILE=autonomous-sentinel-dev
+export AWS_REGION=us-east-1
+```
+
+### 3. IAM permissions
+
+For your personal sandbox, the simplest path is an IAM user with `AdministratorAccess` (it's *your* sandbox in *your* account). Production deploys use scoped least-privilege roles — out of scope for sandbox work.
+
+If you need to scope down: Amplify Gen 2 needs CloudFormation full access plus permissions on the resources you `define*()` (Cognito, AppSync, DynamoDB, S3, Lambda, SES if used, etc.). The Amplify docs have a starter policy.
+
+### 4. Spin up the sandbox
+
+```bash
+npm run amplify:sandbox
+# Equivalent: cd amplify && npx ampx sandbox
+```
+
+This deploys an isolated stack named after your machine + Amplify identity (e.g. `amplify-autonomoussentinel-yourname-sandbox-xxxx`) and writes `amplify_outputs.json` to `amplify/`. Both `web/` and `upload-client/` import that file at runtime.
+
+The first sandbox spin-up takes 5-10 minutes (CloudFormation provisioning everything). Subsequent updates are typically under a minute.
+
+### 5. Set Amplify secrets
+
+Some resources (Google OAuth client secret, Stripe keys, etc.) are referenced as `secret('NAME')` in the backend code. They live in AWS Systems Manager Parameter Store and must be set per sandbox before `defineAuth` / `defineFunction` can deploy them:
+
+```bash
+cd amplify
+npx ampx sandbox secret set GOOGLE_CLIENT_ID
+npx ampx sandbox secret set GOOGLE_CLIENT_SECRET
+# etc. — see amplify/auth/resource.ts and amplify/functions/*/resource.ts for the full list
+```
+
+### 6. Tear down
+
+When you're done for the day:
+
+```bash
+cd amplify
+npx ampx sandbox delete
+```
+
+An idle Amplify Gen 2 sandbox for this stack costs ~$0/mo at the dev tier (DynamoDB on-demand + S3 Standard with no traffic), but tearing down is hygienic and prevents accidental drift.
+
+### Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| `Could not load default credentials` | `AWS_PROFILE` not exported, or profile name typo |
+| Sandbox deploys to wrong region | `AWS_REGION` not set or shell rc not sourced |
+| `Token has expired` | Refresh credentials (`aws sso login` if using SSO, or rotate access keys) |
+| Sandbox lockfile errors | Another `ampx sandbox` is already running for this directory; check for stale processes |
+| `secret 'X' not found` | Run `npx ampx sandbox secret set X` first |
 
 ## Pull requests
 
