@@ -9,7 +9,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "package": "electron-builder",
-    "lint": "eslint . --ext .ts,.tsx",
+    "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
     "test": "echo 'TODO: wire vitest'"
   },
