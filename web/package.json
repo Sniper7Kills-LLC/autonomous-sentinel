@@ -10,7 +10,8 @@
     "start": "next start",
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
-    "test": "echo 'TODO: wire vitest'"
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@aws-amplify/ui-react": "^6.5.0",
@@ -20,10 +21,14 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.7.0",
     "eslint": "^9.0.0",
     "eslint-config-next": "^15.0.0",
+    "jsdom": "^25.0.1",
     "typescript": "^5.6.0"
   }
 }
