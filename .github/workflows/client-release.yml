@@ -1,0 +1,41 @@
+name: Upload Client Release
+
+on:
+  push:
+    tags:
+      - 'client-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+      - run: npm ci
+      - name: Build renderer + main bundles
+        run: npm -w upload-client run build
+      - name: Package installers
+        run: npm -w upload-client run package
+      - name: Upload artifacts to draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            upload-client/release/**/*.AppImage
+            upload-client/release/**/*.deb
+            upload-client/release/**/*.dmg
+            upload-client/release/**/*.exe
+            upload-client/release/**/*.zip
