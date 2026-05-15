@@ -42,8 +42,16 @@ npm run web:dev           # start Next.js dev server
 npm run client:dev        # start Electron client in dev mode
 ```
 
+### Pre-commit hooks
+On `npm install`, husky installs a `pre-commit` hook that runs `lint-staged`:
+- `*.{ts,tsx,js,jsx,mjs,cjs}` → `eslint --fix` + `prettier --write`
+- `*.{json,md,yml,yaml,css}` → `prettier --write`
+
+If you need to bypass for a quick fix, `git commit --no-verify` skips the hook. Don't make a habit of it — CI will catch what the hook would have.
+
 ### Sandbox first
 Every backend change must run cleanly in a personal Amplify Gen 2 sandbox before opening a PR. The sandbox creates an isolated stack in your AWS account; tear it down with `npx ampx sandbox delete` from inside `amplify/` when done.
+<<<<<<< HEAD
 
 ## AWS developer setup
 
@@ -124,6 +132,8 @@ An idle Amplify Gen 2 sandbox for this stack costs ~$0/mo at the dev tier (Dynam
 | `Token has expired` | Refresh credentials (`aws sso login` if using SSO, or rotate access keys) |
 | Sandbox lockfile errors | Another `ampx sandbox` is already running for this directory; check for stale processes |
 | `secret 'X' not found` | Run `npx ampx sandbox secret set X` first |
+=======
+>>>>>>> a7aa758 (chore(hooks): wire husky + lint-staged pre-commit (#10))
 
 ## Pull requests
 
