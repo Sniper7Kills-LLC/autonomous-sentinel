@@ -1,34 +1,34 @@
-import { defineAuth, secret } from '@aws-amplify/backend';
+import { defineAuth } from '@aws-amplify/backend';
 
 /**
- * Cognito User Pool. Email + Google + Discord (Discord via OIDC bridge — wired separately).
+ * Cognito User Pool for Autonomous Sentinel.
  *
- * Email verification is required at signup (per CLAUDE.md).
- * Cognito Advanced Security Features are intentionally OFF at v1 (cost — see CLAUDE.md).
+ * Scope of this resource (issue #12):
+ *   - Email login with email verification required at signup (Cognito's default
+ *     CODE-style verification when `loginWith.email === true`).
+ *   - Standard user attributes: email (required) + preferredUsername (optional).
+ *   - Groups: admin, moderator, member.
  *
- * Secrets must be set via `npx ampx sandbox secret set GOOGLE_CLIENT_ID` etc.
- * before this resource will deploy successfully.
+ * Deliberately out of scope here (separate issues land them):
+ *   - Google federation         → issue #13
+ *   - Discord OIDC bridge       → issue #14
+ *   - Post-confirmation Lambda  → issue #15 (auto-assigns 'member' group)
  *
- * TODO once OIDC bridge for Discord is set up:
- *   - register the bridge as an OIDC identity provider here
- *   - add 'oidc' to externalProviders below
+ * Cost: Cognito Advanced Security Features are intentionally NOT enabled at v1
+ * (~$0.05/MAU). Revisit if ban-evasion becomes a real problem (see CLAUDE.md).
+ *
+ * `authConfig` is exported alongside `auth` so unit tests can assert the
+ * configuration shape without instantiating CDK constructs.
  */
-export const auth = defineAuth({
+export const authConfig = {
   loginWith: {
-    email: true,
-    externalProviders: {
-      google: {
-        clientId: secret('GOOGLE_CLIENT_ID'),
-        clientSecret: secret('GOOGLE_CLIENT_SECRET'),
-        scopes: ['email', 'profile'],
-      },
-      callbackUrls: ['http://localhost:3000/', 'https://beta.eam.watch/'],
-      logoutUrls: ['http://localhost:3000/', 'https://beta.eam.watch/'],
-    },
+    email: true as const,
   },
   userAttributes: {
     email: { required: true, mutable: true },
     preferredUsername: { required: false, mutable: true },
   },
-  groups: ['admin', 'moderator', 'member'],
-});
+  groups: ['admin', 'moderator', 'member'] as string[],
+};
+
+export const auth = defineAuth(authConfig);
