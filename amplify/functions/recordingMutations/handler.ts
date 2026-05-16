@@ -20,24 +20,35 @@ import {
  * the model definition in #257); the moderator's reason is captured
  * only on the AuditLog entry.
  *
+ * Cascade-delete: per CLAUDE.md, "messages with no recording cease
+ * to exist". After the Recording row is soft-deleted, the handler
+ * Queries siblings by `messageId` and counts live rows. If none
+ * remain, it soft-deletes the parent Message + emits a
+ * `MESSAGE_DELETE` audit entry tagged with
+ * `reason='cascade — last recording deleted'`, system actor.
+ *
  * Deferred (out of scope, tracked separately):
- *   - **Cascade-delete of the parent Message** when this Recording
- *     was the last one attached to it. CLAUDE.md is explicit:
- *     "messages with no recording cease to exist". Cascade is a
- *     multi-step transaction (Query Recording by messageId →
- *     count remaining → soft-delete Message if zero) that warrants
- *     its own follow-up.
  *   - **S3 hard-delete** of the original / web-canonical / sidecar
- *     keys. Phase 3 / storage lifecycle work.
+ *     keys. Phase 3 / storage lifecycle work — versioning
+ *     preserves the 30-day undo window.
  *
  * Returns the post-mutation Recording row.
  */
 
 export type RecordingRow = {
   id: string;
+  messageId?: string | null;
   contentHash?: string | null;
   deletedAt?: string | null;
   deletedBy?: string | null;
+  [k: string]: unknown;
+};
+
+export type MessageRow = {
+  id: string;
+  deletedAt?: string | null;
+  deletedBy?: string | null;
+  deletedReason?: string | null;
   [k: string]: unknown;
 };
 
@@ -51,6 +62,22 @@ export interface RecordingMutationsDataClient {
       update: (
         input: Partial<RecordingRow> & { id: string },
       ) => Promise<{ data: RecordingRow | null; errors?: unknown }>;
+      /**
+       * GSI lookup auto-generated for `i('messageId')` (added in
+       * #29). Returns sibling recordings keyed on the same Message.
+       * The cascade-delete check filters out already-deleted rows
+       * in-handler.
+       */
+      listRecordingByMessageId: (input: { messageId: string }) => Promise<{
+        data: RecordingRow[] | null;
+        errors?: unknown;
+      }>;
+    };
+    Message: {
+      get: (input: { id: string }) => Promise<{ data: MessageRow | null; errors?: unknown }>;
+      update: (
+        input: Partial<MessageRow> & { id: string },
+      ) => Promise<{ data: MessageRow | null; errors?: unknown }>;
     };
   };
 }
@@ -108,8 +135,77 @@ function auditContextFrom(event: {
   };
 }
 
-function snapshot(row: RecordingRow): Record<string, unknown> {
+function snapshot<T extends Record<string, unknown>>(row: T): Record<string, unknown> {
   return { ...row };
+}
+
+/**
+ * Cascade-delete the parent Message when the just-deleted Recording
+ * was the last live child. Idempotent: if the parent is already
+ * deleted (concurrent admin click or replay) we skip the rewrite +
+ * the audit so the manifest stays clean.
+ */
+async function cascadeDeleteMessageIfOrphaned(
+  parentMessageId: string,
+  deps: {
+    client: RecordingMutationsDataClient;
+    audit: AuditFn;
+    now: () => Date;
+  },
+  auditCtx: AuditContext,
+): Promise<void> {
+  const siblings = await deps.client.models.Recording.listRecordingByMessageId({
+    messageId: parentMessageId,
+  });
+  const liveRows = (siblings.data ?? []).filter((r) => !r.deletedAt);
+  if (liveRows.length > 0) {
+    return;
+  }
+
+  const fetched = await deps.client.models.Message.get({ id: parentMessageId });
+  const before = fetched.data;
+  if (!before) {
+    // Message was already hard-removed or never existed — nothing to
+    // cascade onto. Log + return silently.
+    console.warn('softDeleteRecording: parent Message not found; skipping cascade', {
+      parentMessageId,
+    });
+    return;
+  }
+  if (before.deletedAt) {
+    return;
+  }
+
+  const now = deps.now().toISOString();
+  const cascadeReason = 'cascade — last recording deleted';
+  const patch: Partial<MessageRow> & { id: string } = {
+    id: parentMessageId,
+    deletedAt: now,
+    deletedBy: null,
+    deletedReason: cascadeReason,
+  };
+  const updated = await deps.client.models.Message.update(patch);
+  if (updated.errors) {
+    throw new Error(
+      `softDeleteRecording: cascade Message.update returned errors: ${JSON.stringify(updated.errors)}`,
+    );
+  }
+  const after = updated.data ?? { ...before, ...patch };
+
+  // System-actor audit: the moderator's call deleted the Recording;
+  // the Message delete is automatic. `identity` is null on the audit
+  // ctx so `actorId` lands as null in the row.
+  await deps.audit(
+    { identity: null, request: auditCtx.request },
+    {
+      action: 'MESSAGE_DELETE',
+      targetType: 'Message',
+      targetId: parentMessageId,
+      before: snapshot(before),
+      after: snapshot(after),
+      reason: cascadeReason,
+    },
+  );
 }
 
 async function dispatchSoftDelete(
@@ -156,7 +252,8 @@ async function dispatchSoftDelete(
   }
   const after = updated.data ?? { ...before, ...patch };
 
-  await deps.audit(auditContextFrom(event), {
+  const auditCtx = auditContextFrom(event);
+  await deps.audit(auditCtx, {
     action: 'RECORDING_DELETE',
     targetType: 'Recording',
     targetId,
@@ -164,6 +261,13 @@ async function dispatchSoftDelete(
     after: snapshot(after),
     reason: normalisedReason,
   });
+
+  // Cascade: if this was the last live Recording on the parent
+  // Message, soft-delete the Message too ("messages with no
+  // recording cease to exist" per CLAUDE.md).
+  if (typeof before.messageId === 'string' && before.messageId.length > 0) {
+    await cascadeDeleteMessageIfOrphaned(before.messageId, deps, auditCtx);
+  }
 
   return after;
 }

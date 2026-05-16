@@ -101,6 +101,10 @@ export const Recording = a
     // Required for the legacy-claim FK fan-out (#273) — Query by uploaderId
     // to find every Recording a freshly-claimed user uploaded.
     i('uploaderId'),
+    // Required for the soft-delete cascade (#29) — after soft-deleting
+    // a Recording, the handler Queries siblings by messageId to decide
+    // whether the parent Message should cascade-soft-delete.
+    i('messageId'),
   ])
   .authorization((allow) => [
     allow.guest().to(['read']),
@@ -119,11 +123,17 @@ export const Recording = a
  * Lambda-backed (see `functions/recordingMutations`) so the audit
  * helper is the sole AuditLog writer.
  *
+ * Cascade behaviour: after the Recording row is soft-deleted, the
+ * handler Queries siblings by `messageId` (sparse — only live rows
+ * count). If none remain, the parent Message is also soft-deleted
+ * with a system-actor `MESSAGE_DELETE` audit entry tagged with
+ * `reason='cascade — last recording deleted'`. CLAUDE.md is explicit
+ * that "messages with no recording cease to exist".
+ *
  * Deferred (out of scope, tracked separately):
- *   - Cascade-delete of the parent Message when this Recording was
- *     the last one attached to it ("messages with no recording
- *     cease to exist" per CLAUDE.md).
  *   - S3 hard-delete of the original / web-canonical / sidecar keys.
+ *     Phase 3 / storage lifecycle work — versioning preserves the
+ *     30-day undo window per CLAUDE.md.
  */
 export const softDeleteRecording = a
   .mutation()

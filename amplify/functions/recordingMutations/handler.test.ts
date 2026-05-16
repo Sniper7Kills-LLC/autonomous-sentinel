@@ -6,6 +6,7 @@ import {
   __resetDeps,
   type RecordingMutationsDataClient,
   type RecordingRow,
+  type MessageRow,
 } from './handler';
 
 /**
@@ -53,14 +54,31 @@ function makeEvent(
   return { ...base, ...rest };
 }
 
-function makeStubs(opts: { existing?: RecordingRow | null } = {}): {
+function makeStubs(
+  opts: {
+    existing?: RecordingRow | null;
+    siblings?: RecordingRow[];
+    parentMessage?: MessageRow | null;
+  } = {},
+): {
   client: RecordingMutationsDataClient;
   getSpy: ReturnType<typeof vi.fn>;
   updateSpy: ReturnType<typeof vi.fn>;
+  listByMessageSpy: ReturnType<typeof vi.fn>;
+  messageGetSpy: ReturnType<typeof vi.fn>;
+  messageUpdateSpy: ReturnType<typeof vi.fn>;
   auditSpy: ReturnType<typeof vi.fn>;
 } {
   const recordings = new Map<string, RecordingRow>();
   if (opts.existing) recordings.set(opts.existing.id, opts.existing);
+  for (const s of opts.siblings ?? []) {
+    recordings.set(s.id, s);
+  }
+  const messages = new Map<string, MessageRow>();
+  if (opts.parentMessage) {
+    messages.set(opts.parentMessage.id, opts.parentMessage);
+  }
+
   const getSpy = vi.fn((input: { id: string }) =>
     Promise.resolve({ data: recordings.get(input.id) ?? null, errors: undefined }),
   );
@@ -70,11 +88,36 @@ function makeStubs(opts: { existing?: RecordingRow | null } = {}): {
     recordings.set(input.id, merged);
     return Promise.resolve({ data: merged, errors: undefined });
   });
-  const auditSpy = vi.fn(() => Promise.resolve('audit-id-1'));
+  const listByMessageSpy = vi.fn((input: { messageId: string }) => {
+    const matches = Array.from(recordings.values()).filter((r) => r.messageId === input.messageId);
+    return Promise.resolve({ data: matches, errors: undefined });
+  });
+  const messageGetSpy = vi.fn((input: { id: string }) =>
+    Promise.resolve({ data: messages.get(input.id) ?? null, errors: undefined }),
+  );
+  const messageUpdateSpy = vi.fn((input: Partial<MessageRow> & { id: string }) => {
+    const before = messages.get(input.id);
+    const merged: MessageRow = { ...(before ?? { id: input.id }), ...input };
+    messages.set(input.id, merged);
+    return Promise.resolve({ data: merged, errors: undefined });
+  });
+  const auditSpy = vi.fn(() => Promise.resolve('audit-id'));
   return {
-    client: { models: { Recording: { get: getSpy, update: updateSpy } } },
+    client: {
+      models: {
+        Recording: {
+          get: getSpy,
+          update: updateSpy,
+          listRecordingByMessageId: listByMessageSpy,
+        },
+        Message: { get: messageGetSpy, update: messageUpdateSpy },
+      },
+    },
     getSpy,
     updateSpy,
+    listByMessageSpy,
+    messageGetSpy,
+    messageUpdateSpy,
     auditSpy,
   };
 }
@@ -212,5 +255,105 @@ describe('recordingMutations — softDeleteRecording', () => {
     expect(result.id).toBe('rec-r');
     expect(result.deletedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
     expect(result.deletedBy).toBe('cog-admin-001');
+  });
+});
+
+describe('recordingMutations — cascade-delete parent Message (#29)', () => {
+  beforeEach(() => {
+    __resetDeps();
+  });
+
+  it('cascade-soft-deletes the parent Message when this was the last live recording', async () => {
+    const { client, auditSpy, messageUpdateSpy } = makeStubs({
+      existing: { id: 'rec-last', messageId: 'msg-1', deletedAt: null },
+      // No live siblings (only this one).
+      parentMessage: { id: 'msg-1', deletedAt: null, body: 'parent' },
+    });
+    __setDeps({ dataClient: client, audit: auditSpy });
+    const event = makeEvent({
+      arguments: { recordingId: 'rec-last', reason: 'illegal-content' },
+    });
+    await handler(event, {} as Context, () => undefined);
+
+    // Message.update called with deletedAt + cascade reason.
+    expect(messageUpdateSpy).toHaveBeenCalledOnce();
+    const patch = messageUpdateSpy.mock.calls[0]?.[0] as MessageRow;
+    expect(patch.id).toBe('msg-1');
+    expect(patch.deletedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    expect(patch.deletedReason).toBe('cascade — last recording deleted');
+
+    // Two audit entries: RECORDING_DELETE + cascading MESSAGE_DELETE.
+    expect(auditSpy).toHaveBeenCalledTimes(2);
+    const actions = auditSpy.mock.calls.map((c) => (c[1] as { action: string }).action);
+    expect(actions).toEqual(['RECORDING_DELETE', 'MESSAGE_DELETE']);
+    const cascadeCall = auditSpy.mock.calls[1] as [{ identity: unknown }, { reason: string }];
+    // System actor — moderator deleted the Recording; the Message
+    // delete is automatic.
+    expect(cascadeCall[0].identity).toBeNull();
+    expect(cascadeCall[1].reason).toBe('cascade — last recording deleted');
+  });
+
+  it('does NOT cascade-delete when other live recordings remain on the Message', async () => {
+    const { client, auditSpy, messageUpdateSpy } = makeStubs({
+      existing: { id: 'rec-a', messageId: 'msg-2', deletedAt: null },
+      siblings: [
+        // Live sibling — Message stays.
+        { id: 'rec-b', messageId: 'msg-2', deletedAt: null },
+      ],
+      parentMessage: { id: 'msg-2', deletedAt: null },
+    });
+    __setDeps({ dataClient: client, audit: auditSpy });
+    const event = makeEvent({ arguments: { recordingId: 'rec-a', reason: 'X' } });
+    await handler(event, {} as Context, () => undefined);
+
+    expect(messageUpdateSpy).not.toHaveBeenCalled();
+    expect(auditSpy).toHaveBeenCalledTimes(1);
+    const [, opts] = auditSpy.mock.calls[0] as [unknown, { action: string }];
+    expect(opts.action).toBe('RECORDING_DELETE');
+  });
+
+  it('cascade no-op when the parent Message is already deleted (idempotency)', async () => {
+    const { client, auditSpy, messageUpdateSpy } = makeStubs({
+      existing: { id: 'rec-z', messageId: 'msg-3', deletedAt: null },
+      parentMessage: {
+        id: 'msg-3',
+        deletedAt: '2025-01-01T00:00:00.000Z',
+        deletedBy: 'prior-admin',
+      },
+    });
+    __setDeps({ dataClient: client, audit: auditSpy });
+    const event = makeEvent({ arguments: { recordingId: 'rec-z', reason: 'X' } });
+    await handler(event, {} as Context, () => undefined);
+
+    // RECORDING_DELETE audit only — no MESSAGE_DELETE re-emitted.
+    expect(messageUpdateSpy).not.toHaveBeenCalled();
+    expect(auditSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('cascade skipped + warned when the parent Message lookup returns null', async () => {
+    const { client, auditSpy, messageUpdateSpy } = makeStubs({
+      existing: { id: 'rec-q', messageId: 'msg-missing', deletedAt: null },
+      // parentMessage intentionally omitted — Message.get returns null
+    });
+    __setDeps({ dataClient: client, audit: auditSpy });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const event = makeEvent({ arguments: { recordingId: 'rec-q', reason: 'X' } });
+    await handler(event, {} as Context, () => undefined);
+
+    expect(messageUpdateSpy).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('cascade skipped when Recording had no messageId (orphan upload)', async () => {
+    const { client, auditSpy, listByMessageSpy } = makeStubs({
+      existing: { id: 'rec-orphan', messageId: null, deletedAt: null },
+    });
+    __setDeps({ dataClient: client, audit: auditSpy });
+    const event = makeEvent({ arguments: { recordingId: 'rec-orphan', reason: 'X' } });
+    await handler(event, {} as Context, () => undefined);
+
+    expect(listByMessageSpy).not.toHaveBeenCalled();
+    expect(auditSpy).toHaveBeenCalledOnce(); // only RECORDING_DELETE
   });
 });
