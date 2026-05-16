@@ -1,5 +1,6 @@
 import { a } from '@aws-amplify/backend';
 import { userMutations } from '../../functions/userMutations/resource';
+import { getUserPublicLambda } from '../../functions/getUserPublicLambda/resource';
 
 /**
  * User — DynamoDB shadow of the Cognito identity (issue #248).
@@ -188,17 +189,9 @@ export const getUserPublic = a
   .query()
   .arguments({ cognitoSub: a.string().required() })
   .returns(a.ref('User'))
-  // `allow.guest()` is not supported on `a.handler.custom` under the
-  // `identityPool` default auth mode — the schema-transform check
-  // surfaces it as: "identityPool-based auth (allow.guest() and
-  // allow.authenticated('identityPool')) is not supported with
-  // a.handler.custom". Authenticated-only is the v1 contract; guest
-  // profile browse will need either a Lambda-backed variant or an
-  // `apiKey` secondary auth mode — tracked as a follow-up.
-  .authorization((allow) => [allow.authenticated()])
-  .handler(
-    a.handler.custom({
-      dataSource: a.ref('User'),
-      entry: './resolvers/get-user-public.js',
-    }),
-  );
+  // Lambda-backed (#271). The original `a.handler.custom` JS resolver
+  // couldn't carry `allow.guest()` under the `identityPool` default
+  // auth mode — that limitation does not apply to
+  // `a.handler.function`, so guest profile browse is restored.
+  .authorization((allow) => [allow.guest(), allow.authenticated()])
+  .handler(a.handler.function(getUserPublicLambda));

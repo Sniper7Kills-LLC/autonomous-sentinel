@@ -3,6 +3,7 @@ import { User, selfDelete, banUser, getUserPublic } from './models/user';
 import { userMutations } from '../functions/userMutations/resource';
 import { postConfirmation } from '../functions/postConfirmation/resource';
 import { messageMutations } from '../functions/messageMutations/resource';
+import { getUserPublicLambda } from '../functions/getUserPublicLambda/resource';
 import { Message, softDeleteMessage } from './models/message';
 import { Recording } from './models/recording';
 import { Sdr } from './models/sdr';
@@ -100,6 +101,12 @@ export const schema = a
     allow.resource(userMutations).to(['query', 'mutate']),
     allow.resource(postConfirmation).to(['query', 'mutate']),
     allow.resource(messageMutations).to(['query', 'mutate']),
+    // getUserPublicLambda needs `query` to read User via the
+    // Amplify Data client when DDB GetItem is overridden by tests.
+    // The production path uses direct DDB SDK with the IAM grant
+    // wired in `backend.ts`, but the schema-level grant is the
+    // canonical way to mark the Lambda as a data-source consumer.
+    allow.resource(getUserPublicLambda).to(['query']),
   ]);
 
 export type Schema = ClientSchema<typeof schema>;

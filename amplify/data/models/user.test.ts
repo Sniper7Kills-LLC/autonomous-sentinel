@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { User, selfDelete, banUser, getUserPublic } from './user';
-
-const here = dirname(fileURLToPath(import.meta.url));
 
 /**
  * Schema-shape tests for the User custom operations added in #248:
@@ -260,27 +255,25 @@ describe('getUserPublic query (issue #248)', () => {
     expect(linkName).toBe('User');
   });
 
-  it('is callable by authenticated users (guest access deferred — identityPool + custom-resolver limitation)', () => {
-    // `allow.guest()` does not transform with `a.handler.custom` under
-    // the `identityPool` default auth mode (schema-transform regression
-    // check from #266 catches it). v1 contract is authenticated-only;
-    // guest profile browse needs either a Lambda-backed variant or an
-    // `apiKey` secondary auth mode and is tracked as a follow-up.
+  it('is callable by guests + authenticated users (public profile pages — #271)', () => {
+    // After #271 swapped the custom JS resolver for a Lambda-backed
+    // handler, `allow.guest()` is no longer rejected by the
+    // schema-transform under the identityPool default auth mode.
+    // Guest profile browse is back on the public surface.
     const auth = getUserPublicOp.data.authorization;
     const strategies = auth.map((a) => symbolData<AuthData>(a as object).strategy);
+    expect(strategies).toContain('public');
     expect(strategies).toContain('private');
-    expect(strategies).not.toContain('public');
   });
 
-  it('wires the get-user-public JS resolver bound to the User data source', () => {
+  it('wires the getUserPublicLambda function as the handler (#271)', () => {
     const handlers = getUserPublicOp.data.handlers;
     expect(handlers).toHaveLength(1);
     const cfg = symbolData<CustomHandlerData>(handlers[0] as object);
-    expect(cfg.entry).toMatch(/get-user-public/);
-    expect(cfg.dataSource).toBeDefined();
-    if (cfg.entry) {
-      const absolute = resolve(here, cfg.entry);
-      expect(existsSync(absolute)).toBe(true);
-    }
+    // Lambda-backed (a.handler.function) — `cfg.handler` is the
+    // function ref the schema transformer reads. The previous
+    // a.handler.custom path exposed `cfg.entry`; absence of that
+    // shape now confirms the move to Lambda.
+    expect(cfg.handler).toBeDefined();
   });
 });
