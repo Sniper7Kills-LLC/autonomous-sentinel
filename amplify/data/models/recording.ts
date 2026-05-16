@@ -1,4 +1,5 @@
 import { a } from '@aws-amplify/backend';
+import { recordingMutations } from '../../functions/recordingMutations/resource';
 
 /**
  * Recording — a single audio capture of a broadcast (issue #29).
@@ -100,9 +101,46 @@ export const Recording = a
     // Required for the legacy-claim FK fan-out (#273) — Query by uploaderId
     // to find every Recording a freshly-claimed user uploaded.
     i('uploaderId'),
+    // Required for the soft-delete cascade (#29) — after soft-deleting
+    // a Recording, the handler Queries siblings by messageId to decide
+    // whether the parent Message should cascade-soft-delete.
+    i('messageId'),
   ])
   .authorization((allow) => [
     allow.guest().to(['read']),
     allow.authenticated().to(['read', 'create']),
     allow.groups(['moderator', 'admin']).to(['read', 'create', 'update', 'delete']),
   ]);
+
+/**
+ * `softDeleteRecording` — admin-only Recording soft-delete (#29).
+ *
+ * Sets `deletedAt = now`, `deletedBy = caller.sub` on the row.
+ * Emits a `RECORDING_DELETE` AuditLog entry via the #258 helper
+ * (reason captured on the audit only — Recording has no
+ * `deletedReason` column). Idempotent on already-deleted rows.
+ *
+ * Lambda-backed (see `functions/recordingMutations`) so the audit
+ * helper is the sole AuditLog writer.
+ *
+ * No cascade to the parent Message on Recording delete. The v3
+ * archive contains Messages with no Recording for analytics, and
+ * the v4 submission flow supports recording-less entries gated by a
+ * verification step (anti-spam — tracked separately). A Recording
+ * delete therefore touches only the Recording row; the parent
+ * Message keeps standing.
+ *
+ * Deferred (out of scope, tracked separately):
+ *   - S3 hard-delete of the original / web-canonical / sidecar keys.
+ *     Phase 3 / storage lifecycle work — versioning preserves the
+ *     30-day undo window per CLAUDE.md.
+ */
+export const softDeleteRecording = a
+  .mutation()
+  .arguments({
+    recordingId: a.id().required(),
+    reason: a.string(),
+  })
+  .returns(a.ref('Recording'))
+  .authorization((allow) => allow.group('admin'))
+  .handler(a.handler.function(recordingMutations));

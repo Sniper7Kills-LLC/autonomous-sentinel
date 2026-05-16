@@ -18,6 +18,7 @@ import { postConfirmation } from './functions/postConfirmation/resource';
 import { discordOidcBridge } from './functions/discordOidcBridge/resource';
 import { userMutations } from './functions/userMutations/resource';
 import { messageMutations } from './functions/messageMutations/resource';
+import { recordingMutations } from './functions/recordingMutations/resource';
 import { getUserPublicLambda } from './functions/getUserPublicLambda/resource';
 import { legacyClaimWorker } from './functions/legacyClaimWorker/resource';
 import { legacyClaimReplaySweeper } from './functions/legacyClaimReplaySweeper/resource';
@@ -35,6 +36,7 @@ const backend = defineBackend({
   discordOidcBridge,
   userMutations,
   messageMutations,
+  recordingMutations,
   getUserPublicLambda,
   legacyClaimWorker,
   legacyClaimReplaySweeper,
