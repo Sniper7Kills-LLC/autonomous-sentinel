@@ -3,6 +3,7 @@ import { User, selfDelete, banUser, getUserPublic } from './models/user';
 import { userMutations } from '../functions/userMutations/resource';
 import { postConfirmation } from '../functions/postConfirmation/resource';
 import { messageMutations } from '../functions/messageMutations/resource';
+import { getUserPublicLambda } from '../functions/getUserPublicLambda/resource';
 import { Message, softDeleteMessage } from './models/message';
 import { Recording } from './models/recording';
 import { Sdr } from './models/sdr';
@@ -100,6 +101,13 @@ export const schema = a
     allow.resource(userMutations).to(['query', 'mutate']),
     allow.resource(postConfirmation).to(['query', 'mutate']),
     allow.resource(messageMutations).to(['query', 'mutate']),
+    // getUserPublicLambda is registered here as a data-source
+    // consumer for completeness even though its production path
+    // reads User directly via the DDB SDK (with the IAM grant in
+    // `backend.ts`). The `query` scope leaves room for a future
+    // switch to the Amplify Data client without re-touching the
+    // schema-level grant.
+    allow.resource(getUserPublicLambda).to(['query']),
   ]);
 
 export type Schema = ClientSchema<typeof schema>;

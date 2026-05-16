@@ -18,6 +18,7 @@ import { postConfirmation } from './functions/postConfirmation/resource';
 import { discordOidcBridge } from './functions/discordOidcBridge/resource';
 import { userMutations } from './functions/userMutations/resource';
 import { messageMutations } from './functions/messageMutations/resource';
+import { getUserPublicLambda } from './functions/getUserPublicLambda/resource';
 import { legacyClaimWorker } from './functions/legacyClaimWorker/resource';
 import { legacyClaimReplaySweeper } from './functions/legacyClaimReplaySweeper/resource';
 import { fieldVoteOrphanJanitor } from './functions/fieldVoteOrphanJanitor/resource';
@@ -34,6 +35,7 @@ const backend = defineBackend({
   discordOidcBridge,
   userMutations,
   messageMutations,
+  getUserPublicLambda,
   legacyClaimWorker,
   legacyClaimReplaySweeper,
   fieldVoteOrphanJanitor,
@@ -72,6 +74,18 @@ legacyClaimWorkerLambda.grantInvoke(postConfirmationLambda);
 legacyClaimWorkerLambda.addToRolePolicy(
   new PolicyStatement({
     actions: ['dynamodb:TransactWriteItems', 'dynamodb:PutItem', 'dynamodb:DeleteItem'],
+    resources: [userTable.tableArn],
+  }),
+);
+
+// getUserPublic Lambda wiring (#271). Read-only GetItem on User by
+// cognitoSub; the PII filter happens in-handler. USER_TABLE_NAME env
+// var lets it address the table without an SDK lookup.
+const getUserPublicLambdaFn = backend.getUserPublicLambda.resources.lambda as LambdaFunction;
+getUserPublicLambdaFn.addEnvironment('USER_TABLE_NAME', userTable.tableName);
+getUserPublicLambdaFn.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:GetItem'],
     resources: [userTable.tableArn],
   }),
 );
