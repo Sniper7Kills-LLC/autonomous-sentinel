@@ -25,6 +25,7 @@ export const FieldVote = a
     message: a.belongsTo('Message', 'messageId'),
     field: a.enum(['SENDER', 'RECEIVER', 'BODY', 'TYPE']),
     value: a.string().required(),
+    // Cognito sub of the voter — `User.id = cognitoSub` (#259).
     voterId: a.id().required(),
     voter: a.belongsTo('User', 'voterId'),
     weightAtVoteTime: a.float().required(),
@@ -35,6 +36,10 @@ export const FieldVote = a
   .identifier(['messageId', 'field', 'voterId'])
   .authorization((allow) => [
     allow.authenticated().to(['read', 'create']),
-    allow.owner().to(['update', 'delete']),
+    // Voter = the Cognito sub stored in `voterId` (#259).
+    allow
+      .ownerDefinedIn('voterId')
+      .identityClaim('sub')
+      .to(['update', 'delete']),
     allow.groups(['moderator', 'admin']).to(['read']),
   ]);

@@ -8,6 +8,17 @@ import { a } from '@aws-amplify/backend';
  * (#15) creates the row on first signup; the legacy claim flow (#16) links
  * v3 email matches into pre-seeded rows.
  *
+ * Identifier strategy (issue #259, Option A): `User.id` *is* the Cognito sub.
+ * `.identifier(['cognitoSub'])` makes the sub the primary key, which lets
+ * every `allow.owner()` rule on every FK-owning model compare the JWT `sub`
+ * directly to the FK column without an indirection through a separate UUID.
+ *
+ * Pre-seeded migration rows have no Cognito identity yet — they are stored
+ * with `cognitoSub = "legacy:<legacyUserId>"`. The claim flow (#16) rewrites
+ * the row at claim time, swapping the placeholder PK for the real sub and
+ * fanning the update across every FK row that previously pointed at the
+ * placeholder.
+ *
  * Deferred to follow-ups (need AuditLog #38 first):
  *   - Custom mutation `selfDelete` — blanks PII fields + writes AuditLog.
  *   - Custom mutation `banUser` — sets bannedAt/Reason/ById + writes AuditLog.
@@ -16,8 +27,9 @@ import { a } from '@aws-amplify/backend';
  */
 export const User = a
   .model({
-    // Identity link. Null for pre-seeded migration rows awaiting claim.
-    cognitoSub: a.string(),
+    // Identity link + primary key. Pre-seeded migration rows store
+    // `legacy:<legacyUserId>` here until the claim flow rewrites them.
+    cognitoSub: a.string().required(),
 
     // Contact + display. All three are blanked on self-deletion (PII flag
     // flipped) so queries still resolve but no PII leaks.
@@ -39,7 +51,8 @@ export const User = a
     piiBlanked: a.boolean().default(false),
     piiBlankedAt: a.datetime(),
 
-    // Ban lifecycle
+    // Ban lifecycle. `bannedById` stores the Cognito sub of the admin who
+    // issued the ban (#259 — `User.id = cognitoSub`).
     bannedAt: a.datetime(),
     bannedReason: a.string(),
     bannedById: a.id(),
@@ -56,9 +69,8 @@ export const User = a
     notificationPreference: a.hasOne('NotificationPreference', 'userId'),
     reputation: a.hasOne('Reputation', 'userId'),
   })
+  .identifier(['cognitoSub'])
   .secondaryIndexes((i) => [
-    // Cognito sub → User row (post-confirmation Lambda + token-context lookups)
-    i('cognitoSub'),
     // Email lookup for sign-in / support / claim conflict detection
     i('email'),
     // Legacy claim path: v3 user-by-email and v3 user-by-PK

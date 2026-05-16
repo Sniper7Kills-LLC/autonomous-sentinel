@@ -18,6 +18,7 @@ import { a } from '@aws-amplify/backend';
  */
 export const NotificationPreference = a
   .model({
+    // Cognito sub of the owning user — `User.id = cognitoSub` (#259).
     userId: a.id().required(),
     user: a.belongsTo('User', 'userId'),
     emailEnabled: a.boolean().default(false),
@@ -30,6 +31,10 @@ export const NotificationPreference = a
   })
   .identifier(['userId'])
   .authorization((allow) => [
-    allow.owner().to(['read', 'create', 'update']),
+    // Owner = the Cognito sub stored in `userId` (#259).
+    allow
+      .ownerDefinedIn('userId')
+      .identityClaim('sub')
+      .to(['read', 'create', 'update']),
     allow.groups(['admin']).to(['read']),
   ]);

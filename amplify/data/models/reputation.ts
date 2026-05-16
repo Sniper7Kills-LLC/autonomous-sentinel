@@ -18,6 +18,7 @@ import { a } from '@aws-amplify/backend';
  */
 export const Reputation = a
   .model({
+    // Cognito sub of the owning user — `User.id = cognitoSub` (#259).
     userId: a.id().required(),
     user: a.belongsTo('User', 'userId'),
     validatedSubmissions: a.integer().default(0),
