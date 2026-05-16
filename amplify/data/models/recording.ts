@@ -1,4 +1,5 @@
 import { a } from '@aws-amplify/backend';
+import { recordingMutations } from '../../functions/recordingMutations/resource';
 
 /**
  * Recording — a single audio capture of a broadcast (issue #29).
@@ -106,3 +107,30 @@ export const Recording = a
     allow.authenticated().to(['read', 'create']),
     allow.groups(['moderator', 'admin']).to(['read', 'create', 'update', 'delete']),
   ]);
+
+/**
+ * `softDeleteRecording` — admin-only Recording soft-delete (#29).
+ *
+ * Sets `deletedAt = now`, `deletedBy = caller.sub` on the row.
+ * Emits a `RECORDING_DELETE` AuditLog entry via the #258 helper
+ * (reason captured on the audit only — Recording has no
+ * `deletedReason` column). Idempotent on already-deleted rows.
+ *
+ * Lambda-backed (see `functions/recordingMutations`) so the audit
+ * helper is the sole AuditLog writer.
+ *
+ * Deferred (out of scope, tracked separately):
+ *   - Cascade-delete of the parent Message when this Recording was
+ *     the last one attached to it ("messages with no recording
+ *     cease to exist" per CLAUDE.md).
+ *   - S3 hard-delete of the original / web-canonical / sidecar keys.
+ */
+export const softDeleteRecording = a
+  .mutation()
+  .arguments({
+    recordingId: a.id().required(),
+    reason: a.string(),
+  })
+  .returns(a.ref('Recording'))
+  .authorization((allow) => allow.group('admin'))
+  .handler(a.handler.function(recordingMutations));

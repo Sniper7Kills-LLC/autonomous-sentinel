@@ -3,9 +3,10 @@ import { User, selfDelete, banUser, getUserPublic } from './models/user';
 import { userMutations } from '../functions/userMutations/resource';
 import { postConfirmation } from '../functions/postConfirmation/resource';
 import { messageMutations } from '../functions/messageMutations/resource';
+import { recordingMutations } from '../functions/recordingMutations/resource';
 import { getUserPublicLambda } from '../functions/getUserPublicLambda/resource';
 import { Message, softDeleteMessage } from './models/message';
-import { Recording } from './models/recording';
+import { Recording, softDeleteRecording } from './models/recording';
 import { Sdr } from './models/sdr';
 import { Transmitter } from './models/transmitter';
 import { Comment } from './models/comment';
@@ -89,6 +90,9 @@ export const schema = a
 
     // Message soft-delete — issue #28
     softDeleteMessage,
+
+    // Recording soft-delete — issue #29
+    softDeleteRecording,
   })
   .authorization((allow) => [
     // Schema-level Lambda access grants.
@@ -101,6 +105,7 @@ export const schema = a
     allow.resource(userMutations).to(['query', 'mutate']),
     allow.resource(postConfirmation).to(['query', 'mutate']),
     allow.resource(messageMutations).to(['query', 'mutate']),
+    allow.resource(recordingMutations).to(['query', 'mutate']),
     // getUserPublicLambda is registered here as a data-source
     // consumer for completeness even though its production path
     // reads User directly via the DDB SDK (with the IAM grant in
