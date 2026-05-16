@@ -101,11 +101,12 @@ export const schema = a
     allow.resource(userMutations).to(['query', 'mutate']),
     allow.resource(postConfirmation).to(['query', 'mutate']),
     allow.resource(messageMutations).to(['query', 'mutate']),
-    // getUserPublicLambda needs `query` to read User via the
-    // Amplify Data client when DDB GetItem is overridden by tests.
-    // The production path uses direct DDB SDK with the IAM grant
-    // wired in `backend.ts`, but the schema-level grant is the
-    // canonical way to mark the Lambda as a data-source consumer.
+    // getUserPublicLambda is registered here as a data-source
+    // consumer for completeness even though its production path
+    // reads User directly via the DDB SDK (with the IAM grant in
+    // `backend.ts`). The `query` scope leaves room for a future
+    // switch to the Amplify Data client without re-touching the
+    // schema-level grant.
     allow.resource(getUserPublicLambda).to(['query']),
   ]);
 

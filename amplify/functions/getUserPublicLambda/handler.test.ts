@@ -137,6 +137,29 @@ describe('getUserPublic Lambda (#271)', () => {
     await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(/cognitoSub/);
   });
 
+  it('passes the row through when piiBlanked is undefined (legacy / fresh row)', async () => {
+    // Fresh signup rows have `piiBlanked` defaulted at the model
+    // level, but a row that pre-dates the default (or any consumer
+    // that projects the column away) lands here with the field
+    // undefined. The handler must treat that as "not blanked" so
+    // the public profile renders normally.
+    const deps = makeStubs({
+      row: {
+        cognitoSub: 'sub-legacy',
+        email: 'legacy@example.com',
+        preferredUsername: 'leg',
+        displayName: 'Legacy',
+        // no piiBlanked at all
+      },
+    });
+    __setDeps(deps);
+    const event = makeEvent({ cognitoSub: 'sub-legacy' });
+    const result = (await handler(event, {} as Context, () => undefined)) as UserRow;
+    expect(result.email).toBe('legacy@example.com');
+    expect(result.preferredUsername).toBe('leg');
+    expect(result.displayName).toBe('Legacy');
+  });
+
   it('rejects a missing identity.groups (still non-admin, but the lookup must not crash)', async () => {
     const deps = makeStubs({
       row: {
