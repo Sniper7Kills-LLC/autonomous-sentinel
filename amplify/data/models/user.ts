@@ -84,18 +84,29 @@ export const User = a
     i('bannedAt'),
   ])
   .authorization((allow) => [
-    // Public profile pages call `getUserPublic` (PII-filtered). Direct
-    // model reads stay open so existing relational fetches keep working;
-    // the PII filter is enforced by the wrapper query, and any client
-    // that goes around it gets the same null-blanked fields once we
-    // shift the read API in phase 4 (admin / profile UI).
-    allow.guest().to(['read']),
-    allow.authenticated().to(['read']),
-    // Owner-of-row edits via Cognito sub identity claim. Self-delete + ban
-    // fields are explicitly out of band — they route through the custom
-    // mutations below so the audit chain stays intact.
-    allow.ownerDefinedIn('cognitoSub').identityClaim('sub').to(['update']),
+    // Direct model reads are restricted to admin + moderator so PII-
+    // bearing columns (email / legacyEmail / bannedReason / etc.)
+    // never leak via the auto-generated `getUser` / `listUsers`
+    // queries or via belongsTo fetches from anonymous callers. The
+    // public read surface is `getUserPublic` (PII-filtered), defined
+    // below.
+    //
+    // Side effect: belongsTo relations from public models (e.g.
+    // `Recording.uploader`, `Comment.author`) resolve to null for
+    // guest + member callers until those fetches are wrapped in
+    // field-level resolvers or custom queries that pull from
+    // `getUserPublic`. Phase-4 (admin/profile UI) owns that wrap.
+    allow.groups(['moderator']).to(['read']),
     allow.groups(['admin']).to(['read', 'create', 'update', 'delete']),
+    // No owner-update rule. Amplify Gen 2 model authz is row-level
+    // (not field-level), so an `allow.ownerDefinedIn('cognitoSub')`
+    // grant would let a banned user mutate `bannedAt` / `bannedReason`
+    // / `bannedById` via the auto-generated `updateUser` mutation and
+    // clear their own ban. All User row writes must route through the
+    // custom mutations below (`selfDelete`, `banUser`, and the future
+    // `updateProfile` field-restricted self-edit surface), so the
+    // sensitive columns can be gated explicitly by the resolver.
+    //
     // The post-confirmation Lambda creates fresh-signup rows; the
     // userMutations Lambda updates rows for selfDelete + banUser. Both
     // function-resource grants live at the schema level (see

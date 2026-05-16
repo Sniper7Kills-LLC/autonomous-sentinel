@@ -105,8 +105,17 @@ async function ensureUserRow(input: {
         return;
       }
     } catch (err) {
-      // Lookup failure is not fatal — fall through to attempt create.
-      console.error('postConfirmation: legacyEmail lookup failed', err);
+      // Bail on lookup failure — the previous "fall through and try
+      // create anyway" path could duplicate a legacy row when the
+      // lookup was a transient DDB throttle / ECONNRESET (review on
+      // PR #269). Cognito will retry the post-confirmation trigger;
+      // the group-add side has already happened so sign-in keeps
+      // working, and a later retry / claim flow will resolve the row.
+      console.error(
+        'postConfirmation: legacyEmail lookup failed — skipping create to avoid duplicate row',
+        err,
+      );
+      return;
     }
   }
 

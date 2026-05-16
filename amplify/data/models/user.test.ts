@@ -139,16 +139,36 @@ describe('User model — direct read scope (issue #248)', () => {
     );
   });
 
-  it('still allows guest + authenticated read (PII-filter resolver provides safety)', () => {
-    // The PII filter is applied via the `getUserPublic` wrapper; the
-    // direct model read keeps the broad allow.guest()/authenticated()
-    // surface that other parts of the schema depend on. Locking the
-    // direct read to admins would break public profile pages.
+  it('restricts direct model reads to admin + moderator (review fix — #248)', () => {
+    // Reviewer flagged that broad guest/authenticated reads on User
+    // bypassed the `getUserPublic` PII filter. The model is now read-
+    // restricted to mod + admin groups; the public read surface is
+    // `getUserPublic` (PII-filtered).
     const auth = userModel.data.authorization;
     const strategies = auth.map((a) => symbolData<AuthData>(a as object).strategy);
-    expect(strategies).toContain('public');
-    expect(strategies).toContain('private');
+    expect(strategies).not.toContain('public');
+    expect(strategies).not.toContain('private');
     expect(strategies).toContain('groups');
+
+    const groupRules = auth
+      .map((a) => symbolData<AuthData>(a as object))
+      .filter((r) => r.strategy === 'groups');
+    const flatGroups = groupRules.flatMap((r) => Array.from(r.groups ?? []));
+    expect(flatGroups).toEqual(expect.arrayContaining(['admin', 'moderator']));
+  });
+
+  it('drops the owner-update rule so banned users cannot self-clear their ban (review fix — #248)', () => {
+    // Amplify Gen 2 model authz is row-level, not field-level — an
+    // `allow.ownerDefinedIn('cognitoSub')` grant would let a banned
+    // user write `bannedAt = null` via the auto-generated
+    // `updateUser`. Removing the owner rule forces all User writes
+    // through the custom mutations (selfDelete, banUser, +future
+    // updateProfile).
+    const auth = userModel.data.authorization;
+    const ownerRules = auth
+      .map((a) => symbolData<AuthData>(a as object))
+      .filter((r) => r.strategy === 'owner');
+    expect(ownerRules).toHaveLength(0);
   });
 });
 

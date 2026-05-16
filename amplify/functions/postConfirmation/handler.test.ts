@@ -234,6 +234,29 @@ describe('postConfirmation handler — User row creation (issue #248)', () => {
     errorSpy.mockRestore();
   });
 
+  it('bails on User.create when the legacyEmail lookup throws (review fix — #248)', async () => {
+    // Reviewer flagged that a transient DDB throttle / ECONNRESET on the
+    // legacyEmail lookup used to fall through to `User.create`, which
+    // could duplicate a legacy row that actually exists. The handler
+    // now bails so Cognito's at-least-once retry resolves it on the
+    // next call. Group-add already happened, so sign-in continues to
+    // work.
+    stub.listByEmailSpy.mockImplementationOnce(() => Promise.reject(new Error('DDB throttled')));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const event = makeEvent({
+      request: {
+        userAttributes: { sub: 'cognito-sub-ccc', email: 'maybe-legacy@example.com' },
+      },
+    });
+    await handler(event, {} as Context, () => undefined);
+
+    expect(stub.createSpy).not.toHaveBeenCalled();
+    expect(cognitoMock.commandCalls(AdminAddUserToGroupCommand)).toHaveLength(1);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
   it('links a pre-seeded legacy row instead of creating a fresh one when legacyEmail matches', async () => {
     // Migration seed: a `legacy:<id>` row exists with the new user's email
     // pre-populated in `legacyEmail`. Post-confirmation should swap the

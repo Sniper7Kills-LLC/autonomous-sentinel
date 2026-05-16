@@ -202,13 +202,19 @@ async function dispatchBanUser(
   }
   const after = updated.data ?? { ...before, ...patch };
 
+  // Normalise the empty / missing reason once so both the row column
+  // and the audit entry record it the same way (review on PR #269).
+  // Using `null` lets a future "find bans with no reason" query target
+  // the same predicate against the User row and its AuditLog row.
+  const normalisedReason: string | null = reason ? reason : null;
+
   await deps.audit(auditContextFrom(event), {
     action: 'USER_BAN',
     targetType: 'User',
     targetId: target,
     before: snapshot(before),
     after: snapshot(after),
-    reason: reason || undefined,
+    reason: normalisedReason,
   });
 
   return after;

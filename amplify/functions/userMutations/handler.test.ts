@@ -371,6 +371,29 @@ describe('userMutations handler — banUser', () => {
     expect(after.bannedById).toBe('cognito-sub-actor-123');
   });
 
+  it('represents an empty reason as null on both the row and the audit (review fix — #248)', async () => {
+    // Reviewer flagged that the row column wrote `null` for an empty
+    // reason while the audit helper got `undefined` (omitted). Both
+    // values land in DDB as `null` via the helper's `?? null`, but the
+    // call-site asymmetry would make any future "bans with no reason"
+    // predicate diverge if the audit shape changed. Both branches now
+    // pass the same `null` so the contract is explicit.
+    const event = makeEvent({
+      fieldName: 'banUser',
+      arguments: { targetCognitoSub: 'target-sub-456', reason: '' },
+    });
+    if (event.identity && 'groups' in event.identity) {
+      event.identity.groups = ['admin'];
+    }
+    await handler(event, {} as Context, () => undefined);
+
+    const patch = userUpdateSpy.mock.calls[0]?.[0] as UserRow;
+    expect(patch.bannedReason).toBeNull();
+
+    const [, opts] = auditSpy.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(opts.reason).toBeNull();
+  });
+
   it('throws when targetCognitoSub argument is missing', async () => {
     const event = makeEvent({
       fieldName: 'banUser',
