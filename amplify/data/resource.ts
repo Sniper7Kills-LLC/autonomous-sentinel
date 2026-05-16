@@ -4,6 +4,19 @@ import { Message } from './models/message';
 import { Recording } from './models/recording';
 import { Sdr } from './models/sdr';
 import { Transmitter } from './models/transmitter';
+import { Comment } from './models/comment';
+import { FieldVote } from './models/field-vote';
+import { TranscriptRevision } from './models/transcript-revision';
+import { RevisionVote } from './models/revision-vote';
+import { Reputation } from './models/reputation';
+import { AbuseReport } from './models/abuse-report';
+import { AuditLog } from './models/audit-log';
+import { Callsign } from './models/callsign';
+import { Donation } from './models/donation';
+import { NotificationPreference } from './models/notification-preference';
+import { BannedRegionPage } from './models/banned-region-page';
+import { LinguisticConfig } from './models/linguistic-config';
+import { EmailSuppression } from './models/email-suppression';
 
 /**
  * Amplify Gen 2 data model for Autonomous Sentinel.
@@ -20,11 +33,35 @@ import { Transmitter } from './models/transmitter';
  *   - GraphQL is anon-readable for public browse (legacy site behavior).
  */
 const schema = a.schema({
+  // Identity + reputation
   User,
+  Reputation,
+
+  // Broadcast catalog
   Message,
   Recording,
   Sdr,
   Transmitter,
+
+  // Community
+  Comment,
+  FieldVote,
+  TranscriptRevision,
+  RevisionVote,
+  AbuseReport,
+
+  // Reference data
+  Callsign,
+  LinguisticConfig,
+  BannedRegionPage,
+
+  // Money + accounts
+  Donation,
+  NotificationPreference,
+  EmailSuppression,
+
+  // Audit
+  AuditLog,
 });
 
 export type Schema = ClientSchema<typeof schema>;

@@ -50,6 +50,9 @@ export const Message = a
     deletedBy: a.id(),
     deletedReason: a.string(),
     recordings: a.hasMany('Recording', 'messageId'),
+    comments: a.hasMany('Comment', 'messageId'),
+    fieldVotes: a.hasMany('FieldVote', 'messageId'),
+    auditEntries: a.hasMany('AuditLog', 'targetMessageId'),
   })
   .secondaryIndexes((i) => [
     // Default browse view: messages of a given type ordered by broadcast time.

@@ -13,9 +13,6 @@ import { a } from '@aws-amplify/backend';
  *   - Custom mutation `banUser` — sets bannedAt/Reason/ById + writes AuditLog.
  *   - PII-filter resolver — when `piiBlanked=true`, return `null` for
  *     `email` / `displayName` / `preferredUsername` from non-admin reads.
- *   - hasMany declarations from User to Comment / FieldVote / RevisionVote /
- *     AbuseReport / Donation / TranscriptRevision / NotificationPreference /
- *     Reputation — added when those models land later in phase 2.
  */
 export const User = a
   .model({
@@ -47,11 +44,17 @@ export const User = a
     bannedReason: a.string(),
     bannedById: a.id(),
 
-    // Relationships — only the models that exist today. The rest of phase 2
-    // (Comment / Vote / AbuseReport / Donation / TranscriptRevision /
-    // NotificationPreference / Reputation) bolts onto this list as it lands.
+    // Relationships
     recordings: a.hasMany('Recording', 'uploaderId'),
     sdrs: a.hasMany('Sdr', 'ownerId'),
+    comments: a.hasMany('Comment', 'authorId'),
+    fieldVotes: a.hasMany('FieldVote', 'voterId'),
+    revisionVotes: a.hasMany('RevisionVote', 'voterId'),
+    transcriptRevisions: a.hasMany('TranscriptRevision', 'proposedBy'),
+    abuseReports: a.hasMany('AbuseReport', 'reporterId'),
+    donations: a.hasMany('Donation', 'userId'),
+    notificationPreference: a.hasOne('NotificationPreference', 'userId'),
+    reputation: a.hasOne('Reputation', 'userId'),
   })
   .secondaryIndexes((i) => [
     // Cognito sub → User row (post-confirmation Lambda + token-context lookups)

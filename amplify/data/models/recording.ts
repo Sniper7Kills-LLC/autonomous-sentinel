@@ -80,6 +80,8 @@ export const Recording = a
     // Soft-delete sentinels.
     deletedAt: a.datetime(),
     deletedBy: a.id(),
+
+    revisions: a.hasMany('TranscriptRevision', 'recordingId'),
   })
   .secondaryIndexes((i) => [
     // Dedup lookup at upload time.
