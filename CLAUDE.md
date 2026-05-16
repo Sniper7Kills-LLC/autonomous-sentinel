@@ -6,7 +6,7 @@
 
 **Autonomous Sentinel** (EAM Watch v4.0) is a complete rewrite of the existing Laravel/Vue 2 EAM Watch application as a serverless AWS Amplify stack. The mission is unchanged: collect, transcribe, and catalog Emergency Action Message (EAM) shortwave radio broadcasts and present them publicly with attribution.
 
-Open-source project, sponsored / maintained / operated by Sniper7Kills LLC. Public read access stays free. Paid tier (post-v1) gates *bandwidth-heavy / historical access*, never data ownership.
+Open-source project, sponsored / maintained / operated by Sniper7Kills LLC. Public read access stays free. Paid tier (post-v1) gates _bandwidth-heavy / historical access_, never data ownership.
 
 ## Why we are rewriting
 
@@ -24,30 +24,30 @@ Top-line goals:
 
 ### Stack (decided)
 
-| Layer | Choice |
-|---|---|
-| Frontend | Next.js + React (Amplify default) |
-| Backend | AWS Amplify **Gen 2** (TypeScript, `defineBackend()`) |
-| Runtime | Node 22 LTS + TypeScript 5.x + **npm workspaces** |
-| License | Apache 2.0 |
-| GitHub | `Sniper7Kills-LLC/autonomous-sentinel` |
-| AWS region | `us-east-1` |
-| DNS | Route53 (existing zone for `eam.watch`) |
-| Auth | Cognito User Pool, federated to **Google + Discord** (Discord via OIDC bridge — adopt OSS `cognito-discord-oidc-bridge` after code review; fall back to in-house Lambda if issues) |
-| Email verification | **Required** at signup |
-| Data | DynamoDB via Amplify Data (AppSync GraphQL) |
-| Storage | S3 (recordings, exports) + CloudFront edge cache; S3 versioning with 30-day delete-marker retention |
-| Functions | Lambda (Node.js 20 default; Whisper container Lambda — tolerate cold start, no provisioned concurrency) |
-| Hosting | Amplify Hosting + GitHub Actions for tests/lint pre-merge |
-| Email | AWS SES with custom-branded templates |
-| Analytics | Umami (start), upgrade path to Matomo |
-| Errors | Sentry + GlitchTip; CloudWatch only when needed (cost-aware) |
-| Mobile | PWA (installable) |
-| Map | **MapLibre + OpenStreetMap tiles** (free + open source only) |
-| WAF/DDoS | **AWS WAF** in front of CloudFront (country + IP CIDR blocks via Q133) |
-| Theme | Light/dark/auto, military / command aesthetic |
-| Accessibility | Target WCAG 2.1 AA |
-| Budgets | AWS Budget alarms: $50/mo soft email, $100/mo loud email + admin banner, $200/mo throttle Whisper concurrency + page admin (thresholds configurable in admin UI later). CDK definition in `amplify/budgets.ts`; thresholds + notification email overridable via `AS_BUDGET_SOFT_USD` / `AS_BUDGET_LOUD_USD` / `AS_BUDGET_HARD_USD` / `AS_BUDGET_NOTIFICATION_EMAIL` env vars. |
+| Layer              | Choice                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Frontend           | Next.js + React (Amplify default)                                                                                                                                                                                                                                                                                                                                             |
+| Backend            | AWS Amplify **Gen 2** (TypeScript, `defineBackend()`)                                                                                                                                                                                                                                                                                                                         |
+| Runtime            | Node 22 LTS + TypeScript 5.x + **npm workspaces**                                                                                                                                                                                                                                                                                                                             |
+| License            | Apache 2.0                                                                                                                                                                                                                                                                                                                                                                    |
+| GitHub             | `Sniper7Kills-LLC/autonomous-sentinel`                                                                                                                                                                                                                                                                                                                                        |
+| AWS region         | `us-east-1`                                                                                                                                                                                                                                                                                                                                                                   |
+| DNS                | Route53 (existing zone for `eam.watch`)                                                                                                                                                                                                                                                                                                                                       |
+| Auth               | Cognito User Pool, federated to **Google + Discord** (Discord via OIDC bridge — adopt OSS `cognito-discord-oidc-bridge` after code review; fall back to in-house Lambda if issues)                                                                                                                                                                                            |
+| Email verification | **Required** at signup                                                                                                                                                                                                                                                                                                                                                        |
+| Data               | DynamoDB via Amplify Data (AppSync GraphQL)                                                                                                                                                                                                                                                                                                                                   |
+| Storage            | S3 (recordings, exports) + CloudFront edge cache; S3 versioning with 30-day delete-marker retention                                                                                                                                                                                                                                                                           |
+| Functions          | Lambda (Node.js 20 default; Whisper container Lambda — tolerate cold start, no provisioned concurrency)                                                                                                                                                                                                                                                                       |
+| Hosting            | Amplify Hosting + GitHub Actions for tests/lint pre-merge                                                                                                                                                                                                                                                                                                                     |
+| Email              | AWS SES with custom-branded templates                                                                                                                                                                                                                                                                                                                                         |
+| Analytics          | Umami (start), upgrade path to Matomo                                                                                                                                                                                                                                                                                                                                         |
+| Errors             | Sentry + GlitchTip; CloudWatch only when needed (cost-aware)                                                                                                                                                                                                                                                                                                                  |
+| Mobile             | PWA (installable)                                                                                                                                                                                                                                                                                                                                                             |
+| Map                | **MapLibre + OpenStreetMap tiles** (free + open source only)                                                                                                                                                                                                                                                                                                                  |
+| WAF/DDoS           | **AWS WAF** in front of CloudFront (country + IP CIDR blocks via Q133)                                                                                                                                                                                                                                                                                                        |
+| Theme              | Light/dark/auto, military / command aesthetic                                                                                                                                                                                                                                                                                                                                 |
+| Accessibility      | Target WCAG 2.1 AA                                                                                                                                                                                                                                                                                                                                                            |
+| Budgets            | AWS Budget alarms: $50/mo soft email, $100/mo loud email + admin banner, $200/mo throttle Whisper concurrency + page admin (thresholds configurable in admin UI later). CDK definition in `amplify/budgets.ts`; thresholds + notification email overridable via `AS_BUDGET_SOFT_USD` / `AS_BUDGET_LOUD_USD` / `AS_BUDGET_HARD_USD` / `AS_BUDGET_NOTIFICATION_EMAIL` env vars. |
 
 ### Repos
 
@@ -151,14 +151,14 @@ Live updates pushed via AppSync subscription to all connected clients
 - **Vote** — community validation primitive. Two surfaces:
   - **Per-field on the parsed Message** (sender / receiver / body / type each have their own vote tally).
   - **Per proposed transcript revision** on the raw transcript text (user submits a corrected transcript, others upvote/downvote that whole revision, majority wins).
-  **Reputation-weighted** with the following default formula (every number admin-tunable in admin UI):
+    **Reputation-weighted** with the following default formula (every number admin-tunable in admin UI):
   - Base weight: 1
   - +0.1 per validated submission (recording uploaded that produced a successful Message), capped at +4
   - +0.5 per accepted correction (a user's revision adopted by majority), capped at +5
   - +1 if role = moderator
   - +2 if role = admin
   - Net cap: 5x weight
-  **Public visibility: aggregate counts only** ("12 say B, 3 say D"); individual votes hidden from public, visible to mods + admins only.
+    **Public visibility: aggregate counts only** ("12 say B, 3 say D"); individual votes hidden from public, visible to mods + admins only.
 - **SDR ownership on user self-deletion** — same as the user account: kept with PII blanked. SDR retains owner FK and history; recordings unaffected.
 - **Guest** — **DROPPED**. No anonymous submissions in v4.
 - **Comment** — nested replies up to **3 levels** (top + 2 reply tiers); deeper replies flatten into the deepest level. Auto-flagged by the moderation pipeline.
@@ -171,11 +171,13 @@ Live updates pushed via AppSync subscription to all connected clients
 - **Donation / Supporter** — Stripe-backed. One-time + multiple recurring monthly tiers. Time-delayed supporter badge (badge duration scales with donation amount; formula TBD).
 
 ### Time
+
 **UTC always in DB.** UI offers user toggle to display in local time.
 
 ## Notifications
 
 User chooses any combination:
+
 - **Email** (SES, custom templates).
 - **Web Push** (browser native, service worker). Audio alert = **canned tones per message type** (no recording autoplay).
 - **Discord Webhook** (per-user). Embed with link to entry + audio file attached to Discord. **Fallback: link-only with "audio too large to attach" note when audio exceeds Discord upload limit.** Possibly premium-tier.
@@ -307,12 +309,14 @@ Community-corrected transcripts stored as revisions. Custom EAM Whisper fine-tun
      --body "<populated PR template — Resolves #N, Summary, Test plan, Doc updates>"
    ```
    PR body **must** include `Resolves #N` or `Closes #N`. PR template prompts for this.
-8. **Wait for CI to pass.** Even on rebase / force-push, CI must be re-run and report green before merging.
-   ```bash
-   gh pr checks <pr-number> --watch
-   ```
-9. **Hand off for merge.** Do not auto-merge unless the user has explicitly authorized it for this PR. Default is: surface the green PR + URL and let the user merge.
-10. **After merge**, sync local main, delete branch, and return to step 3 of the session-start checklist (find next issue).
+8. **Self-review the PR.** Spawn a `cavecrew-reviewer` agent against the open PR's diff (`gh pr diff <N>` or the branch range). Take the agent's findings and post them as a single PR review on the PR via `gh pr review <N> --comment --body "<findings>"` (or `gh api` for inline comments if file/line context matters). Findings format follows the reviewer agent's contract: one line per finding, severity-tagged, `path:line: <emoji> <severity>: <problem>. <fix>.`. If the reviewer returns "no findings", post a one-line "self-review: no findings" comment so the audit trail is explicit.
+9. **Resolve every finding from the self-review.** TDD where the fix is a behavior change (failing test → fix → green). For each finding, either fix it in a follow-up commit on the same branch OR open a follow-up issue if it's genuinely out of scope and link it in a PR reply. Re-run `npm run lint && npm run typecheck && npm run test` locally before pushing. Reply on the PR review with a short receipt of what was fixed vs deferred (mirrors the pattern used on PR #268 / #269).
+10. **Wait for CI to pass.** Even on rebase / force-push, CI must be re-run and report green before merging.
+    ```bash
+    gh pr checks <pr-number> --watch
+    ```
+11. **Hand off for merge.** Do not auto-merge unless the user has explicitly authorized it for this PR. Default is: surface the green PR + URL and let the user merge.
+12. **After merge**, sync local main, delete branch, and return to step 3 of the session-start checklist (find next issue).
 
 ### Conflict / rebase handling
 
@@ -329,7 +333,8 @@ Community-corrected transcripts stored as revisions. Custom EAM Whisper fine-tun
 - **Do not create new markdown planning / tracking files** (no `TODO.md`, `ROADMAP.md`, `PLAN.md`, `STATUS.md`). Use issue bodies + comments.
 - **Never duplicate issue content into the repo as markdown.** Reference issue numbers instead.
 - **PR must close the issue** via `Closes #N` / `Resolves #N` / `Fixes #N` keyword.
-- **CI must be green** before merge — including after any rebase / force-push.
+- **Every PR gets a self-review.** Spawn `cavecrew-reviewer` against the diff, post findings as a PR review, resolve each finding (fix in a follow-up commit, or open a follow-up issue if genuinely out of scope) before requesting merge. "No findings" still gets posted as an explicit one-line comment so the trail is auditable.
+- **CI must be green** before merge — including after any rebase / force-push _and_ after the self-review fix commit(s).
 - **TDD**: tests first, code second, refactor third. New code without tests is rejected at PR review.
 - Reference docs (this `CLAUDE.md`, `README.md`, package READMEs, `docs/decisions/*`) stay current but do not become status boards.
 
