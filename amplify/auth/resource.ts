@@ -57,7 +57,21 @@ export const authConfig = {
           clientId: secret('DISCORD_CLIENT_ID'),
           clientSecret: secret('DISCORD_CLIENT_SECRET'),
           issuerUrl: Lazy.string({
-            produce: () => discordIssuerUrl.url ?? '',
+            produce: () => {
+              // Fail loud at synth if `backend.ts` did not populate the holder
+              // before the IdP construct was resolved. Silently emitting ''
+              // would land us with a Cognito provider whose stored
+              // `oidc_issuer` is the empty string, which fails non-obviously
+              // at sign-in rather than at deploy.
+              const url = discordIssuerUrl.url;
+              if (!url) {
+                throw new Error(
+                  'discordIssuerUrl.url was unset when the Discord OIDC IdP ' +
+                    'was resolved. backend.ts must assign it before synth.',
+                );
+              }
+              return url;
+            },
           }),
           attributeRequestMethod: 'GET' as const,
           scopes: ['openid', 'email', 'profile'],

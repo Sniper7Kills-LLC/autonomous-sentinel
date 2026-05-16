@@ -40,6 +40,13 @@ const discordBridgeUrl = backend.discordOidcBridge.resources.lambda.addFunctionU
 // `event.requestContext.domainName`, which has no scheme and no trailing
 // slash, so we strip the trailing slash here to keep the `iss` claim in
 // minted id_tokens byte-for-byte identical to what Cognito has registered.
+//
+// Format assumption: AWS Lambda function URLs are documented as
+// `https://<url-id>.lambda-url.<region>.on.aws/`. Splitting on `/` and
+// taking index 2 yields the bare host. If AWS ever changes that format
+// (e.g. adds a path segment) this extraction breaks at deploy time, not
+// silently — Cognito would reject sign-in because the issuer mismatched.
+// Revisit then.
 const bridgeHost = Fn.select(2, Fn.split('/', discordBridgeUrl.url));
 discordIssuerUrl.url = `https://${bridgeHost}`;
 

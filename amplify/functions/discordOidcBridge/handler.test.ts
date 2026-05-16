@@ -195,6 +195,49 @@ describe('discord OIDC bridge', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it('propagates an invalid_grant error when Discord token exchange fails', async () => {
+    FETCH_MOCK.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 }),
+    );
+
+    const res = await invoke(
+      makeEvent('POST', '/token', {
+        body: 'grant_type=authorization_code&code=bad-code&redirect_uri=https%3A%2F%2Feam.auth%2Fcognito',
+      }),
+    );
+
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body as string)).toEqual({ error: 'invalid_grant' });
+    // Only the token call should have been made — no /users/@me follow-up.
+    expect(FETCH_MOCK).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns 502 when /users/@me fails after a successful Discord token exchange', async () => {
+    FETCH_MOCK.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          access_token: 'discord-access',
+          token_type: 'Bearer',
+          expires_in: 604800,
+          scope: 'identify email',
+        }),
+        { status: 200 },
+      ),
+    ).mockResolvedValueOnce(
+      new Response(JSON.stringify({ message: '401: Unauthorized' }), { status: 401 }),
+    );
+
+    const res = await invoke(
+      makeEvent('POST', '/token', {
+        body: 'grant_type=authorization_code&code=the-code&redirect_uri=https%3A%2F%2Feam.auth%2Fcognito',
+      }),
+    );
+
+    expect(res.statusCode).toBe(502);
+    expect(JSON.parse(res.body as string)).toEqual({ error: 'discord_userinfo_failed' });
+    expect(FETCH_MOCK).toHaveBeenCalledTimes(2);
+  });
+
   it('maps Discord profile to OIDC claims on /userinfo', async () => {
     FETCH_MOCK.mockResolvedValueOnce(
       new Response(
