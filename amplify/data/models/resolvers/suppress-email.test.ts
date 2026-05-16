@@ -83,6 +83,9 @@ describe('suppressEmail request resolver', () => {
     expect(op.update.expressionValues[':notes']?.S).toBe(
       'user emailed support requesting suppression',
     );
+    // Manual entries (admin opt-out) still count as occurrences so repeated
+    // re-suppression doesn't silently overwrite history. PR #263 review gap.
+    expect(op.update.expression).toMatch(/ADD #occurrences :one/);
   });
 
   it('omits bounceType / notes from the update when not supplied', () => {
