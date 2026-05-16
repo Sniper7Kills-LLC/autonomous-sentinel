@@ -41,13 +41,15 @@ export const Sdr = a
     recordings: a.hasMany('Recording', 'sdrId'),
     deletedAt: a.datetime(),
   })
+  .secondaryIndexes((i) => [
+    // Required for the legacy-claim FK fan-out (#273) — Query by ownerId
+    // to find every SDR a freshly-claimed user owns.
+    i('ownerId'),
+  ])
   .authorization((allow) => [
     allow.authenticated().to(['read']),
     // Owner = the Cognito sub stored in `ownerId`. Explicit binding required
     // because `allow.owner()` defaults to a field literally named `owner`.
-    allow
-      .ownerDefinedIn('ownerId')
-      .identityClaim('sub')
-      .to(['read', 'create', 'update', 'delete']),
+    allow.ownerDefinedIn('ownerId').identityClaim('sub').to(['read', 'create', 'update', 'delete']),
     allow.groups(['admin']).to(['read', 'update', 'delete']),
   ]);

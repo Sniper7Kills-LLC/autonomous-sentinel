@@ -61,7 +61,15 @@ export const FieldVote = a
   // GSI for the natural lookup pattern: "all votes on message M's field F".
   // The public aggregate counts need this — sorting by voterId keeps the
   // per-voter dedupe scan cheap when we render the aggregate.
-  .secondaryIndexes((i) => [i('messageId').sortKeys(['field', 'voterId'])])
+  .secondaryIndexes((i) => [
+    i('messageId').sortKeys(['field', 'voterId']),
+    // Required for the legacy-claim FK fan-out (#273) — Query by voterId
+    // alone (the existing GSI puts voterId as a sort key, which can't be
+    // queried without `messageId`). Fan-out is also special-cased: voterId
+    // is part of the synthesised `fieldKey` PK, so the rewrite is a
+    // per-row delete + put, not a simple Update.
+    i('voterId'),
+  ])
   .authorization((allow) => [
     // No `create` here — `castFieldVote` is the sole write path so the
     // resolver can derive `voterId` from `ctx.identity.sub` (#259).

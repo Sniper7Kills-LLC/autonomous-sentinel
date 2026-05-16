@@ -85,6 +85,14 @@ export interface LinkLegacyClaimArgs {
    * emits an attributable audit row.
    */
   auditContext?: AuditContext;
+  /**
+   * Pre-generated claim id. Workflows that thread the same `claimId`
+   * across multiple audit entries (#273 fan-out, #274 replay) generate
+   * it once at the top of the flow and pass it through here so the
+   * `USER_CLAIM` entry shares the manifest key. If omitted, the helper
+   * falls back to `deps.newClaimId()`.
+   */
+  claimId?: string;
 }
 
 const LEGACY_PK_PREFIX = 'legacy:';
@@ -123,7 +131,7 @@ export async function linkLegacyClaim(args: LinkLegacyClaimArgs): Promise<Legacy
   }
 
   const claimedAt = deps.now().toISOString();
-  const claimId = deps.newClaimId();
+  const claimId = args.claimId ?? deps.newClaimId();
 
   const newRow: LegacyUserRow = {
     ...legacyRow,

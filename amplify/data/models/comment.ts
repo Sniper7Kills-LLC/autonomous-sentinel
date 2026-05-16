@@ -38,14 +38,14 @@ export const Comment = a
     // allow the implicit `createdAt` as an index sort key).
     i('messageId'),
     i('parentCommentId'),
+    // Required for the legacy-claim FK fan-out (#273) — Query by authorId
+    // to find every Comment a freshly-claimed user wrote.
+    i('authorId'),
   ])
   .authorization((allow) => [
     allow.guest().to(['read']),
     allow.authenticated().to(['read', 'create']),
     // Owner = the Cognito sub stored in `authorId` (#259).
-    allow
-      .ownerDefinedIn('authorId')
-      .identityClaim('sub')
-      .to(['update', 'delete']),
+    allow.ownerDefinedIn('authorId').identityClaim('sub').to(['update', 'delete']),
     allow.groups(['moderator', 'admin']).to(['update', 'delete']),
   ]);

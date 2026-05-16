@@ -38,6 +38,7 @@ function makeStubDeps(opts: { rowsByEmail?: UserRow[]; transactErr?: Error } = {
   listSpy: ReturnType<typeof vi.fn>;
   transactSpy: ReturnType<typeof vi.fn>;
   auditSpy: ReturnType<typeof vi.fn>;
+  fanOutQuerySpy: ReturnType<typeof vi.fn>;
 } {
   const listSpy = vi.fn(() => Promise.resolve({ data: opts.rowsByEmail ?? [], errors: undefined }));
   const transactSpy = vi.fn(() => {
@@ -45,10 +46,15 @@ function makeStubDeps(opts: { rowsByEmail?: UserRow[]; transactErr?: Error } = {
     return Promise.resolve();
   });
   const auditSpy = vi.fn(() => Promise.resolve('audit-id-x'));
+  // Fan-out stubs: default to empty queries so the worker invokes
+  // the helper but no per-table writes happen. Specific worker tests
+  // can override via __setDeps if they want to assert fan-out wiring.
+  const fanOutQuerySpy = vi.fn(() => Promise.resolve({ items: [] }));
   return {
     listSpy,
     transactSpy,
     auditSpy,
+    fanOutQuerySpy,
     tableName: TABLE,
     dataClient: {
       models: {
@@ -61,6 +67,24 @@ function makeStubDeps(opts: { rowsByEmail?: UserRow[]; transactErr?: Error } = {
     audit: auditSpy,
     now: () => new Date('2026-05-16T22:30:00.000Z'),
     newClaimId: () => 'claim-id-w1',
+    fanOut: {
+      tableNames: {
+        Sdr: 'Sdr-t',
+        Comment: 'Comment-t',
+        AbuseReport: 'AbuseReport-t',
+        Donation: 'Donation-t',
+        Recording: 'Recording-t',
+        TranscriptRevision: 'TranscriptRevision-t',
+        User: TABLE,
+        FieldVote: 'FieldVote-t',
+        RevisionVote: 'RevisionVote-t',
+        Reputation: 'Reputation-t',
+        NotificationPreference: 'NotificationPreference-t',
+      },
+      query: fanOutQuerySpy,
+      transact: vi.fn(() => Promise.resolve()),
+      audit: vi.fn(() => Promise.resolve('fanout-audit-id')),
+    },
   };
 }
 
