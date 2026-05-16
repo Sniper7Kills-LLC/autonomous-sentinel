@@ -78,10 +78,15 @@ export const Recording = a
     // Phase 7 backfill marker.
     migratedFromV3: a.boolean().default(false),
 
-    // Soft-delete sentinels.
+    // Soft-delete sentinels. `deletedBy` stores the Cognito sub of the
+    // admin who issued the delete — same sub-as-id pattern as
+    // `AuditLog.actorId` (per #259 Option A + the decision recorded on
+    // #260). No `belongsTo('User', ...)` because Amplify Gen 2 requires a
+    // reciprocal `hasMany` for every `belongsTo`, and admin reads of the
+    // actor row are denormalised (separate query when needed) rather than
+    // walked through the graph.
     deletedAt: a.datetime(),
     deletedBy: a.id(),
-    deletedByUser: a.belongsTo('User', 'deletedBy'),
 
     revisions: a.hasMany('TranscriptRevision', 'recordingId'),
   })

@@ -37,7 +37,7 @@ import {
  *   - Soft deletes everywhere; AuditLog is the source of truth.
  *   - GraphQL is anon-readable for public browse (legacy site behavior).
  */
-const schema = a.schema({
+export const schema = a.schema({
   // Identity + reputation
   User,
   Reputation,
