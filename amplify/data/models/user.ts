@@ -178,7 +178,14 @@ export const getUserPublic = a
   .query()
   .arguments({ cognitoSub: a.string().required() })
   .returns(a.ref('User'))
-  .authorization((allow) => [allow.guest(), allow.authenticated()])
+  // `allow.guest()` is not supported on `a.handler.custom` under the
+  // `identityPool` default auth mode — the schema-transform check
+  // surfaces it as: "identityPool-based auth (allow.guest() and
+  // allow.authenticated('identityPool')) is not supported with
+  // a.handler.custom". Authenticated-only is the v1 contract; guest
+  // profile browse will need either a Lambda-backed variant or an
+  // `apiKey` secondary auth mode — tracked as a follow-up.
+  .authorization((allow) => [allow.authenticated()])
   .handler(
     a.handler.custom({
       dataSource: a.ref('User'),

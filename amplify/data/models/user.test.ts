@@ -260,10 +260,16 @@ describe('getUserPublic query (issue #248)', () => {
     expect(linkName).toBe('User');
   });
 
-  it('is callable by guests + authenticated users (public profile pages)', () => {
+  it('is callable by authenticated users (guest access deferred — identityPool + custom-resolver limitation)', () => {
+    // `allow.guest()` does not transform with `a.handler.custom` under
+    // the `identityPool` default auth mode (schema-transform regression
+    // check from #266 catches it). v1 contract is authenticated-only;
+    // guest profile browse needs either a Lambda-backed variant or an
+    // `apiKey` secondary auth mode and is tracked as a follow-up.
     const auth = getUserPublicOp.data.authorization;
     const strategies = auth.map((a) => symbolData<AuthData>(a as object).strategy);
-    expect(strategies).toEqual(expect.arrayContaining(['public', 'private']));
+    expect(strategies).toContain('private');
+    expect(strategies).not.toContain('public');
   });
 
   it('wires the get-user-public JS resolver bound to the User data source', () => {
