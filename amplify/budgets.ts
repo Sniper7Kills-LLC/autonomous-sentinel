@@ -48,12 +48,26 @@ export interface BudgetConfig {
 }
 
 export function readBudgetConfig(): BudgetConfig {
-  return {
+  const config: BudgetConfig = {
     email: process.env.AS_BUDGET_NOTIFICATION_EMAIL ?? DEFAULT_EMAIL,
     softUsd: envNumber('AS_BUDGET_SOFT_USD', DEFAULT_SOFT_USD),
     loudUsd: envNumber('AS_BUDGET_LOUD_USD', DEFAULT_LOUD_USD),
     hardUsd: envNumber('AS_BUDGET_HARD_USD', DEFAULT_HARD_USD),
   };
+
+  // The three tiers are expressed as percentages of `hardUsd`. If they are
+  // misconfigured out of order (e.g. soft > loud), the resulting notifications
+  // fire at the wrong points and the operator gets paged in the wrong order
+  // without any deploy-time signal. Fail loudly at synth instead.
+  if (!(config.softUsd < config.loudUsd && config.loudUsd < config.hardUsd)) {
+    throw new Error(
+      `Budget thresholds must satisfy soft < loud < hard. Got soft=${config.softUsd}, ` +
+        `loud=${config.loudUsd}, hard=${config.hardUsd}. Adjust AS_BUDGET_SOFT_USD / ` +
+        'AS_BUDGET_LOUD_USD / AS_BUDGET_HARD_USD.',
+    );
+  }
+
+  return config;
 }
 
 export function attachBudgetAlarms(stack: Stack, config: BudgetConfig): CfnBudget {

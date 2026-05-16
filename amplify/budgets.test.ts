@@ -105,6 +105,9 @@ describe('budget alarms', () => {
         Match.objectLike({
           Notification: Match.objectLike({ Threshold: 50, ThresholdType: 'PERCENTAGE' }),
         }),
+        Match.objectLike({
+          Notification: Match.objectLike({ Threshold: 100, ThresholdType: 'PERCENTAGE' }),
+        }),
       ]),
     });
   });
@@ -113,5 +116,35 @@ describe('budget alarms', () => {
     expect(() => synth({ AS_BUDGET_HARD_USD: 'not-a-number' })).toThrow(
       /AS_BUDGET_HARD_USD/,
     );
+  });
+
+  it('rejects soft >= loud', () => {
+    expect(() =>
+      synth({
+        AS_BUDGET_SOFT_USD: '100',
+        AS_BUDGET_LOUD_USD: '50',
+        AS_BUDGET_HARD_USD: '200',
+      }),
+    ).toThrow(/soft < loud < hard/);
+  });
+
+  it('rejects loud >= hard', () => {
+    expect(() =>
+      synth({
+        AS_BUDGET_SOFT_USD: '50',
+        AS_BUDGET_LOUD_USD: '200',
+        AS_BUDGET_HARD_USD: '100',
+      }),
+    ).toThrow(/soft < loud < hard/);
+  });
+
+  it('rejects equal thresholds at any tier', () => {
+    expect(() =>
+      synth({
+        AS_BUDGET_SOFT_USD: '50',
+        AS_BUDGET_LOUD_USD: '50',
+        AS_BUDGET_HARD_USD: '200',
+      }),
+    ).toThrow(/soft < loud < hard/);
   });
 });
