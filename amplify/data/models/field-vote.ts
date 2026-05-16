@@ -29,8 +29,10 @@ export const FieldVote = a
     voter: a.belongsTo('User', 'voterId'),
     weightAtVoteTime: a.float().required(),
   })
+  // Composite identifier — the natural PK order already provides
+  // `(messageId, field, voterId)` traversal, so the redundant GSI on
+  // `(messageId, field)` is omitted.
   .identifier(['messageId', 'field', 'voterId'])
-  .secondaryIndexes((i) => [i('messageId').sortKeys(['field'])])
   .authorization((allow) => [
     allow.authenticated().to(['read', 'create']),
     allow.owner().to(['update', 'delete']),

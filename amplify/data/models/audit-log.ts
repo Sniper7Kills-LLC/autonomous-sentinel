@@ -22,7 +22,11 @@ import { a } from '@aws-amplify/backend';
  */
 export const AuditLog = a
   .model({
-    actorId: a.id().required(),
+    // Cognito sub of the actor, or `null` for system-emitted entries
+    // (auto-publish on confidence ≥ 0.8, pipeline status transitions,
+    // scheduled jobs). Consumers must treat null as "system" and surface
+    // accordingly.
+    actorId: a.id(),
     action: a.enum([
       'MESSAGE_DELETE',
       'MESSAGE_RESTORE',
@@ -56,8 +60,10 @@ export const AuditLog = a
     userAgent: a.string(),
   })
   .secondaryIndexes((i) => [
-    // "What did actor X do" — sort client-side by `createdAt` (Amplify Gen 2
-    // does not allow the implicit `createdAt` as an index sort key).
+    // "What did actor X do" — sparse index, only populated for actor-emitted
+    // entries (skips system entries where actorId is null). Sort client-side
+    // by `createdAt` (Amplify Gen 2 does not allow the implicit `createdAt`
+    // as an index sort key).
     i('actorId'),
     // "What happened to this entity" — same client-side sort.
     i('targetType'),

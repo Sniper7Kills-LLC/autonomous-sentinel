@@ -10,6 +10,12 @@ import { a } from '@aws-amplify/backend';
  * appears on the propagation map; non-public SDRs are still readable by
  * authenticated users for cross-reference but excluded from guest reads.
  *
+ * `recordings` hasMany Recording is intentionally sparse — `Recording.sdrId`
+ * is optional because migrated v3 audio and certain admin-imported recordings
+ * have no associated SDR. Querying `sdr.recordings` returns only the rows
+ * whose `sdrId` actually matches; recordings with `sdrId=null` are excluded
+ * by design.
+ *
  * Deferred to follow-ups:
  *   - Custom public-listing resolver that filters out non-publicVisible rows
  *     and blurs lat/lon by granularity (`a.authorization` cannot express

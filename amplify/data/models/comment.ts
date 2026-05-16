@@ -22,7 +22,10 @@ export const Comment = a
     parentCommentId: a.id(),
     parentComment: a.belongsTo('Comment', 'parentCommentId'),
     childComments: a.hasMany('Comment', 'parentCommentId'),
-    depth: a.integer().required().default(0),
+    // Server-computed by the depth-clamp custom mutation (deferred). Optional
+    // at the schema level so the client never has to supply it; the mutation
+    // sets `min(parent.depth + 1, 3)` at create time.
+    depth: a.integer().default(0),
     body: a.string().required(),
     authorId: a.id().required(),
     author: a.belongsTo('User', 'authorId'),

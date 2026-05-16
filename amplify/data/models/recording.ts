@@ -80,6 +80,7 @@ export const Recording = a
     // Soft-delete sentinels.
     deletedAt: a.datetime(),
     deletedBy: a.id(),
+    deletedByUser: a.belongsTo('User', 'deletedBy'),
 
     revisions: a.hasMany('TranscriptRevision', 'recordingId'),
   })
