@@ -1,4 +1,5 @@
 import { a } from '@aws-amplify/backend';
+import { userMutations } from '../../functions/userMutations/resource';
 
 /**
  * User — DynamoDB shadow of the Cognito identity (issue #248).
@@ -19,11 +20,14 @@ import { a } from '@aws-amplify/backend';
  * fanning the update across every FK row that previously pointed at the
  * placeholder.
  *
- * Deferred to follow-ups (need AuditLog #38 first):
- *   - Custom mutation `selfDelete` — blanks PII fields + writes AuditLog.
- *   - Custom mutation `banUser` — sets bannedAt/Reason/ById + writes AuditLog.
- *   - PII-filter resolver — when `piiBlanked=true`, return `null` for
- *     `email` / `displayName` / `preferredUsername` from non-admin reads.
+ * Custom operations bound to this model (defined below):
+ *   - `selfDelete` — caller blanks PII on their own row, sets piiBlanked,
+ *     emits `USER_PII_BLANK` AuditLog. Lambda-resolved via #258 helper.
+ *   - `banUser`    — admin sets bannedAt/Reason/ById on a target row,
+ *     emits `USER_BAN` AuditLog. Lambda-resolved via #258 helper.
+ *   - `getUserPublic` — guest/auth-callable wrapper around GetItem that
+ *     nulls email / preferredUsername / displayName when piiBlanked=true.
+ *     Admin reads bypass the filter via the direct model resolver.
  */
 export const User = a
   .model({
@@ -80,14 +84,93 @@ export const User = a
     i('bannedAt'),
   ])
   .authorization((allow) => [
-    // Public profile pages need read access; the deferred PII-filter resolver
-    // replaces `email` / `displayName` / `preferredUsername` with null when
-    // `piiBlanked=true`. Until that ships, treat the public surface as raw
-    // — the migration tooling controls which rows exist.
+    // Public profile pages call `getUserPublic` (PII-filtered). Direct
+    // model reads stay open so existing relational fetches keep working;
+    // the PII filter is enforced by the wrapper query, and any client
+    // that goes around it gets the same null-blanked fields once we
+    // shift the read API in phase 4 (admin / profile UI).
     allow.guest().to(['read']),
     allow.authenticated().to(['read']),
     // Owner-of-row edits via Cognito sub identity claim. Self-delete + ban
-    // fields will be locked down once the custom mutations land.
+    // fields are explicitly out of band — they route through the custom
+    // mutations below so the audit chain stays intact.
     allow.ownerDefinedIn('cognitoSub').identityClaim('sub').to(['update']),
     allow.groups(['admin']).to(['read', 'create', 'update', 'delete']),
+    // The post-confirmation Lambda creates fresh-signup rows; the
+    // userMutations Lambda updates rows for selfDelete + banUser. Both
+    // function-resource grants live at the schema level (see
+    // `data/resource.ts`) because `allow.resource(...)` is a
+    // schema-scope rule, not a per-model one.
   ]);
+
+/**
+ * `selfDelete` — caller blanks own PII (issue #248).
+ *
+ * Takes no arguments — the target row is keyed on `ctx.identity.sub`.
+ * The handler:
+ *   - Reads the existing User row.
+ *   - If already piiBlanked, returns it untouched (idempotent).
+ *   - Otherwise nulls `email` / `preferredUsername` / `displayName`,
+ *     sets `piiBlanked=true` + `piiBlankedAt=now`, writes the row.
+ *   - Emits a `USER_PII_BLANK` AuditLog entry via the #258 helper.
+ *
+ * Returns the post-mutation User row.
+ */
+export const selfDelete = a
+  .mutation()
+  .arguments({})
+  .returns(a.ref('User'))
+  .authorization((allow) => allow.authenticated())
+  .handler(a.handler.function(userMutations));
+
+/**
+ * `banUser` — admin sets ban fields on a target row (issue #248).
+ *
+ * Arguments:
+ *   - `targetCognitoSub` — the row to ban.
+ *   - `reason`           — free-form admin note, stored on the row
+ *     and on the audit entry.
+ *
+ * Sets `bannedAt = now`, `bannedReason = reason`, `bannedById =
+ * caller.sub`. Emits a `USER_BAN` AuditLog entry. Returns the
+ * post-mutation User row.
+ *
+ * `banUser` is purely a database state change — the actual sign-in
+ * block lives in a phase-1 follow-up (banned-at-sign-in check, out of
+ * scope here per the #248 body).
+ */
+export const banUser = a
+  .mutation()
+  .arguments({
+    targetCognitoSub: a.string().required(),
+    reason: a.string(),
+  })
+  .returns(a.ref('User'))
+  .authorization((allow) => allow.group('admin'))
+  .handler(a.handler.function(userMutations));
+
+/**
+ * `getUserPublic` — PII-filtered wrapper around GetItem (issue #248).
+ *
+ * Public profile pages hit this for guest + authenticated callers. The
+ * resolver returns null for `email` / `preferredUsername` /
+ * `displayName` whenever `piiBlanked=true`. Admin callers fall through
+ * to the model-default `getUser` resolver and see the
+ * blanked-but-retained values for audit purposes.
+ *
+ * The choice of a custom JS resolver (vs. extending the model's
+ * built-in `get`) is deliberate: AppSync's default resolvers go
+ * straight to DynamoDB and skip response shaping. The only way to
+ * inject a deterministic per-caller filter is to own the resolver.
+ */
+export const getUserPublic = a
+  .query()
+  .arguments({ cognitoSub: a.string().required() })
+  .returns(a.ref('User'))
+  .authorization((allow) => [allow.guest(), allow.authenticated()])
+  .handler(
+    a.handler.custom({
+      dataSource: a.ref('User'),
+      entry: './resolvers/get-user-public.js',
+    }),
+  );

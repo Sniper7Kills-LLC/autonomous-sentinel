@@ -9,6 +9,7 @@ import { transcribe } from './functions/transcribe/resource';
 import { linguistic } from './functions/linguistic/resource';
 import { postConfirmation } from './functions/postConfirmation/resource';
 import { discordOidcBridge } from './functions/discordOidcBridge/resource';
+import { userMutations } from './functions/userMutations/resource';
 import { attachBudgetAlarms, readBudgetConfig } from './budgets';
 
 const backend = defineBackend({
@@ -20,6 +21,7 @@ const backend = defineBackend({
   linguistic,
   postConfirmation,
   discordOidcBridge,
+  userMutations,
 });
 
 // Discord OIDC bridge needs a public HTTPS endpoint so Cognito can hit
