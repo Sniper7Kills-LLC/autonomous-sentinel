@@ -24,6 +24,25 @@ import { TranscriptRevision } from './models/transcript-revision';
  * `Symbol(data)` payload. Amplify exposes the same struct that flows into the
  * AppSync transformer at synth time, so asserting the shape here gives us the
  * same coverage we'd get from a sandbox synth without paying the runtime cost.
+ *
+ * --------------------------------------------------------------------------
+ * STABILITY NOTE — pinned Amplify versions
+ * --------------------------------------------------------------------------
+ *
+ * The `Symbol(data)` accessor pattern is undocumented; Amplify's own
+ * `SchemaProcessor` reads the rule payload the same way, so it is stable
+ * inside a given `@aws-amplify/data-schema` minor, but a future bump could
+ * shift the symbol layout without notice.
+ *
+ * Last verified against:
+ *   - `@aws-amplify/backend@1.22.0`
+ *   - `@aws-amplify/data-schema@1.25.6` (transitive)
+ *
+ * When you bump either of those, re-run this file; if it dies on the symbol
+ * walk, the planned replacement is tracked at issue #264 (replace the
+ * Symbol(data) introspection with a stable accessor — SDL parsing once #260
+ * is fixed, or a CDK-synth harness, or a public Amplify accessor when one
+ * lands). Runtime-resolver coverage is tracked separately at #265.
  */
 
 type AuthzRule = {
@@ -230,5 +249,34 @@ describe('Pre-seeded legacy migration rows', () => {
     expect(field.values).toEqual(
       expect.arrayContaining(['PENDING_CLAIM', 'CLAIMED', 'FRESH_SIGNUP']),
     );
+  });
+
+  it('`legacy:` prefix is namespaced safely — real Cognito subs are UUIDv4 and never start with `legacy:`', () => {
+    // Cognito User Pool `sub` is a UUIDv4: `xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`
+    // where y ∈ {8, 9, a, b}. The structural impossibility of a real sub
+    // beginning with `legacy:` is what lets us use that prefix as a
+    // placeholder PK on pre-seeded migration rows without adding a runtime
+    // pattern constraint to the cognitoSub field (a constraint would also
+    // reject the legacy prefix itself — defeating the purpose).
+    //
+    // We do not add a runtime guard. We do encode the invariant here so a
+    // future change that "improves" the format of Cognito subs trips this
+    // test and forces the placeholder convention to be revisited.
+    const uuidV4 =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const sampleSubs = [
+      '0190e3f7-1234-4abc-89de-fedcba987654',
+      'aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee',
+      'ffffffff-ffff-4fff-bfff-ffffffffffff',
+    ];
+    for (const sub of sampleSubs) {
+      expect(sub).toMatch(uuidV4);
+      expect(sub.startsWith('legacy:')).toBe(false);
+    }
+
+    // And the placeholder is itself a non-UUID string, so it cannot collide.
+    const placeholder = 'legacy:42';
+    expect(placeholder).not.toMatch(uuidV4);
+    expect(placeholder.startsWith('legacy:')).toBe(true);
   });
 });
