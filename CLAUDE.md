@@ -16,9 +16,9 @@ The legacy app (`existing/` in this directory) requires manual transcription. Th
 
 Top-line goals:
 
-1. Eliminate manual message entry.
-2. Make a recording mandatory for every entry.
-3. Hit a **30-minute SLA** from broadcast end → published entry.
+1. Prefer SDR-driven entries — the automated capture → transcribe → parse → validate path is the happy path for organic submissions.
+2. Allow recording-less entries when needed (v3 archive carries them; v4 accepts user-submitted Messages without audio gated by an anti-spam verification step — see "Recording-less submissions").
+3. Hit a **30-minute SLA** from broadcast end → published entry on the SDR-driven path.
 
 ## Architecture
 
@@ -127,9 +127,16 @@ Live updates pushed via AppSync subscription to all connected clients
 
 ### Recording deletion
 
-- Admin deletes a Recording → cascade-deletes the Message (legacy-style: messages with no recording cease to exist).
+- Admin deletes a Recording → **no cascade to the Message**. Messages can exist without a Recording: the v3 archive ships Messages with no audio (kept for analytics), and the v4 submission flow allows recording-less entries (gated by an anti-spam verification step — see "Recording-less submissions" below).
 - Recording row: **soft-delete** in DynamoDB (audit trail).
 - Recording file in S3: **hard-delete**, with **S3 versioning + 30-day delete-marker retention** so admins can restore within the recovery window.
+
+### Recording-less submissions
+
+- v3 archive contains Messages with no Recording. They stay in v4 for analytics + searchable history.
+- v4 submission flow accepts user-submitted Messages **without** a Recording, gated by a verification step to prevent spam. Mechanism TBD (CAPTCHA / reputation-gate / queued-for-mod-review / proof-of-witnessing — pick at scoping time).
+- The "no manual entry" rule from CLAUDE.md ("Eliminate manual message entry" goal) was an _automation preference_, not a hard ban: organic recording-less submissions are still allowed when the verification step passes.
+- One Message → 0..N Recordings (was: 1..N).
 
 ### Message deletion
 
@@ -141,7 +148,7 @@ Live updates pushed via AppSync subscription to all connected clients
 
 - **Message** — broadcast event. UUID PK. Fields: `broadcast_ts` (UTC), `sender`, `receiver`, `type`, parsed body, character/codeword counts, confidence score, `legacy_uuid` (nullable), soft-delete flag, audit chain.
 - **Message type** — keep legacy enum: `BACKEND`, `SKYKING`, `ALLSTATIONS`, `RADIOCHECK`, `SKYMASTER`, `SKYBIRD`, `DISREGARDED`, `OTHER`. New types may be added; don't silently rename.
-- **Recording** — audio file. UUID PK. **One Message → many Recordings** (multiple SDRs catch the same broadcast). Hash-deduplicated: identical content_hash rejected on upload (logged for review as possible malicious actor). Has `frequency_khz` (int), `modulation` (USB/LSB/AM/FM enum), `broadcasted_at`, `automated`, `sdr_id`, `transcription_failed` flag, soft-delete flag.
+- **Recording** — audio file. UUID PK. **One Message → 0..N Recordings** (multiple SDRs catch the same broadcast; legacy + recording-less submissions land with zero). Hash-deduplicated: identical content_hash rejected on upload (logged for review as possible malicious actor). Has `frequency_khz` (int), `modulation` (USB/LSB/AM/FM enum), `broadcasted_at`, `automated`, `sdr_id`, `transcription_failed` flag, soft-delete flag.
 - **Revision** — append-only change log on Messages and Transcripts. Tracks actor + diff + timestamp. Visible to users.
 - **AuditLog** — every admin/mod action with diff. Visible where appropriate. Retained forever.
 - **SDR** — registered radio. Owned by a User. Has `name`, `location` (lat/lon, user-chosen via map selector with user-selectable granularity), `transmitter_id` (optional, admin-assigned).
@@ -354,7 +361,7 @@ Community-corrected transcripts stored as revisions. Custom EAM Whisper fine-tun
 - **Do not create git worktrees inside `.claude/` or `docs/decisions/`** — those paths hold config and immutable history. Worktrees there confuse settings discovery and pollute history.
 - **Do not modify `docs/decisions/round-*.txt`** — append-only history. New decisions update `CLAUDE.md` (here) and live in the issue thread that produced them.
 - **Amplify Gen 2 idioms only** — `defineBackend()`, `defineAuth()`, `defineData()`, `defineFunction()`, `defineStorage()`. No Gen 1 CLI artifacts.
-- **No new manual-entry flows.** Every Message originates from a Recording. Manual user transcripts only enter via the failed-recording correction path.
+- **Prefer SDR-driven entries; verification-gated recording-less entries allowed.** The automated SDR → transcribe → parse path is the happy path. Recording-less submissions are accepted via the verification-gated submission flow (see "Recording-less submissions" above). Manual user transcripts on a Recording still only enter via the failed-recording correction path.
 - **Recording = source of truth.** Transcript and parsed Message fields are derived. Edits **append revisions**; never overwrite.
 - **Configurable Linguistic Logic.** Rules, schemas, thresholds load from DynamoDB at runtime.
 - **30-minute SLA is real.** Use async + queue between stages, not chained synchronous calls. Pipeline must support retrieval/retry of stuck recordings.

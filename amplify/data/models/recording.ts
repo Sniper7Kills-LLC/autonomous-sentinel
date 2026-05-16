@@ -123,12 +123,12 @@ export const Recording = a
  * Lambda-backed (see `functions/recordingMutations`) so the audit
  * helper is the sole AuditLog writer.
  *
- * Cascade behaviour: after the Recording row is soft-deleted, the
- * handler Queries siblings by `messageId` (sparse — only live rows
- * count). If none remain, the parent Message is also soft-deleted
- * with a system-actor `MESSAGE_DELETE` audit entry tagged with
- * `reason='cascade — last recording deleted'`. CLAUDE.md is explicit
- * that "messages with no recording cease to exist".
+ * No cascade to the parent Message on Recording delete. The v3
+ * archive contains Messages with no Recording for analytics, and
+ * the v4 submission flow supports recording-less entries gated by a
+ * verification step (anti-spam — tracked separately). A Recording
+ * delete therefore touches only the Recording row; the parent
+ * Message keeps standing.
  *
  * Deferred (out of scope, tracked separately):
  *   - S3 hard-delete of the original / web-canonical / sidecar keys.
