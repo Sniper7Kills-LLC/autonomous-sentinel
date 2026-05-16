@@ -27,6 +27,13 @@
  * Reputation.computedWeight at vote-cast time is a follow-up (tracked on
  * #266 as deferred behaviour — see field-vote.ts docstring).
  *
+ * Orphan votes: this resolver does not GetItem on Message before the
+ * upsert, so a vote cast concurrently with a Message delete can land
+ * on a non-existent messageId. Orphans are inert — the public
+ * aggregate-count query joins on Message.id, so a row with no parent
+ * never surfaces — and a scheduled janitor sweep is the planned
+ * cleanup path (see field-vote.ts deferred list).
+ *
  * This file is shipped as-is to AppSync (APPSYNC_JS runtime 1.0.0). The
  * runtime does not transpile — keep this JS, no TypeScript syntax. Types
  * are documented via JSDoc and pinned by `./cast-field-vote.test.ts`.

@@ -1,6 +1,31 @@
 import { describe, it, expect } from 'vitest';
 import { FieldVote, castFieldVote } from './field-vote';
 
+type AuthzRule = {
+  strategy: string;
+  operations?: string[];
+  groupOrOwnerField?: string;
+  identityClaim?: string;
+  groups?: string[];
+};
+
+function authzRules(model: unknown): AuthzRule[] {
+  const surface = model as { data: { authorization: readonly object[] } };
+  return surface.data.authorization.map((rule): AuthzRule => {
+    const symbols = Object.getOwnPropertySymbols(rule);
+    const sym = symbols[0];
+    if (sym === undefined) {
+      throw new Error('Authorization rule missing internal symbol payload');
+    }
+    const indexed = rule as { [k: symbol]: AuthzRule | undefined };
+    const payload = indexed[sym];
+    if (payload === undefined) {
+      throw new Error('Authorization rule symbol payload was undefined');
+    }
+    return payload;
+  });
+}
+
 /**
  * Schema-shape tests for FieldVote and its companion `castFieldVote`
  * mutation (#266).
@@ -101,6 +126,37 @@ describe('FieldVote model identifier (issue #266)', () => {
     const idx = indexes.find((i) => i.data.partitionKey === 'messageId');
     expect(idx).toBeDefined();
     expect(idx?.data.sortKeys).toEqual(['field', 'voterId']);
+  });
+});
+
+describe('FieldVote authorization (review-fix: castFieldVote is sole write path)', () => {
+  it('does not grant `create` to authenticated callers', () => {
+    // The auto-generated `createFieldVote` mutation would accept a
+    // client-supplied `voterId` argument and silently bypass the
+    // `ctx.identity.sub` derivation in `castFieldVote`. Dropping
+    // `create` from the authenticated rule closes that forgery path.
+    const authenticated = authzRules(FieldVote).filter(
+      (r) => r.strategy === 'public' || r.strategy === 'private',
+    );
+    for (const rule of authenticated) {
+      expect(rule.operations).not.toContain('create');
+    }
+  });
+
+  it('authenticated callers still get `read`', () => {
+    const authenticated = authzRules(FieldVote).filter(
+      (r) => r.strategy === 'public' || r.strategy === 'private',
+    );
+    const hasRead = authenticated.some((r) => r.operations?.includes('read'));
+    expect(hasRead).toBe(true);
+  });
+
+  it('owner rule (voterId) still owns update + delete', () => {
+    const owner = authzRules(FieldVote).find((r) => r.strategy === 'owner');
+    expect(owner).toBeDefined();
+    expect(owner?.groupOrOwnerField).toBe('voterId');
+    expect(owner?.identityClaim).toBe('sub');
+    expect(owner?.operations).toEqual(expect.arrayContaining(['update', 'delete']));
   });
 });
 

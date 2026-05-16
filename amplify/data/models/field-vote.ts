@@ -30,6 +30,13 @@ import { a } from '@aws-amplify/backend';
  *     while preserving raw access for mods + admins.
  *   - Reputation-snapshot hook that pulls live `computedWeight` at
  *     vote-cast time (the resolver currently snapshots 1).
+ *   - Orphan-vote janitor: `castFieldVote` does not pre-check that
+ *     `messageId` references an existing Message row, so a vote cast
+ *     concurrently with a Message delete can land an orphan. Orphans
+ *     are inert (no aggregate query joins them to a public message),
+ *     so they consume DDB storage only. A scheduled janitor that
+ *     sweeps FieldVote rows whose `messageId` no longer resolves is
+ *     tracked as a follow-up.
  */
 export const FieldVote = a
   .model({
@@ -56,7 +63,12 @@ export const FieldVote = a
   // per-voter dedupe scan cheap when we render the aggregate.
   .secondaryIndexes((i) => [i('messageId').sortKeys(['field', 'voterId'])])
   .authorization((allow) => [
-    allow.authenticated().to(['read', 'create']),
+    // No `create` here — `castFieldVote` is the sole write path so the
+    // resolver can derive `voterId` from `ctx.identity.sub` (#259).
+    // Leaving the auto-generated `createFieldVote` mutation live would
+    // accept an attacker-supplied `voterId` argument and defeat that
+    // invariant.
+    allow.authenticated().to(['read']),
     // Voter = the Cognito sub stored in `voterId` (#259).
     allow.ownerDefinedIn('voterId').identityClaim('sub').to(['update', 'delete']),
     allow.groups(['moderator', 'admin']).to(['read']),
