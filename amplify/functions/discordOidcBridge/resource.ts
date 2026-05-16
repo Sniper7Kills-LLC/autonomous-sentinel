@@ -21,9 +21,10 @@ import { defineFunction, secret } from '@aws-amplify/backend';
  *   - DISCORD_BRIDGE_PRIVATE_KEY  — PEM-encoded RSA 2048 private key
  *   - DISCORD_BRIDGE_PUBLIC_KEY   — PEM-encoded matching public key
  *
- * Deploy is two-stage: first deploy lets us read the Lambda function URL,
- * which becomes the OIDC issuer + Cognito IdP `issuer_url`. The function URL
- * is wired in `backend.ts` (CDK escape hatch).
+ * The function URL is added in `backend.ts` and passed through as the
+ * `OIDC_ISSUER` env var via a CDK token, so id_tokens carry the right `iss`.
+ * Cognito's OIDC IdP wiring (issue #254) consumes the same token directly via
+ * a CDK escape hatch — no hardcoded URL, single deploy.
  */
 export const discordOidcBridge = defineFunction({
   name: 'discordOidcBridge',

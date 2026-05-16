@@ -39,10 +39,10 @@ const discordBridgeUrl = backend.discordOidcBridge.resources.lambda.addFunctionU
   discordBridgeUrl.url,
 );
 
-// Surface the bridge URL as a stack output so operators can plug it into the
-// Cognito OIDC IdP config on the follow-up deploy (Cognito's `issuer_url` is a
-// plain string, not a CDK token, so the two-stage deploy is unavoidable until
-// we add a custom resource).
+// Surface the bridge URL as a stack output so operators / web clients can see
+// where the bridge lives. The Cognito OIDC IdP itself is wired in #254 via a
+// CDK escape hatch using `discordBridgeUrl.url` directly as a token — no
+// hardcoded URL, single deploy.
 backend.addOutput({
   custom: {
     discordOidcBridgeUrl: discordBridgeUrl.url,
