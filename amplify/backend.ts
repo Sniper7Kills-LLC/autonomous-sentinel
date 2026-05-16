@@ -1,6 +1,11 @@
 import { defineBackend } from '@aws-amplify/backend';
 import { Fn } from 'aws-cdk-lib';
-import { FunctionUrlAuthType, InvokeMode } from 'aws-cdk-lib/aws-lambda';
+import {
+  type Function as LambdaFunction,
+  FunctionUrlAuthType,
+  InvokeMode,
+} from 'aws-cdk-lib/aws-lambda';
+import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { auth, discordIssuerUrl } from './auth/resource';
 import { data } from './data/resource';
 import { storage } from './storage/resource';
@@ -10,6 +15,7 @@ import { linguistic } from './functions/linguistic/resource';
 import { postConfirmation } from './functions/postConfirmation/resource';
 import { discordOidcBridge } from './functions/discordOidcBridge/resource';
 import { userMutations } from './functions/userMutations/resource';
+import { legacyClaimWorker } from './functions/legacyClaimWorker/resource';
 import { attachBudgetAlarms, readBudgetConfig } from './budgets';
 
 const backend = defineBackend({
@@ -22,7 +28,45 @@ const backend = defineBackend({
   postConfirmation,
   discordOidcBridge,
   userMutations,
+  legacyClaimWorker,
 });
+
+// Wire the legacy-claim worker into postConfirmation (sub-A of #16 / #272).
+//
+// postConfirmation async-invokes the worker on a legacy-email match so
+// the user's sign-up does not block on the DDB transact + audit write.
+// The worker re-queries the legacy row server-side, runs the helper
+// `linkLegacyClaim`, and emits the `USER_CLAIM` audit entry.
+//
+// Two wiring pieces:
+//   1. Function-name env var on postConfirmation so its `InvokeCommand`
+//      can target the worker without an SDK lookup.
+//   2. IAM grant: postConfirmation → `lambda:InvokeFunction` on worker;
+//      worker → `dynamodb:TransactWriteItems` on the User table; worker
+//      gets `USER_TABLE_NAME` env so it can address that table.
+const userTable = backend.data.resources.tables['User'];
+if (!userTable) {
+  // Defensive — Amplify always emits the User table for our schema.
+  // A missing entry means the data stack failed to synth, which would
+  // already break the build downstream. Throw here for a clearer error.
+  throw new Error('backend: User table not found on data resources');
+}
+const legacyClaimWorkerLambda = backend.legacyClaimWorker.resources.lambda as LambdaFunction;
+const postConfirmationLambda = backend.postConfirmation.resources.lambda as LambdaFunction;
+
+postConfirmationLambda.addEnvironment(
+  'LEGACY_CLAIM_WORKER_FUNCTION_NAME',
+  legacyClaimWorkerLambda.functionName,
+);
+legacyClaimWorkerLambda.addEnvironment('USER_TABLE_NAME', userTable.tableName);
+
+legacyClaimWorkerLambda.grantInvoke(postConfirmationLambda);
+legacyClaimWorkerLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:TransactWriteItems', 'dynamodb:PutItem', 'dynamodb:DeleteItem'],
+    resources: [userTable.tableArn],
+  }),
+);
 
 // Discord OIDC bridge needs a public HTTPS endpoint so Cognito can hit
 // `/.well-known/openid-configuration`, `/authorize`, `/token`, etc. A Lambda
