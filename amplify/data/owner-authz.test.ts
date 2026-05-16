@@ -108,9 +108,7 @@ function ownerRules(model: unknown): AuthzRule[] {
 }
 
 function adminGroupRules(model: unknown): AuthzRule[] {
-  return authzRules(model).filter(
-    (r) => r.strategy === 'groups' && r.groups?.includes('admin'),
-  );
+  return authzRules(model).filter((r) => r.strategy === 'groups' && r.groups?.includes('admin'));
 }
 
 function getIdentifier(model: unknown): readonly string[] {
@@ -138,20 +136,19 @@ describe('User identifier strategy (Option A: cognitoSub = PK)', () => {
   it('drops the now-redundant cognitoSub secondary index', () => {
     // cognitoSub is the PK — querying by it goes through the base table, not
     // a GSI. Keeping a GSI on the PK would duplicate the table at extra cost.
-    const partitionKeys = getSecondaryIndexes(User).map(
-      (i) => i.data.partitionKey,
-    );
+    const partitionKeys = getSecondaryIndexes(User).map((i) => i.data.partitionKey);
     expect(partitionKeys).not.toContain('cognitoSub');
   });
 
-  it('keeps the owner binding on cognitoSub with identityClaim sub', () => {
+  it('has no owner-update rule — User writes route through custom mutations', () => {
+    // Per PR #269 review: an `allow.ownerDefinedIn('cognitoSub')`
+    // grant on User was row-level, not field-level, so a banned user
+    // could clear their own ban via the auto-generated `updateUser`.
+    // The owner rule was removed; selfDelete + banUser + the future
+    // updateProfile own all writes so the field-level gate lives in
+    // the resolver.
     const owners = ownerRules(User);
-    expect(owners).toHaveLength(1);
-    expect(owners[0]).toMatchObject({
-      groupOrOwnerField: 'cognitoSub',
-      identityClaim: 'sub',
-      operations: ['update'],
-    });
+    expect(owners).toHaveLength(0);
   });
 
   it('still gives admins full CRUD', () => {
@@ -176,17 +173,14 @@ describe('Owner-FK binding wires explicit field + sub claim', () => {
       model: NotificationPreference,
       fkField: 'userId',
     },
-  ])(
-    '$name binds owner authz to $fkField + identityClaim sub',
-    ({ model, fkField }) => {
-      const owners = ownerRules(model);
-      expect(owners.length).toBeGreaterThan(0);
-      for (const rule of owners) {
-        expect(rule.groupOrOwnerField).toBe(fkField);
-        expect(rule.identityClaim).toBe('sub');
-      }
-    },
-  );
+  ])('$name binds owner authz to $fkField + identityClaim sub', ({ model, fkField }) => {
+    const owners = ownerRules(model);
+    expect(owners.length).toBeGreaterThan(0);
+    for (const rule of owners) {
+      expect(rule.groupOrOwnerField).toBe(fkField);
+      expect(rule.identityClaim).toBe('sub');
+    }
+  });
 });
 
 describe('Admin group rules survive the rewire', () => {
@@ -222,10 +216,7 @@ describe('Recording / TranscriptRevision FK semantics now store the sub', () => 
   });
 
   it('TranscriptRevision.proposedBy remains an id field', () => {
-    const field = getField(
-      TranscriptRevision,
-      'proposedBy',
-    ) as ScalarFieldShape;
+    const field = getField(TranscriptRevision, 'proposedBy') as ScalarFieldShape;
     expect(field.data.fieldType).toBe('ID');
   });
 });
@@ -262,8 +253,7 @@ describe('Pre-seeded legacy migration rows', () => {
     // We do not add a runtime guard. We do encode the invariant here so a
     // future change that "improves" the format of Cognito subs trips this
     // test and forces the placeholder convention to be revisited.
-    const uuidV4 =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     const sampleSubs = [
       '0190e3f7-1234-4abc-89de-fedcba987654',
       'aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee',

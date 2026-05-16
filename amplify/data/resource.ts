@@ -1,5 +1,7 @@
 import { type ClientSchema, a, defineData } from '@aws-amplify/backend';
-import { User } from './models/user';
+import { User, selfDelete, banUser, getUserPublic } from './models/user';
+import { userMutations } from '../functions/userMutations/resource';
+import { postConfirmation } from '../functions/postConfirmation/resource';
 import { Message } from './models/message';
 import { Recording } from './models/recording';
 import { Sdr } from './models/sdr';
@@ -37,46 +39,61 @@ import {
  *   - Soft deletes everywhere; AuditLog is the source of truth.
  *   - GraphQL is anon-readable for public browse (legacy site behavior).
  */
-export const schema = a.schema({
-  // Identity + reputation
-  User,
-  Reputation,
+export const schema = a
+  .schema({
+    // Identity + reputation
+    User,
+    Reputation,
 
-  // Broadcast catalog
-  Message,
-  Recording,
-  Sdr,
-  Transmitter,
+    // Broadcast catalog
+    Message,
+    Recording,
+    Sdr,
+    Transmitter,
 
-  // Community
-  Comment,
-  FieldVote,
-  FieldVoteField,
-  TranscriptRevision,
-  RevisionVote,
-  AbuseReport,
+    // Community
+    Comment,
+    FieldVote,
+    FieldVoteField,
+    TranscriptRevision,
+    RevisionVote,
+    AbuseReport,
 
-  // Reference data
-  Callsign,
-  LinguisticConfig,
-  BannedRegionPage,
+    // Reference data
+    Callsign,
+    LinguisticConfig,
+    BannedRegionPage,
 
-  // Money + accounts
-  Donation,
-  NotificationPreference,
-  EmailSuppression,
-  SuppressionReason,
+    // Money + accounts
+    Donation,
+    NotificationPreference,
+    EmailSuppression,
+    SuppressionReason,
 
-  // Audit
-  AuditLog,
+    // Audit
+    AuditLog,
 
-  // SES bounce/complaint suppression — issue #249
-  suppressEmail,
-  isSuppressed,
+    // SES bounce/complaint suppression — issue #249
+    suppressEmail,
+    isSuppressed,
 
-  // Synthesised composite-PK FieldVote upsert — issue #266
-  castFieldVote,
-});
+    // Synthesised composite-PK FieldVote upsert — issue #266
+    castFieldVote,
+
+    // User lifecycle mutations + PII-filtered read — issue #248
+    selfDelete,
+    banUser,
+    getUserPublic,
+  })
+  .authorization((allow) => [
+    // Schema-level Lambda access grants (issue #248).
+    //   - userMutations: queries User to load the target row + AuditLog
+    //     for the post-mutation audit; mutates User + AuditLog.
+    //   - postConfirmation: creates the freshly-signed-up User row from
+    //     the Cognito event identity (#15 follow-up wiring).
+    allow.resource(userMutations).to(['query', 'mutate']),
+    allow.resource(postConfirmation).to(['query', 'mutate']),
+  ]);
 
 export type Schema = ClientSchema<typeof schema>;
 

@@ -1,13 +1,75 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 import { mockClient } from 'aws-sdk-client-mock';
 import {
   CognitoIdentityProviderClient,
   AdminAddUserToGroupCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
 import type { PostConfirmationTriggerEvent, Context } from 'aws-lambda';
-import { handler } from './handler';
+import { handler, __setDataDeps, __resetDataDeps } from './handler';
 
 const cognitoMock = mockClient(CognitoIdentityProviderClient);
+
+/**
+ * Shape of the Amplify Data client stub used by the handler tests. Mirrors
+ * the narrow surface in `handler.ts` so we can assert what the handler
+ * writes into DynamoDB without standing up a real Amplify runtime.
+ */
+interface UserRow {
+  cognitoSub: string;
+  email?: string | null;
+  claimStatus?: string | null;
+  piiBlanked?: boolean | null;
+  legacyEmail?: string | null;
+  legacyUserId?: number | null;
+}
+
+function makeStubDataClient(opts: { existingByEmail?: UserRow | null } = {}): {
+  client: {
+    models: {
+      User: {
+        listUserByEmail: ReturnType<typeof vi.fn>;
+        create: ReturnType<typeof vi.fn>;
+        update: ReturnType<typeof vi.fn>;
+      };
+    };
+  };
+  createSpy: ReturnType<typeof vi.fn>;
+  updateSpy: ReturnType<typeof vi.fn>;
+  listByEmailSpy: ReturnType<typeof vi.fn>;
+} {
+  const createSpy = vi.fn((input: UserRow) =>
+    Promise.resolve({
+      data: { ...input },
+      errors: undefined,
+    }),
+  );
+  const updateSpy = vi.fn((input: Partial<UserRow> & { cognitoSub: string }) =>
+    Promise.resolve({
+      data: { ...input },
+      errors: undefined,
+    }),
+  );
+  const listByEmailSpy = vi.fn(() =>
+    Promise.resolve({
+      data: opts.existingByEmail ? [opts.existingByEmail] : [],
+      errors: undefined,
+    }),
+  );
+  return {
+    createSpy,
+    updateSpy,
+    listByEmailSpy,
+    client: {
+      models: {
+        User: {
+          listUserByEmail: listByEmailSpy,
+          create: createSpy,
+          update: updateSpy,
+        },
+      },
+    },
+  };
+}
 
 function makeEvent(
   overrides: Partial<PostConfirmationTriggerEvent> = {},
@@ -26,9 +88,17 @@ function makeEvent(
 }
 
 describe('postConfirmation handler', () => {
+  let stub: ReturnType<typeof makeStubDataClient>;
+
   beforeEach(() => {
     cognitoMock.reset();
     vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    stub = makeStubDataClient();
+    __setDataDeps({ client: stub.client });
+  });
+
+  afterAll(() => {
+    __resetDataDeps();
   });
 
   it('adds the new user to the member group on ConfirmSignUp', async () => {
@@ -74,5 +144,145 @@ describe('postConfirmation handler', () => {
     const event = makeEvent();
 
     await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow('boom');
+  });
+});
+
+/**
+ * Tests for the second half of postConfirmation: creating the User row
+ * keyed on the Cognito sub from `event.request.userAttributes.sub`. This
+ * is the wiring referenced in CLAUDE.md's "post-confirmation Lambda is
+ * the right hook to create the User row on first signup" and listed in
+ * issue #248's acceptance criteria.
+ *
+ * The handler still adds the user to the `member` group first; the User
+ * row write is a separate step so a User-row failure does not block
+ * group membership.
+ */
+describe('postConfirmation handler — User row creation (issue #248)', () => {
+  let stub: ReturnType<typeof makeStubDataClient>;
+
+  beforeEach(() => {
+    cognitoMock.reset();
+    cognitoMock.on(AdminAddUserToGroupCommand).resolves({});
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    stub = makeStubDataClient();
+    __setDataDeps({ client: stub.client });
+  });
+
+  afterAll(() => {
+    __resetDataDeps();
+  });
+
+  it('creates a User row keyed on the Cognito sub from userAttributes', async () => {
+    const event = makeEvent({
+      userName: 'cognito-user-name',
+      request: {
+        userAttributes: {
+          sub: 'cognito-sub-aaa',
+          email: 'fresh@example.com',
+          email_verified: 'true',
+        },
+      },
+    });
+
+    await handler(event, {} as Context, () => undefined);
+
+    expect(stub.createSpy).toHaveBeenCalledOnce();
+    const input = stub.createSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(input.cognitoSub).toBe('cognito-sub-aaa');
+    expect(input.email).toBe('fresh@example.com');
+  });
+
+  it('sets claimStatus=FRESH_SIGNUP and piiBlanked=false on the new row', async () => {
+    const event = makeEvent({
+      request: {
+        userAttributes: { sub: 'cognito-sub-bbb', email: 'b@example.com' },
+      },
+    });
+
+    await handler(event, {} as Context, () => undefined);
+
+    const input = stub.createSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(input.claimStatus).toBe('FRESH_SIGNUP');
+    expect(input.piiBlanked).toBe(false);
+  });
+
+  it('skips User row creation on ConfirmForgotPassword (existing user; row already exists)', async () => {
+    const event = makeEvent({ triggerSource: 'PostConfirmation_ConfirmForgotPassword' });
+
+    await handler(event, {} as Context, () => undefined);
+
+    expect(stub.createSpy).not.toHaveBeenCalled();
+  });
+
+  it('still adds the user to the member group even when the User row write fails', async () => {
+    // CLAUDE.md: "30-minute SLA is real — pipeline must support retrieval/retry".
+    // A DDB hiccup on the User-row write must not break group membership;
+    // the row can always be reconciled later. We swallow the data-client
+    // error and log it, but the group-add side must already have run by
+    // then.
+    stub.createSpy.mockImplementationOnce(() =>
+      Promise.resolve({ data: null, errors: [{ message: 'DDB throttled' }] }),
+    );
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const event = makeEvent();
+    await handler(event, {} as Context, () => undefined);
+
+    expect(cognitoMock.commandCalls(AdminAddUserToGroupCommand)).toHaveLength(1);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('bails on User.create when the legacyEmail lookup throws (review fix — #248)', async () => {
+    // Reviewer flagged that a transient DDB throttle / ECONNRESET on the
+    // legacyEmail lookup used to fall through to `User.create`, which
+    // could duplicate a legacy row that actually exists. The handler
+    // now bails so Cognito's at-least-once retry resolves it on the
+    // next call. Group-add already happened, so sign-in continues to
+    // work.
+    stub.listByEmailSpy.mockImplementationOnce(() => Promise.reject(new Error('DDB throttled')));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const event = makeEvent({
+      request: {
+        userAttributes: { sub: 'cognito-sub-ccc', email: 'maybe-legacy@example.com' },
+      },
+    });
+    await handler(event, {} as Context, () => undefined);
+
+    expect(stub.createSpy).not.toHaveBeenCalled();
+    expect(cognitoMock.commandCalls(AdminAddUserToGroupCommand)).toHaveLength(1);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('links a pre-seeded legacy row instead of creating a fresh one when legacyEmail matches', async () => {
+    // Migration seed: a `legacy:<id>` row exists with the new user's email
+    // pre-populated in `legacyEmail`. Post-confirmation should swap the
+    // placeholder PK for the real sub rather than create a duplicate.
+    stub = makeStubDataClient({
+      existingByEmail: {
+        cognitoSub: 'legacy:42',
+        email: null,
+        legacyEmail: 'reclaim@example.com',
+        legacyUserId: 42,
+        claimStatus: 'PENDING_CLAIM',
+      },
+    });
+    __setDataDeps({ client: stub.client });
+
+    const event = makeEvent({
+      request: {
+        userAttributes: { sub: 'cognito-sub-real-42', email: 'reclaim@example.com' },
+      },
+    });
+    await handler(event, {} as Context, () => undefined);
+
+    // For #248 scope: we MUST not create a fresh-signup row when a
+    // legacy row matches the email. The actual rewrite-and-claim flow
+    // lives in #16; here we conservatively skip creation and log so the
+    // claim flow can take over.
+    expect(stub.createSpy).not.toHaveBeenCalled();
   });
 });

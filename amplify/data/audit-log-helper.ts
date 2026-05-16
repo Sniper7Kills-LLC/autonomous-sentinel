@@ -88,8 +88,13 @@ export interface AuditOptions {
   before?: Record<string, unknown>;
   /** Snapshot of the target after the mutation, for diff computation. */
   after?: Record<string, unknown>;
-  /** Human-readable reason; required for moderator-discretion actions. */
-  reason?: string;
+  /**
+   * Human-readable reason; required for moderator-discretion actions.
+   * Callers may pass `null` for "no reason"; the DB column stores
+   * `null` in both the omitted and the explicit-null case so a single
+   * `reason = NULL` predicate finds both shapes.
+   */
+  reason?: string | null;
 }
 
 /**
