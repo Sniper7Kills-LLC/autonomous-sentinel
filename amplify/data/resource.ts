@@ -16,7 +16,12 @@ import { Donation } from './models/donation';
 import { NotificationPreference } from './models/notification-preference';
 import { BannedRegionPage } from './models/banned-region-page';
 import { LinguisticConfig } from './models/linguistic-config';
-import { EmailSuppression } from './models/email-suppression';
+import {
+  EmailSuppression,
+  SuppressionReason,
+  suppressEmail,
+  isSuppressed,
+} from './models/email-suppression';
 
 /**
  * Amplify Gen 2 data model for Autonomous Sentinel.
@@ -59,9 +64,14 @@ const schema = a.schema({
   Donation,
   NotificationPreference,
   EmailSuppression,
+  SuppressionReason,
 
   // Audit
   AuditLog,
+
+  // SES bounce/complaint suppression — issue #249
+  suppressEmail,
+  isSuppressed,
 });
 
 export type Schema = ClientSchema<typeof schema>;
