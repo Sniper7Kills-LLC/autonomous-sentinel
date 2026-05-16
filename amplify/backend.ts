@@ -5,6 +5,7 @@ import { storage } from './storage/resource';
 import { preprocess } from './functions/preprocess/resource';
 import { transcribe } from './functions/transcribe/resource';
 import { linguistic } from './functions/linguistic/resource';
+import { postConfirmation } from './functions/postConfirmation/resource';
 
 defineBackend({
   auth,
@@ -13,4 +14,5 @@ defineBackend({
   preprocess,
   transcribe,
   linguistic,
+  postConfirmation,
 });

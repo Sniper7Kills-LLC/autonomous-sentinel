@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { auth, authConfig } from './resource';
+import { postConfirmation } from '../functions/postConfirmation/resource';
 
 describe('auth resource', () => {
   it('exports an Amplify auth resource', () => {
@@ -31,5 +32,25 @@ describe('auth resource', () => {
 
   it('does not register external providers at this stage (Google → #13, Discord → #14)', () => {
     expect('externalProviders' in authConfig.loginWith).toBe(false);
+  });
+
+  it('registers the postConfirmation trigger (issue #15)', () => {
+    expect(authConfig.triggers?.postConfirmation).toBe(postConfirmation);
+  });
+
+  it('grants addUserToGroup access to the postConfirmation Lambda', () => {
+    type AccessFn = NonNullable<typeof authConfig.access>;
+    const allow = {
+      resource: (r: unknown) => ({
+        to: (actions: string[]) => ({ resource: r, actions }),
+      }),
+    } as unknown as Parameters<AccessFn>[0];
+    const defs = authConfig.access(allow) as unknown as Array<{
+      resource: unknown;
+      actions: string[];
+    }>;
+    expect(defs).toHaveLength(1);
+    expect(defs[0]?.resource).toBe(postConfirmation);
+    expect(defs[0]?.actions).toEqual(['addUserToGroup']);
   });
 });
