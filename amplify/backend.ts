@@ -1,6 +1,6 @@
 import { defineBackend } from '@aws-amplify/backend';
+import { Fn } from 'aws-cdk-lib';
 import { FunctionUrlAuthType, InvokeMode } from 'aws-cdk-lib/aws-lambda';
-import type { Function as LambdaFunction } from 'aws-cdk-lib/aws-lambda';
 import { auth, discordIssuerUrl } from './auth/resource';
 import { data } from './data/resource';
 import { storage } from './storage/resource';
@@ -30,20 +30,18 @@ const discordBridgeUrl = backend.discordOidcBridge.resources.lambda.addFunctionU
   invokeMode: InvokeMode.BUFFERED,
 });
 
-// Feed the function URL back in as `OIDC_ISSUER` so the bridge mints id_tokens
-// whose `iss` claim matches what Cognito sees. `resources.lambda` is typed as
-// the read-only `IFunction` interface; at runtime it is the mutable `Function`
-// subclass, so the cast is safe.
-(backend.discordOidcBridge.resources.lambda as LambdaFunction).addEnvironment(
-  'OIDC_ISSUER',
-  discordBridgeUrl.url,
-);
-
 // Plug the bridge function URL into the Cognito OIDC IdP we declared in
 // `auth/resource.ts`. The `discordIssuerUrl` holder is a `Lazy.string`
 // produce-target — CDK resolves it at synth, CFN resolves the underlying
 // function-URL token at deploy. No hardcoded URL, single deploy (issue #254).
-discordIssuerUrl.url = discordBridgeUrl.url;
+//
+// `discordBridgeUrl.url` resolves to e.g. `https://abc.lambda-url.us-east-1.on
+// .aws/` (trailing slash). The bridge handler derives its own issuer from
+// `event.requestContext.domainName`, which has no scheme and no trailing
+// slash, so we strip the trailing slash here to keep the `iss` claim in
+// minted id_tokens byte-for-byte identical to what Cognito has registered.
+const bridgeHost = Fn.select(2, Fn.split('/', discordBridgeUrl.url));
+discordIssuerUrl.url = `https://${bridgeHost}`;
 
 // Surface the bridge URL as a stack output so operators / web clients can see
 // where the bridge lives without having to crack open the CloudFormation
