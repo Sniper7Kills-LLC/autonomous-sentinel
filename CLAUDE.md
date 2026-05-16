@@ -47,7 +47,7 @@ Top-line goals:
 | WAF/DDoS | **AWS WAF** in front of CloudFront (country + IP CIDR blocks via Q133) |
 | Theme | Light/dark/auto, military / command aesthetic |
 | Accessibility | Target WCAG 2.1 AA |
-| Budgets | AWS Budget alarms: $50/mo soft email, $100/mo loud email + admin banner, $200/mo throttle Whisper concurrency + page admin (thresholds configurable in admin UI later) |
+| Budgets | AWS Budget alarms: $50/mo soft email, $100/mo loud email + admin banner, $200/mo throttle Whisper concurrency + page admin (thresholds configurable in admin UI later). CDK definition in `amplify/budgets.ts`; thresholds + notification email overridable via `AS_BUDGET_SOFT_USD` / `AS_BUDGET_LOUD_USD` / `AS_BUDGET_HARD_USD` / `AS_BUDGET_NOTIFICATION_EMAIL` env vars. |
 
 ### Repos
 
