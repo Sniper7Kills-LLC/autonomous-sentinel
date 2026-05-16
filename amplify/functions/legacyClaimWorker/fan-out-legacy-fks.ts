@@ -30,6 +30,18 @@
  * `USER_CLAIM_FANOUT` AuditLog entry tagged with the `claimId` so PR
  * C (#274) can read the manifest on partial-state replay.
  *
+ * **Audit-after-transact ordering**: the per-batch audit write happens
+ * *after* the transact succeeds, not atomically with it. If the
+ * transact succeeds and the audit then fails, the FK rewrite is
+ * committed but the manifest entry is missing. PR C's replay sweep
+ * handles this case safely because Query is the source of truth — a
+ * row whose FK already equals `newSub` is treated as fanned-out
+ * regardless of whether the manifest has the entry. The audit log
+ * may therefore have a hole on rare transact-then-audit-fail
+ * sequences; rebuilding the manifest from row state is the recovery
+ * path. Do not tighten any downstream reader to require manifest
+ * completeness without first switching to a transact-bundled audit.
+ *
  * Dependency-injected: tests stub `query` / `transact` / `audit`. The
  * worker wires the production DDB SDK + Amplify Data client.
  */

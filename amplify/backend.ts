@@ -82,6 +82,12 @@ legacyClaimWorkerLambda.addToRolePolicy(
 //     TranscriptRevision, User (bannedById).
 //   - PK-part FK: FieldVote, RevisionVote.
 //   - PK == userId: Reputation, NotificationPreference.
+//
+// `User` is omitted from `fanOutTableKeys` below because its env var
+// (`USER_TABLE_NAME`) was already wired by PR A's setup above + its
+// arn is seeded into `fanOutTableArns` at initialisation. The worker's
+// `defaultFanOutTableNames` takes the user table name as a function
+// parameter rather than via the per-table env var pattern.
 const fanOutTableKeys = [
   'Sdr',
   'Comment',
