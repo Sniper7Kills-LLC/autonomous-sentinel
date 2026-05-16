@@ -5,7 +5,7 @@ import { Recording } from './models/recording';
 import { Sdr } from './models/sdr';
 import { Transmitter } from './models/transmitter';
 import { Comment } from './models/comment';
-import { FieldVote } from './models/field-vote';
+import { FieldVote, FieldVoteField, castFieldVote } from './models/field-vote';
 import { TranscriptRevision } from './models/transcript-revision';
 import { RevisionVote } from './models/revision-vote';
 import { Reputation } from './models/reputation';
@@ -51,6 +51,7 @@ export const schema = a.schema({
   // Community
   Comment,
   FieldVote,
+  FieldVoteField,
   TranscriptRevision,
   RevisionVote,
   AbuseReport,
@@ -72,6 +73,9 @@ export const schema = a.schema({
   // SES bounce/complaint suppression — issue #249
   suppressEmail,
   isSuppressed,
+
+  // Synthesised composite-PK FieldVote upsert — issue #266
+  castFieldVote,
 });
 
 export type Schema = ClientSchema<typeof schema>;
