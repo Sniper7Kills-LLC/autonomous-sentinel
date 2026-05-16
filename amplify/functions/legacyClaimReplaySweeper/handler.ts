@@ -1,5 +1,23 @@
 import type { Handler, ScheduledEvent } from 'aws-lambda';
-import type { FanOutDeps, FanOutSummary, TableKey } from '../legacyClaimWorker/fan-out-legacy-fks';
+import {
+  QueryCommand,
+  type AttributeValue,
+  type QueryCommandOutput,
+} from '@aws-sdk/client-dynamodb';
+import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
+import {
+  fanOutLegacyFks,
+  type FanOutDeps,
+  type FanOutSummary,
+  type TableKey,
+} from '../legacyClaimWorker/fan-out-legacy-fks';
+import {
+  defaultFanOutQuery,
+  defaultFanOutTableNames,
+  defaultFanOutTransact,
+  getDdbClient,
+} from '../legacyClaimWorker/fan-out-production';
+import { audit as defaultAudit } from '../../data/audit-log-helper';
 
 /**
  * `legacyClaimReplaySweeper` — daily EventBridge cron that finishes any
@@ -35,6 +53,20 @@ import type { FanOutDeps, FanOutSummary, TableKey } from '../legacyClaimWorker/f
  *     the same user: both call the same fan-out helper which is
  *     idempotent at the row level. Worst case is two concurrent
  *     transacts on disjoint rows.
+ *
+ * Known trade-offs (acceptable for v1; documented for future work):
+ *   - **N+1 audit queries.** `listAuditForTarget` runs once per
+ *     CLAIMED user. For a backlog of N CLAIMED users this is N
+ *     audit-table Queries. Acceptable while the legacy backlog is
+ *     bounded; revisit if the sweeper starts dominating its own
+ *     Lambda budget.
+ *   - **No concurrency guard.** EventBridge daily cron should never
+ *     double-fire, but a manual retrigger or misconfigured rule could
+ *     have two sweepers racing. Row-level idempotency keeps data safe
+ *     (the fan-out helper no-ops on rows whose FK already equals
+ *     newSub); the only cost is duplicate work. If the rate becomes
+ *     observable, add a lease via DDB conditional-write on a sentinel
+ *     row.
  */
 
 export interface ClaimedUserRow {
@@ -140,18 +172,112 @@ function completedTablesFor(claimId: string, entries: AuditEntry[]): Set<TableKe
   return out;
 }
 
-function resolveDeps(): SweeperDeps {
-  if (!injected.listClaimedUsers || !injected.listAuditForTarget || !injected.runFanOut) {
-    // Production wiring (DDB SDK) is deferred to a follow-up that ties
-    // the sweeper to the same Amplify Data client the worker uses.
-    // Tests always inject via `__setDeps` so this never throws there.
-    throw new Error('legacyClaimReplaySweeper: deps not injected — production wiring pending');
+function defaultUserTableName(): string {
+  const v = process.env.USER_TABLE_NAME;
+  if (!v) {
+    throw new Error('legacyClaimReplaySweeper: USER_TABLE_NAME env var is required');
+  }
+  return v;
+}
+
+function defaultAuditLogTableName(): string {
+  const v = process.env.AUDIT_LOG_TABLE_NAME;
+  if (!v) {
+    throw new Error('legacyClaimReplaySweeper: AUDIT_LOG_TABLE_NAME env var is required');
+  }
+  return v;
+}
+
+/**
+ * Production lister: Query the User table by `claimStatus` GSI for
+ * `claimStatus = 'CLAIMED'` rows. Sparse GSI — only claimed rows
+ * index, so the partition is bounded and the per-call DDB cost is
+ * small even on a busy day.
+ */
+async function defaultListClaimedUsers(input: ListClaimedInput): Promise<ListClaimedResult> {
+  const exclusiveStartKey: Record<string, AttributeValue> | undefined = input.nextToken
+    ? (JSON.parse(input.nextToken) as Record<string, AttributeValue>)
+    : undefined;
+  const res: QueryCommandOutput = await getDdbClient().send(
+    new QueryCommand({
+      TableName: defaultUserTableName(),
+      IndexName: 'user-claimStatus-index',
+      KeyConditionExpression: '#cs = :cs',
+      ExpressionAttributeNames: { '#cs': 'claimStatus' },
+      ExpressionAttributeValues: marshall({ ':cs': 'CLAIMED' }),
+      ExclusiveStartKey: exclusiveStartKey,
+    }),
+  );
+  const items: ClaimedUserRow[] = [];
+  if (res.Items) {
+    for (const raw of res.Items) {
+      items.push(unmarshall(raw) as ClaimedUserRow);
+    }
   }
   return {
-    listClaimedUsers: injected.listClaimedUsers,
-    listAuditForTarget: injected.listAuditForTarget,
-    runFanOut: injected.runFanOut,
-    fanOutDeps: injected.fanOutDeps,
+    items,
+    nextToken: res.LastEvaluatedKey ? JSON.stringify(res.LastEvaluatedKey) : undefined,
+  };
+}
+
+/**
+ * Production audit lister: Query AuditLog by the `(targetType,
+ * targetId)` GSI introduced in #274 so the sweeper reads exactly the
+ * entries for one User row. Caller filters by `claimId` in-memory.
+ */
+async function defaultListAuditForTarget(input: ListAuditInput): Promise<ListAuditResult> {
+  const items: AuditEntry[] = [];
+  let exclusiveStartKey: Record<string, AttributeValue> | undefined = undefined;
+  do {
+    const res: QueryCommandOutput = await getDdbClient().send(
+      new QueryCommand({
+        TableName: defaultAuditLogTableName(),
+        IndexName: 'auditLog-targetType-index',
+        KeyConditionExpression: '#tt = :tt AND #ti = :ti',
+        ExpressionAttributeNames: { '#tt': 'targetType', '#ti': 'targetId' },
+        ExpressionAttributeValues: marshall({ ':tt': 'User', ':ti': input.targetId }),
+        ExclusiveStartKey: exclusiveStartKey,
+      }),
+    );
+    if (res.Items) {
+      for (const raw of res.Items) {
+        items.push(unmarshall(raw) as AuditEntry);
+      }
+    }
+    exclusiveStartKey = res.LastEvaluatedKey;
+  } while (exclusiveStartKey);
+  return { items };
+}
+
+/**
+ * Production fan-out runner: defer straight to `fanOutLegacyFks` with
+ * the same DDB-backed deps the per-signup worker uses. The sweeper
+ * adds its own `getCompletedTables` via the call-site, so this
+ * runner only fills the static fan-out config.
+ */
+const defaultRunFanOut: RunFanOutFn = (args) => fanOutLegacyFks(args);
+
+function defaultFanOutDeps(): Omit<FanOutDeps, 'getCompletedTables'> {
+  return {
+    tableNames: defaultFanOutTableNames(defaultUserTableName()),
+    query: defaultFanOutQuery,
+    transact: defaultFanOutTransact,
+    audit: (ctx, opts) => defaultAudit(ctx, opts),
+  };
+}
+
+function resolveDeps(): SweeperDeps {
+  const runFanOut = injected.runFanOut ?? defaultRunFanOut;
+  // Only resolve production fan-out deps when the production
+  // `runFanOut` is active — `defaultFanOutDeps()` reads env vars that
+  // tests don't set, so calling it when a stubbed `runFanOut` is in
+  // play would throw on every test invocation.
+  const fanOutDeps = injected.fanOutDeps ?? (injected.runFanOut ? undefined : defaultFanOutDeps());
+  return {
+    listClaimedUsers: injected.listClaimedUsers ?? defaultListClaimedUsers,
+    listAuditForTarget: injected.listAuditForTarget ?? defaultListAuditForTarget,
+    runFanOut,
+    fanOutDeps,
   };
 }
 

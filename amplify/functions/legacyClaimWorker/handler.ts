@@ -1,14 +1,6 @@
 import type { Handler } from 'aws-lambda';
-import {
-  DynamoDBClient,
-  TransactWriteItemsCommand,
-  QueryCommand,
-  GetItemCommand,
-  type QueryCommandOutput,
-  type TransactWriteItem,
-  type AttributeValue,
-} from '@aws-sdk/client-dynamodb';
-import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
+import { TransactWriteItemsCommand, type TransactWriteItem } from '@aws-sdk/client-dynamodb';
+import { marshall } from '@aws-sdk/util-dynamodb';
 import { randomUUID } from 'node:crypto';
 import { audit as defaultAudit, type AuditContext } from '../../data/audit-log-helper';
 import {
@@ -27,8 +19,13 @@ import {
   type FanOutSummary,
   type FanOutAuditFn,
   type TransactWriteOp,
-  type DdbItem,
 } from './fan-out-legacy-fks';
+import {
+  getDdbClient,
+  defaultFanOutTableNames,
+  defaultFanOutQuery,
+  defaultFanOutTransact,
+} from './fan-out-production';
 
 /**
  * `legacyClaimWorker` — async-invoked Lambda that performs the
@@ -102,7 +99,6 @@ export function __resetDeps(): void {
   injected = {};
 }
 
-let cachedDdb: DynamoDBClient | undefined;
 let cachedDataClient: WorkerDataClient | undefined;
 
 async function getDataClient(): Promise<WorkerDataClient> {
@@ -115,11 +111,6 @@ async function getDataClient(): Promise<WorkerDataClient> {
   return cachedDataClient;
 }
 
-function getDdbClient(): DynamoDBClient {
-  if (!cachedDdb) cachedDdb = new DynamoDBClient({});
-  return cachedDdb;
-}
-
 function defaultTableName(): string {
   const fromEnv = process.env.USER_TABLE_NAME;
   if (!fromEnv) {
@@ -128,34 +119,10 @@ function defaultTableName(): string {
   return fromEnv;
 }
 
-/**
- * Resolve the per-table name set for fan-out from env vars. Backend
- * wires each entry from the Amplify-generated table token in
- * `backend.ts`. Missing values fail loud so misconfiguration surfaces
- * at first invocation, not silently as an empty fan-out.
- */
-function defaultFanOutTableNames(userTableName: string): FanOutTableNames {
-  const fromEnv = (envKey: string): string => {
-    const v = process.env[envKey];
-    if (!v) {
-      throw new Error(`legacyClaimWorker: ${envKey} env var is required`);
-    }
-    return v;
-  };
-  return {
-    Sdr: fromEnv('SDR_TABLE_NAME'),
-    Comment: fromEnv('COMMENT_TABLE_NAME'),
-    AbuseReport: fromEnv('ABUSE_REPORT_TABLE_NAME'),
-    Donation: fromEnv('DONATION_TABLE_NAME'),
-    Recording: fromEnv('RECORDING_TABLE_NAME'),
-    TranscriptRevision: fromEnv('TRANSCRIPT_REVISION_TABLE_NAME'),
-    User: userTableName,
-    FieldVote: fromEnv('FIELD_VOTE_TABLE_NAME'),
-    RevisionVote: fromEnv('REVISION_VOTE_TABLE_NAME'),
-    Reputation: fromEnv('REPUTATION_TABLE_NAME'),
-    NotificationPreference: fromEnv('NOTIFICATION_PREFERENCE_TABLE_NAME'),
-  };
-}
+// Per-table name resolver, the GSI Query / TransactWriteItems
+// wrappers, and the `DynamoDBClient` cache used to be inlined here.
+// They moved to `./fan-out-production.ts` so the replay sweeper
+// (#274) can share them without duplicating the SDK plumbing.
 
 /**
  * Production transactor — wraps DynamoDB TransactWriteItems with a
@@ -180,94 +147,8 @@ async function defaultTransact(input: TransactPkRewriteInput): Promise<void> {
   await getDdbClient().send(new TransactWriteItemsCommand({ TransactItems: items }));
 }
 
-/**
- * Production fan-out query. Reads either a GSI by `fkColumn = fkValue`
- * (shape 1 + 2 tables) or a base-table GetItem when the input's
- * `indexName === '__pk__'` (shape 3 — PK == userId).
- */
-async function defaultFanOutQuery(input: FanOutQueryInput): Promise<FanOutQueryResult> {
-  if (input.indexName === '__pk__') {
-    const res = await getDdbClient().send(
-      new GetItemCommand({
-        TableName: input.tableName,
-        Key: marshall({ [input.fkColumn]: input.fkValue }),
-      }),
-    );
-    return res.Item ? { items: [unmarshall(res.Item)] } : { items: [] };
-  }
-  // GSI Query. Paginate so we don't lose rows on large legacy users —
-  // the helper consumes a flat array, so we accumulate here.
-  const items: DdbItem[] = [];
-  let exclusiveStartKey: Record<string, AttributeValue> | undefined = undefined;
-  do {
-    const res: QueryCommandOutput = await getDdbClient().send(
-      new QueryCommand({
-        TableName: input.tableName,
-        IndexName: input.indexName,
-        KeyConditionExpression: '#fk = :fk',
-        ExpressionAttributeNames: { '#fk': input.fkColumn },
-        ExpressionAttributeValues: marshall({ ':fk': input.fkValue }),
-        ExclusiveStartKey: exclusiveStartKey,
-      }),
-    );
-    if (res.Items) {
-      for (const raw of res.Items) {
-        items.push(unmarshall(raw));
-      }
-    }
-    exclusiveStartKey = res.LastEvaluatedKey;
-  } while (exclusiveStartKey);
-  return { items };
-}
-
-/**
- * Production fan-out transactor. Translates the helper's abstract op
- * list into a single `TransactWriteItems` call (≤25 items, enforced
- * by the helper's `batchSize`). All ops run atomically per batch.
- */
-async function defaultFanOutTransact(ops: TransactWriteOp[]): Promise<void> {
-  if (ops.length === 0) return;
-  const items: TransactWriteItem[] = ops.map((op) => {
-    if (op.kind === 'Update') {
-      const names: Record<string, string> = {};
-      const values: Record<string, unknown> = {};
-      const setClauses: string[] = [];
-      let i = 0;
-      for (const [col, val] of Object.entries(op.set)) {
-        const n = `#c${i}`;
-        const v = `:v${i}`;
-        names[n] = col;
-        values[v] = val;
-        setClauses.push(`${n} = ${v}`);
-        i += 1;
-      }
-      return {
-        Update: {
-          TableName: op.tableName,
-          Key: marshall(op.key),
-          UpdateExpression: `SET ${setClauses.join(', ')}`,
-          ExpressionAttributeNames: names,
-          ExpressionAttributeValues: marshall(values, { removeUndefinedValues: true }),
-        },
-      };
-    }
-    if (op.kind === 'Delete') {
-      return {
-        Delete: {
-          TableName: op.tableName,
-          Key: marshall(op.key),
-        },
-      };
-    }
-    return {
-      Put: {
-        TableName: op.tableName,
-        Item: marshall(op.row, { removeUndefinedValues: true }),
-      },
-    };
-  });
-  await getDdbClient().send(new TransactWriteItemsCommand({ TransactItems: items }));
-}
+// `defaultFanOutQuery` + `defaultFanOutTransact` now live in
+// `./fan-out-production.ts` so the replay sweeper (#274) reuses them.
 
 async function resolveDeps(): Promise<WorkerDeps> {
   const tableName = injected.tableName ?? defaultTableName();

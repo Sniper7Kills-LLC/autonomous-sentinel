@@ -216,10 +216,12 @@ for (const key of fanOutTableKeys) {
 }
 legacyClaimSweeperLambda.addToRolePolicy(
   new PolicyStatement({
+    // No `dynamodb:Scan` — the sweeper relies on the User.claimStatus
+    // GSI + AuditLog.(targetType, targetId) GSI + per-FK GSIs for
+    // every read path. Avoid widening this without a concrete need.
     actions: [
       'dynamodb:Query',
       'dynamodb:GetItem',
-      'dynamodb:Scan',
       'dynamodb:TransactWriteItems',
       'dynamodb:PutItem',
       'dynamodb:DeleteItem',
