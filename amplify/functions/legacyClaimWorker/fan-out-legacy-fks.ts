@@ -102,6 +102,19 @@ export interface FanOutDeps {
   batchSize?: number;
   /** Optional audit context — defaults to system actor. */
   auditContext?: AuditContext;
+  /**
+   * Replay-sweeper optimisation (#274). When present, the helper
+   * calls this with the current `claimId` and skips any table whose
+   * key appears in the returned set. The set is built from the
+   * `USER_CLAIM_FANOUT` audit manifest — tables with a per-batch
+   * entry against this `claimId` are assumed done.
+   *
+   * Correctness fallback: even without this hook the helper is
+   * already idempotent (a row whose FK already equals `newSub`
+   * doesn't surface in the Query → no rewrite). The skip is purely
+   * a per-table Query cost optimisation for the sweeper case.
+   */
+  getCompletedTables?: (claimId: string) => Promise<ReadonlySet<TableKey>>;
 }
 
 export interface FanOutArgs {
@@ -262,7 +275,15 @@ export async function fanOutLegacyFks(args: FanOutArgs): Promise<FanOutSummary> 
   }
   const summary = blankSummary();
 
+  // Replay-sweeper optimisation (#274). Manifest lookup happens once
+  // per claim — the set is cheaper than per-table Query when most
+  // tables are already done.
+  const completed = deps.getCompletedTables ? await deps.getCompletedTables(claimId) : undefined;
+
   for (const desc of TABLE_DESCRIPTORS) {
+    if (completed?.has(desc.table)) {
+      continue;
+    }
     const tableName = deps.tableNames[desc.table];
     if (desc.shape === 'pk-userid') {
       // No GSI — the userId IS the PK; we already know the key.
