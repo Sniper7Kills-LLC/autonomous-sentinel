@@ -50,6 +50,10 @@ export const AuditLog = a
       // to the same claim. PR C (#274) reads this manifest on partial-
       // state replay to know which tables have already fanned out.
       'USER_CLAIM_FANOUT',
+      // Scheduled cleanup of FieldVote rows whose `messageId` no
+      // longer resolves to a Message (#270). Emitted once per sweep
+      // with the orphan count + sample messageIds in `after`.
+      'FIELDVOTE_ORPHAN_SWEEP',
       'TRANSMITTER_CREATE',
       'TRANSMITTER_UPDATE',
       'TRANSMITTER_DELETE',
