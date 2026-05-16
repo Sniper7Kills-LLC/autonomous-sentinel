@@ -268,15 +268,20 @@ if (!messageTable) {
 }
 fieldVoteOrphanJanitorLambda.addEnvironment('FIELD_VOTE_TABLE_NAME', fieldVoteTable.tableName);
 fieldVoteOrphanJanitorLambda.addEnvironment('MESSAGE_TABLE_NAME', messageTable.tableName);
+// FieldVote: full lifecycle (Scan to find rows, BatchWriteItem to
+// delete orphans). Message: read-only (BatchGetItem to verify each
+// messageId resolves). Keep the two grants separate so a future
+// scope tightening on either side stays surgical.
 fieldVoteOrphanJanitorLambda.addToRolePolicy(
   new PolicyStatement({
-    actions: [
-      'dynamodb:Scan',
-      'dynamodb:BatchGetItem',
-      'dynamodb:BatchWriteItem',
-      'dynamodb:DeleteItem',
-    ],
-    resources: [fieldVoteTable.tableArn, messageTable.tableArn],
+    actions: ['dynamodb:Scan', 'dynamodb:BatchWriteItem', 'dynamodb:DeleteItem'],
+    resources: [fieldVoteTable.tableArn],
+  }),
+);
+fieldVoteOrphanJanitorLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:BatchGetItem', 'dynamodb:GetItem'],
+    resources: [messageTable.tableArn],
   }),
 );
 

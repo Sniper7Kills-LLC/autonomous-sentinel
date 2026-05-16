@@ -4,7 +4,10 @@ import {
   BatchWriteItemCommand,
   ScanCommand,
   type AttributeValue,
+  type BatchGetItemCommandOutput,
+  type BatchWriteItemCommandOutput,
   type ScanCommandOutput,
+  type WriteRequest,
 } from '@aws-sdk/client-dynamodb';
 import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
 import {
@@ -123,6 +126,13 @@ async function defaultScanFieldVotes(input: { nextToken?: string }): Promise<Sca
   };
 }
 
+const MAX_RETRIES = 3;
+const RETRY_BACKOFF_MS = 100;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function defaultBatchGetMessages(input: { messageIds: string[] }): Promise<BatchGetResult> {
   const presentIds = new Set<string>();
   if (input.messageIds.length === 0) return { presentIds };
@@ -130,22 +140,38 @@ async function defaultBatchGetMessages(input: { messageIds: string[] }): Promise
   // BatchGetItem caps at 100 keys per call.
   for (let i = 0; i < input.messageIds.length; i += 100) {
     const chunk = input.messageIds.slice(i, i + 100);
-    const res = await getDdbClient().send(
-      new BatchGetItemCommand({
-        RequestItems: {
-          [tableName]: {
-            Keys: chunk.map((id) => marshall({ id })),
-            ProjectionExpression: 'id',
+    let pending: Record<string, AttributeValue>[] | undefined = chunk.map((id) => marshall({ id }));
+    let attempt = 0;
+    while (pending && pending.length > 0) {
+      const res: BatchGetItemCommandOutput = await getDdbClient().send(
+        new BatchGetItemCommand({
+          RequestItems: {
+            [tableName]: {
+              Keys: pending,
+              ProjectionExpression: 'id',
+            },
           },
-        },
-      }),
-    );
-    const rows = res.Responses?.[tableName] ?? [];
-    for (const raw of rows) {
-      const row = unmarshall(raw) as { id?: string };
-      if (typeof row.id === 'string') {
-        presentIds.add(row.id);
+        }),
+      );
+      const rows = res.Responses?.[tableName] ?? [];
+      for (const raw of rows) {
+        const row = unmarshall(raw) as { id?: string };
+        if (typeof row.id === 'string') {
+          presentIds.add(row.id);
+        }
       }
+      pending = res.UnprocessedKeys?.[tableName]?.Keys;
+      if (!pending || pending.length === 0) break;
+      // Throttle / partial fetch. Without a retry the false-positive
+      // orphan classification would delete real votes — back off and
+      // re-fetch up to MAX_RETRIES before giving up.
+      attempt += 1;
+      if (attempt >= MAX_RETRIES) {
+        throw new Error(
+          `fieldVoteOrphanJanitor: BatchGetItem left ${pending.length} unprocessed keys after ${MAX_RETRIES} retries`,
+        );
+      }
+      await sleep(RETRY_BACKOFF_MS * 2 ** (attempt - 1));
     }
   }
   return { presentIds };
@@ -159,17 +185,30 @@ async function defaultDeleteFieldVotes(input: { fieldKeys: string[] }): Promise<
   // overridden upstream.
   for (let i = 0; i < input.fieldKeys.length; i += 25) {
     const chunk = input.fieldKeys.slice(i, i + 25);
-    await getDdbClient().send(
-      new BatchWriteItemCommand({
-        RequestItems: {
-          [tableName]: chunk.map((fieldKey) => ({
-            DeleteRequest: {
-              Key: marshall({ fieldKey }),
-            },
-          })),
-        },
-      }),
-    );
+    let pending: WriteRequest[] | undefined = chunk.map((fieldKey) => ({
+      DeleteRequest: {
+        Key: marshall({ fieldKey }),
+      },
+    }));
+    let attempt = 0;
+    while (pending && pending.length > 0) {
+      const res: BatchWriteItemCommandOutput = await getDdbClient().send(
+        new BatchWriteItemCommand({
+          RequestItems: { [tableName]: pending },
+        }),
+      );
+      pending = res.UnprocessedItems?.[tableName];
+      if (!pending || pending.length === 0) break;
+      // DDB returned partial-write throttling — retry the leftovers
+      // with exponential backoff so we don't silently drop deletes.
+      attempt += 1;
+      if (attempt >= MAX_RETRIES) {
+        throw new Error(
+          `fieldVoteOrphanJanitor: BatchWriteItem left ${pending.length} unprocessed deletes after ${MAX_RETRIES} retries`,
+        );
+      }
+      await sleep(RETRY_BACKOFF_MS * 2 ** (attempt - 1));
+    }
   }
 }
 
