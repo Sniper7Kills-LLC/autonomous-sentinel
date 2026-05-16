@@ -1,7 +1,7 @@
 import { defineBackend } from '@aws-amplify/backend';
 import { FunctionUrlAuthType, InvokeMode } from 'aws-cdk-lib/aws-lambda';
 import type { Function as LambdaFunction } from 'aws-cdk-lib/aws-lambda';
-import { auth } from './auth/resource';
+import { auth, discordIssuerUrl } from './auth/resource';
 import { data } from './data/resource';
 import { storage } from './storage/resource';
 import { preprocess } from './functions/preprocess/resource';
@@ -39,10 +39,15 @@ const discordBridgeUrl = backend.discordOidcBridge.resources.lambda.addFunctionU
   discordBridgeUrl.url,
 );
 
+// Plug the bridge function URL into the Cognito OIDC IdP we declared in
+// `auth/resource.ts`. The `discordIssuerUrl` holder is a `Lazy.string`
+// produce-target — CDK resolves it at synth, CFN resolves the underlying
+// function-URL token at deploy. No hardcoded URL, single deploy (issue #254).
+discordIssuerUrl.url = discordBridgeUrl.url;
+
 // Surface the bridge URL as a stack output so operators / web clients can see
-// where the bridge lives. The Cognito OIDC IdP itself is wired in #254 via a
-// CDK escape hatch using `discordBridgeUrl.url` directly as a token — no
-// hardcoded URL, single deploy.
+// where the bridge lives without having to crack open the CloudFormation
+// console.
 backend.addOutput({
   custom: {
     discordOidcBridgeUrl: discordBridgeUrl.url,
