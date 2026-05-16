@@ -9,6 +9,7 @@ import { transcribe } from './functions/transcribe/resource';
 import { linguistic } from './functions/linguistic/resource';
 import { postConfirmation } from './functions/postConfirmation/resource';
 import { discordOidcBridge } from './functions/discordOidcBridge/resource';
+import { attachBudgetAlarms, readBudgetConfig } from './budgets';
 
 const backend = defineBackend({
   auth,
@@ -58,3 +59,7 @@ backend.addOutput({
     discordOidcBridgeUrl: discordBridgeUrl.url,
   },
 });
+
+// Cost-discipline budget alarms (#7). Lives in its own nested stack so it can
+// be removed or replaced without touching the data / function stacks.
+attachBudgetAlarms(backend.createStack('BudgetsStack'), readBudgetConfig());
