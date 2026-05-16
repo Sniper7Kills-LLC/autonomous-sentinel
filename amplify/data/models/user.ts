@@ -82,6 +82,11 @@ export const User = a
     i('legacyUserId'),
     // Admin queries — "all banned users since X"
     i('bannedAt'),
+    // Required for the legacy-claim FK fan-out (#273) — Query by bannedById
+    // to find every User row banned by a freshly-claimed legacy admin. Rare
+    // (only triggers when the issuing admin was also a legacy user) but
+    // required to keep the audit chain attributable.
+    i('bannedById'),
   ])
   .authorization((allow) => [
     // Direct model reads are restricted to admin + moderator so PII-

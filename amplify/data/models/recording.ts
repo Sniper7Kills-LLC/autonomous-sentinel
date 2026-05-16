@@ -97,6 +97,9 @@ export const Recording = a
     i('sdrId').sortKeys(['broadcastedAt']),
     // Pipeline DLQ + admin reprocess queries.
     i('transcriptionStatus'),
+    // Required for the legacy-claim FK fan-out (#273) — Query by uploaderId
+    // to find every Recording a freshly-claimed user uploaded.
+    i('uploaderId'),
   ])
   .authorization((allow) => [
     allow.guest().to(['read']),

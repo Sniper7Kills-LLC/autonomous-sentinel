@@ -44,6 +44,12 @@ export const AuditLog = a
       // fan-out (#273) emits `USER_CLAIM_FANOUT`; the cron sweep
       // for partial-state replay (#274) reuses these via `claimId`.
       'USER_CLAIM',
+      // Per-table FK rewrite emitted by `fanOutLegacyFks` after the
+      // User row is claimed (sub-B of #16 → #273). One entry per
+      // (table, batch); the `claimId` field correlates entries belonging
+      // to the same claim. PR C (#274) reads this manifest on partial-
+      // state replay to know which tables have already fanned out.
+      'USER_CLAIM_FANOUT',
       'TRANSMITTER_CREATE',
       'TRANSMITTER_UPDATE',
       'TRANSMITTER_DELETE',

@@ -380,11 +380,11 @@ describe('audit helper — every action enum value works', () => {
   });
 
   it('exports exactly the enum values defined on the AuditLog model', () => {
-    // The #258 issue body referred to "19 enum values" but the actual model
-    // ships 21 after #272 added USER_CLAIM. Source of truth is
+    // The #258 issue body referred to "19 enum values"; ships 22 after
+    // #272 (USER_CLAIM) + #273 (USER_CLAIM_FANOUT). Source of truth is
     // `amplify/data/models/audit-log.ts`.
-    expect(AUDIT_ACTIONS).toHaveLength(21);
-    expect(new Set(AUDIT_ACTIONS).size).toBe(21);
+    expect(AUDIT_ACTIONS).toHaveLength(22);
+    expect(new Set(AUDIT_ACTIONS).size).toBe(22);
   });
 
   it('exports every value defined on the AuditLog.action enum', () => {
@@ -403,6 +403,7 @@ describe('audit helper — every action enum value works', () => {
         'USER_ROLE_CHANGE',
         'USER_PII_BLANK',
         'USER_CLAIM',
+        'USER_CLAIM_FANOUT',
         'TRANSMITTER_CREATE',
         'TRANSMITTER_UPDATE',
         'TRANSMITTER_DELETE',

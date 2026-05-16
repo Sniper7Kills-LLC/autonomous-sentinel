@@ -68,6 +68,77 @@ legacyClaimWorkerLambda.addToRolePolicy(
   }),
 );
 
+// FK fan-out wiring (sub-B of #16 / #273).
+//
+// The worker sweeps 11 child tables that hold a FK to User and rewrites
+// each FK from `legacy:<id>` to the real Cognito sub. Each table needs:
+//   - Env var so the worker can address it without an SDK lookup.
+//   - Read grant on the FK GSI (or the base table for PK == userId).
+//   - Write grant on the base table (TransactWriteItems for chunks of
+//     Update / Delete / Put).
+//
+// Tables fall into three shapes (see `fan-out-legacy-fks.ts`):
+//   - simple FK column: Sdr, Comment, AbuseReport, Donation, Recording,
+//     TranscriptRevision, User (bannedById).
+//   - PK-part FK: FieldVote, RevisionVote.
+//   - PK == userId: Reputation, NotificationPreference.
+//
+// `User` is omitted from `fanOutTableKeys` below because its env var
+// (`USER_TABLE_NAME`) was already wired by PR A's setup above + its
+// arn is seeded into `fanOutTableArns` at initialisation. The worker's
+// `defaultFanOutTableNames` takes the user table name as a function
+// parameter rather than via the per-table env var pattern.
+const fanOutTableKeys = [
+  'Sdr',
+  'Comment',
+  'AbuseReport',
+  'Donation',
+  'Recording',
+  'TranscriptRevision',
+  'FieldVote',
+  'RevisionVote',
+  'Reputation',
+  'NotificationPreference',
+] as const;
+const envKeyFor: Record<(typeof fanOutTableKeys)[number], string> = {
+  Sdr: 'SDR_TABLE_NAME',
+  Comment: 'COMMENT_TABLE_NAME',
+  AbuseReport: 'ABUSE_REPORT_TABLE_NAME',
+  Donation: 'DONATION_TABLE_NAME',
+  Recording: 'RECORDING_TABLE_NAME',
+  TranscriptRevision: 'TRANSCRIPT_REVISION_TABLE_NAME',
+  FieldVote: 'FIELD_VOTE_TABLE_NAME',
+  RevisionVote: 'REVISION_VOTE_TABLE_NAME',
+  Reputation: 'REPUTATION_TABLE_NAME',
+  NotificationPreference: 'NOTIFICATION_PREFERENCE_TABLE_NAME',
+};
+const fanOutTableArns: string[] = [userTable.tableArn];
+for (const key of fanOutTableKeys) {
+  const table = backend.data.resources.tables[key];
+  if (!table) {
+    throw new Error(`backend: ${key} table not found on data resources`);
+  }
+  legacyClaimWorkerLambda.addEnvironment(envKeyFor[key], table.tableName);
+  fanOutTableArns.push(table.tableArn);
+}
+// Single statement covers every fan-out table. `${arn}/index/*` grants
+// Query on all GSIs (we don't enumerate index names because Amplify-
+// generated index ARNs aren't directly addressable at synth-time
+// without locking in the index naming convention).
+legacyClaimWorkerLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: [
+      'dynamodb:Query',
+      'dynamodb:GetItem',
+      'dynamodb:TransactWriteItems',
+      'dynamodb:PutItem',
+      'dynamodb:DeleteItem',
+      'dynamodb:UpdateItem',
+    ],
+    resources: [...fanOutTableArns, ...fanOutTableArns.map((arn) => `${arn}/index/*`)],
+  }),
+);
+
 // Discord OIDC bridge needs a public HTTPS endpoint so Cognito can hit
 // `/.well-known/openid-configuration`, `/authorize`, `/token`, etc. A Lambda
 // function URL (no auth) is the cheapest way to expose it — no API Gateway

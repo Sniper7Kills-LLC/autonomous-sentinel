@@ -19,13 +19,7 @@ export const AbuseReport = a
     reporter: a.belongsTo('User', 'reporterId'),
     targetType: a.enum(['MESSAGE', 'RECORDING', 'COMMENT', 'USER']),
     targetId: a.id().required(),
-    reason: a.enum([
-      'SPAM',
-      'OFFENSIVE',
-      'WRONG_INFO',
-      'IMPERSONATION',
-      'OTHER',
-    ]),
+    reason: a.enum(['SPAM', 'OFFENSIVE', 'WRONG_INFO', 'IMPERSONATION', 'OTHER']),
     notes: a.string(),
     status: a.enum(['OPEN', 'REVIEWING', 'RESOLVED', 'DISMISSED']),
     resolvedById: a.id(),
@@ -39,6 +33,9 @@ export const AbuseReport = a
     i('status'),
     // "All reports against this entity" — polymorphic target lookup.
     i('targetType').sortKeys(['targetId']),
+    // Required for the legacy-claim FK fan-out (#273) — Query by reporterId
+    // to find every AbuseReport a freshly-claimed user filed.
+    i('reporterId'),
   ])
   .authorization((allow) => [
     allow.authenticated().to(['create']),

@@ -19,12 +19,17 @@ export const RevisionVote = a
     weightAtVoteTime: a.float().required(),
   })
   .identifier(['revisionId', 'voterId'])
+  .secondaryIndexes((i) => [
+    // Required for the legacy-claim FK fan-out (#273) — Query by voterId
+    // alone. `voterId` is the sort half of the compound identifier, so
+    // there is no base-table read path keyed on `voterId` only. Fan-out
+    // is also special-cased: voterId is part of the compound PK, so the
+    // rewrite is a per-row delete + put, not a simple Update.
+    i('voterId'),
+  ])
   .authorization((allow) => [
     allow.authenticated().to(['read', 'create']),
     // Voter = the Cognito sub stored in `voterId` (#259).
-    allow
-      .ownerDefinedIn('voterId')
-      .identityClaim('sub')
-      .to(['update', 'delete']),
+    allow.ownerDefinedIn('voterId').identityClaim('sub').to(['update', 'delete']),
     allow.groups(['moderator', 'admin']).to(['read']),
   ]);

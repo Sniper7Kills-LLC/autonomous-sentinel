@@ -37,7 +37,12 @@ export const TranscriptRevision = a
     superseded: a.boolean().default(false),
     revisionVotes: a.hasMany('RevisionVote', 'revisionId'),
   })
-  .secondaryIndexes((i) => [i('recordingId').sortKeys(['voteScore'])])
+  .secondaryIndexes((i) => [
+    i('recordingId').sortKeys(['voteScore']),
+    // Required for the legacy-claim FK fan-out (#273) — Query by proposedBy
+    // to find every TranscriptRevision a freshly-claimed user submitted.
+    i('proposedBy'),
+  ])
   .authorization((allow) => [
     allow.guest().to(['read']),
     allow.authenticated().to(['read', 'create']),
