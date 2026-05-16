@@ -30,8 +30,29 @@ describe('auth resource', () => {
     expect('userPoolOverrides' in authConfig).toBe(false);
   });
 
-  it('does not register external providers at this stage (Google → #13, Discord → #14)', () => {
-    expect('externalProviders' in authConfig.loginWith).toBe(false);
+  it('federates Google with email + profile scopes (issue #13)', () => {
+    const google = authConfig.loginWith.externalProviders.google;
+    expect(google).toBeDefined();
+    expect(google.scopes).toEqual(['email', 'profile']);
+    // clientId / clientSecret are `secret()` placeholders — resolved at deploy
+    // time. We assert presence + non-string shape (string would imply a
+    // hardcoded credential leak in source).
+    expect(google.clientId).toBeDefined();
+    expect(typeof google.clientId).not.toBe('string');
+    expect(google.clientSecret).toBeDefined();
+    expect(typeof google.clientSecret).not.toBe('string');
+  });
+
+  it('maps Google email claim to the Cognito email attribute', () => {
+    expect(authConfig.loginWith.externalProviders.google.attributeMapping).toEqual({
+      email: 'email',
+    });
+  });
+
+  it('registers localhost + beta.eam.watch as OAuth callback + logout URLs', () => {
+    const expected = ['http://localhost:3000/', 'https://beta.eam.watch/'];
+    expect(authConfig.loginWith.externalProviders.callbackUrls).toEqual(expected);
+    expect(authConfig.loginWith.externalProviders.logoutUrls).toEqual(expected);
   });
 
   it('registers the postConfirmation trigger (issue #15)', () => {
