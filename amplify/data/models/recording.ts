@@ -30,8 +30,9 @@ export const Recording = a
   .model({
     messageId: a.id(),
     message: a.belongsTo('Message', 'messageId'),
-    // Uploader FK to User (#248). Populated by the upload client (phase 6)
-    // using the Cognito sub → User row lookup done at upload time.
+    // Uploader FK to User (#248). Stores the Cognito sub directly — see
+    // #259 for the `User.id = cognitoSub` decision. Populated by the upload
+    // client (phase 6) from `ctx.identity.sub` at upload time.
     uploaderId: a.id(),
     uploader: a.belongsTo('User', 'uploaderId'),
     // SDR FK (issue #30 ↔ #29 cross-reference).

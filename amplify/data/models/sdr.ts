@@ -34,7 +34,8 @@ export const Sdr = a
     // Optional admin-attributed transmitter
     transmitterId: a.id(),
     transmitter: a.belongsTo('Transmitter', 'transmitterId'),
-    // Owner FK to User (#248).
+    // Owner FK to User (#248). Stores the Cognito sub directly — see #259
+    // for the User.id = cognitoSub decision.
     ownerId: a.id(),
     owner: a.belongsTo('User', 'ownerId'),
     recordings: a.hasMany('Recording', 'sdrId'),
@@ -42,6 +43,11 @@ export const Sdr = a
   })
   .authorization((allow) => [
     allow.authenticated().to(['read']),
-    allow.owner().to(['read', 'create', 'update', 'delete']),
+    // Owner = the Cognito sub stored in `ownerId`. Explicit binding required
+    // because `allow.owner()` defaults to a field literally named `owner`.
+    allow
+      .ownerDefinedIn('ownerId')
+      .identityClaim('sub')
+      .to(['read', 'create', 'update', 'delete']),
     allow.groups(['admin']).to(['read', 'update', 'delete']),
   ]);

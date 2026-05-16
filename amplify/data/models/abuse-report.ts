@@ -14,6 +14,7 @@ import { a } from '@aws-amplify/backend';
  */
 export const AbuseReport = a
   .model({
+    // Cognito sub of the reporter — `User.id = cognitoSub` (#259).
     reporterId: a.id().required(),
     reporter: a.belongsTo('User', 'reporterId'),
     targetType: a.enum(['MESSAGE', 'RECORDING', 'COMMENT', 'USER']),
@@ -41,6 +42,7 @@ export const AbuseReport = a
   ])
   .authorization((allow) => [
     allow.authenticated().to(['create']),
-    allow.owner().to(['read']),
+    // Reporter = the Cognito sub stored in `reporterId` (#259).
+    allow.ownerDefinedIn('reporterId').identityClaim('sub').to(['read']),
     allow.groups(['moderator', 'admin']).to(['read', 'update']),
   ]);

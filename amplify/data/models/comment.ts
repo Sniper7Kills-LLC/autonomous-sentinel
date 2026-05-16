@@ -27,6 +27,7 @@ export const Comment = a
     // sets `min(parent.depth + 1, 3)` at create time.
     depth: a.integer().default(0),
     body: a.string().required(),
+    // Cognito sub of the author — `User.id = cognitoSub` (#259).
     authorId: a.id().required(),
     author: a.belongsTo('User', 'authorId'),
     flagged: a.boolean().default(false),
@@ -41,6 +42,10 @@ export const Comment = a
   .authorization((allow) => [
     allow.guest().to(['read']),
     allow.authenticated().to(['read', 'create']),
-    allow.owner().to(['update', 'delete']),
+    // Owner = the Cognito sub stored in `authorId` (#259).
+    allow
+      .ownerDefinedIn('authorId')
+      .identityClaim('sub')
+      .to(['update', 'delete']),
     allow.groups(['moderator', 'admin']).to(['update', 'delete']),
   ]);

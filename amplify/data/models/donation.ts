@@ -15,6 +15,7 @@ import { a } from '@aws-amplify/backend';
  */
 export const Donation = a
   .model({
+    // Cognito sub of the donor — `User.id = cognitoSub` (#259).
     userId: a.id().required(),
     user: a.belongsTo('User', 'userId'),
     type: a.enum([
@@ -43,7 +44,8 @@ export const Donation = a
     i('stripeSubscriptionId'),
   ])
   .authorization((allow) => [
-    allow.owner().to(['read']),
+    // Donor = the Cognito sub stored in `userId` (#259).
+    allow.ownerDefinedIn('userId').identityClaim('sub').to(['read']),
     allow.groups(['admin']).to(['read']),
     // Writes flow through the Stripe webhook Lambda only (no client surface).
   ]);

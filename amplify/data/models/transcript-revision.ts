@@ -27,6 +27,7 @@ export const TranscriptRevision = a
     recordingId: a.id().required(),
     recording: a.belongsTo('Recording', 'recordingId'),
     proposedText: a.string().required(),
+    // Cognito sub of the proposer — `User.id = cognitoSub` (#259).
     proposedBy: a.id().required(),
     proposedByUser: a.belongsTo('User', 'proposedBy'),
     source: a.enum(['MACHINE', 'MANUAL', 'CORRECTION']),

@@ -12,6 +12,7 @@ export const RevisionVote = a
   .model({
     revisionId: a.id().required(),
     revision: a.belongsTo('TranscriptRevision', 'revisionId'),
+    // Cognito sub of the voter — `User.id = cognitoSub` (#259).
     voterId: a.id().required(),
     voter: a.belongsTo('User', 'voterId'),
     value: a.enum(['UP', 'DOWN']),
@@ -20,6 +21,10 @@ export const RevisionVote = a
   .identifier(['revisionId', 'voterId'])
   .authorization((allow) => [
     allow.authenticated().to(['read', 'create']),
-    allow.owner().to(['update', 'delete']),
+    // Voter = the Cognito sub stored in `voterId` (#259).
+    allow
+      .ownerDefinedIn('voterId')
+      .identityClaim('sub')
+      .to(['update', 'delete']),
     allow.groups(['moderator', 'admin']).to(['read']),
   ]);
