@@ -20,6 +20,7 @@ import { userMutations } from './functions/userMutations/resource';
 import { messageMutations } from './functions/messageMutations/resource';
 import { legacyClaimWorker } from './functions/legacyClaimWorker/resource';
 import { legacyClaimReplaySweeper } from './functions/legacyClaimReplaySweeper/resource';
+import { fieldVoteOrphanJanitor } from './functions/fieldVoteOrphanJanitor/resource';
 import { attachBudgetAlarms, readBudgetConfig } from './budgets';
 
 const backend = defineBackend({
@@ -35,6 +36,7 @@ const backend = defineBackend({
   messageMutations,
   legacyClaimWorker,
   legacyClaimReplaySweeper,
+  fieldVoteOrphanJanitor,
 });
 
 // Wire the legacy-claim worker into postConfirmation (sub-A of #16 / #272).
@@ -242,6 +244,51 @@ new Rule(backend.createStack('LegacyClaimSweeperSchedule'), 'DailyReplay', {
     'Daily replay of legacy-claim fan-out for any User row whose post-confirm worker did not finish (#274).',
   schedule: Schedule.cron({ minute: '0', hour: '3' }),
   targets: [new LambdaTarget(legacyClaimSweeperLambda)],
+});
+
+// FieldVote orphan-vote janitor wiring (#270).
+//
+// Daily 04:00 UTC EventBridge schedule (one hour after the
+// legacy-claim sweeper so the two crons never overlap on the data
+// stack). Janitor needs:
+//   - Scan + DeleteItem on FieldVote.
+//   - BatchGetItem on Message.
+//   - PutItem on AuditLog (via the helper's IAM-backed Amplify Data
+//     client; no direct grant needed here — the helper writes
+//     through AppSync with the function's execution role).
+const fieldVoteOrphanJanitorLambda = backend.fieldVoteOrphanJanitor.resources
+  .lambda as LambdaFunction;
+const fieldVoteTable = backend.data.resources.tables['FieldVote'];
+const messageTable = backend.data.resources.tables['Message'];
+if (!fieldVoteTable) {
+  throw new Error('backend: FieldVote table not found on data resources');
+}
+if (!messageTable) {
+  throw new Error('backend: Message table not found on data resources');
+}
+fieldVoteOrphanJanitorLambda.addEnvironment('FIELD_VOTE_TABLE_NAME', fieldVoteTable.tableName);
+fieldVoteOrphanJanitorLambda.addEnvironment('MESSAGE_TABLE_NAME', messageTable.tableName);
+// FieldVote: full lifecycle (Scan to find rows, BatchWriteItem to
+// delete orphans). Message: read-only (BatchGetItem to verify each
+// messageId resolves). Keep the two grants separate so a future
+// scope tightening on either side stays surgical.
+fieldVoteOrphanJanitorLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:Scan', 'dynamodb:BatchWriteItem', 'dynamodb:DeleteItem'],
+    resources: [fieldVoteTable.tableArn],
+  }),
+);
+fieldVoteOrphanJanitorLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:BatchGetItem', 'dynamodb:GetItem'],
+    resources: [messageTable.tableArn],
+  }),
+);
+
+new Rule(backend.createStack('FieldVoteOrphanJanitorSchedule'), 'DailyOrphanSweep', {
+  description: 'Daily cleanup of FieldVote rows whose messageId no longer resolves (#270).',
+  schedule: Schedule.cron({ minute: '0', hour: '4' }),
+  targets: [new LambdaTarget(fieldVoteOrphanJanitorLambda)],
 });
 
 // Cost-discipline budget alarms (#7). Lives in its own nested stack so it can
