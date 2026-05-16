@@ -1,4 +1,5 @@
 import { a } from '@aws-amplify/backend';
+import { messageMutations } from '../../functions/messageMutations/resource';
 
 /**
  * Message — a single EAM broadcast event (issue #28).
@@ -8,16 +9,11 @@ import { a } from '@aws-amplify/backend';
  * recordings' transcripts via the Linguistic Logic Lambda. Edits append
  * revisions rather than overwriting (audit + community vote — phase 2 #34).
  *
- * Soft-delete only — `deletedAt` / `deletedBy` / `deletedReason` are set by an
- * admin-only `softDeleteMessage` custom mutation (deferred; needs AuditLog
- * #38 first). Default list queries filter `deletedAt = null`.
- *
- * Deferred to follow-ups (require models that haven't landed):
- *   - `comments` hasMany Comment (model lands in #32)
- *   - `fieldVotes` hasMany FieldVote (model lands in #33)
- *   - `auditEntries` hasMany AuditLog (model lands in #38)
- *   - `softDeleteMessage` custom mutation
- *   - Default filter on `deletedAt` (custom resolver or subscription middleware)
+ * Soft-delete only — `deletedAt` / `deletedBy` / `deletedReason` are set by
+ * the admin-only `softDeleteMessage` custom mutation defined below. Default
+ * list queries should filter `deletedAt = null` (custom resolver / subscription
+ * middleware tracked as a follow-up — Amplify Gen 2 model-level filters can't
+ * express the predicate on their own).
  */
 export const Message = a
   .model({
@@ -65,3 +61,28 @@ export const Message = a
     allow.authenticated().to(['read', 'create']),
     allow.groups(['moderator', 'admin']).to(['read', 'create', 'update', 'delete']),
   ]);
+
+/**
+ * `softDeleteMessage` — admin-only Message soft-delete (#28).
+ *
+ * Sets `deletedAt = now`, `deletedBy = caller.sub`, `deletedReason =
+ * reason`. Emits a `MESSAGE_DELETE` AuditLog entry via the #258
+ * helper. Idempotent — re-calling on an already-deleted row returns
+ * it untouched.
+ *
+ * Lambda-backed (see `functions/messageMutations`) so the audit
+ * helper (TypeScript, writes to a separate data source) is the sole
+ * AuditLog writer. JS pipelines can't import the shared TS helper.
+ *
+ * Schema-level grant for the Lambda's IAM role lives in
+ * `data/resource.ts` under `.authorization((allow) => [...])`.
+ */
+export const softDeleteMessage = a
+  .mutation()
+  .arguments({
+    messageId: a.id().required(),
+    reason: a.string(),
+  })
+  .returns(a.ref('Message'))
+  .authorization((allow) => allow.group('admin'))
+  .handler(a.handler.function(messageMutations));

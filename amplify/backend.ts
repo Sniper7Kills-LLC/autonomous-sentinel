@@ -17,6 +17,7 @@ import { linguistic } from './functions/linguistic/resource';
 import { postConfirmation } from './functions/postConfirmation/resource';
 import { discordOidcBridge } from './functions/discordOidcBridge/resource';
 import { userMutations } from './functions/userMutations/resource';
+import { messageMutations } from './functions/messageMutations/resource';
 import { legacyClaimWorker } from './functions/legacyClaimWorker/resource';
 import { legacyClaimReplaySweeper } from './functions/legacyClaimReplaySweeper/resource';
 import { attachBudgetAlarms, readBudgetConfig } from './budgets';
@@ -31,6 +32,7 @@ const backend = defineBackend({
   postConfirmation,
   discordOidcBridge,
   userMutations,
+  messageMutations,
   legacyClaimWorker,
   legacyClaimReplaySweeper,
 });
