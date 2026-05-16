@@ -381,10 +381,10 @@ describe('audit helper — every action enum value works', () => {
 
   it('exports exactly the enum values defined on the AuditLog model', () => {
     // The #258 issue body referred to "19 enum values" but the actual model
-    // ships 20 (the issue was written before the final phase-2 schema landed
-    // in #257). Source of truth is `amplify/data/models/audit-log.ts`.
-    expect(AUDIT_ACTIONS).toHaveLength(20);
-    expect(new Set(AUDIT_ACTIONS).size).toBe(20);
+    // ships 21 after #272 added USER_CLAIM. Source of truth is
+    // `amplify/data/models/audit-log.ts`.
+    expect(AUDIT_ACTIONS).toHaveLength(21);
+    expect(new Set(AUDIT_ACTIONS).size).toBe(21);
   });
 
   it('exports every value defined on the AuditLog.action enum', () => {
@@ -402,6 +402,7 @@ describe('audit helper — every action enum value works', () => {
         'USER_UNBAN',
         'USER_ROLE_CHANGE',
         'USER_PII_BLANK',
+        'USER_CLAIM',
         'TRANSMITTER_CREATE',
         'TRANSMITTER_UPDATE',
         'TRANSMITTER_DELETE',

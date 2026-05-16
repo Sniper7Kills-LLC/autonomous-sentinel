@@ -38,6 +38,12 @@ export const AuditLog = a
       'USER_UNBAN',
       'USER_ROLE_CHANGE',
       'USER_PII_BLANK',
+      // Legacy v3 → Cognito claim: PK rewrite from `legacy:<id>` to
+      // the real sub via TransactWriteItems Put+Delete. Emitted by
+      // `linkLegacyClaim` (sub-A of #16 → #272). Subsequent FK
+      // fan-out (#273) emits `USER_CLAIM_FANOUT`; the cron sweep
+      // for partial-state replay (#274) reuses these via `claimId`.
+      'USER_CLAIM',
       'TRANSMITTER_CREATE',
       'TRANSMITTER_UPDATE',
       'TRANSMITTER_DELETE',

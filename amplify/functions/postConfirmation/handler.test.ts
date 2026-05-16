@@ -5,7 +5,13 @@ import {
   AdminAddUserToGroupCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
 import type { PostConfirmationTriggerEvent, Context } from 'aws-lambda';
-import { handler, __setDataDeps, __resetDataDeps } from './handler';
+import {
+  handler,
+  __setDataDeps,
+  __resetDataDeps,
+  __setLegacyClaimDispatcher,
+  type LegacyClaimDispatchPayload,
+} from './handler';
 
 const cognitoMock = mockClient(CognitoIdentityProviderClient);
 
@@ -257,10 +263,11 @@ describe('postConfirmation handler — User row creation (issue #248)', () => {
     errorSpy.mockRestore();
   });
 
-  it('links a pre-seeded legacy row instead of creating a fresh one when legacyEmail matches', async () => {
-    // Migration seed: a `legacy:<id>` row exists with the new user's email
-    // pre-populated in `legacyEmail`. Post-confirmation should swap the
-    // placeholder PK for the real sub rather than create a duplicate.
+  it('dispatches the legacy-claim worker (async, fire-and-forget) and does not create a fresh row', async () => {
+    // Sub-A of #16 (#272): on a legacy-email match, postConfirmation
+    // async-invokes `legacyClaimWorker` and returns. The PK rewrite
+    // happens off the sign-up hot path so the user does not wait on
+    // the DDB transact + audit write.
     stub = makeStubDataClient({
       existingByEmail: {
         cognitoSub: 'legacy:42',
@@ -272,6 +279,11 @@ describe('postConfirmation handler — User row creation (issue #248)', () => {
     });
     __setDataDeps({ client: stub.client });
 
+    const dispatchSpy = vi.fn<(p: LegacyClaimDispatchPayload) => Promise<void>>(() =>
+      Promise.resolve(),
+    );
+    __setLegacyClaimDispatcher(dispatchSpy);
+
     const event = makeEvent({
       request: {
         userAttributes: { sub: 'cognito-sub-real-42', email: 'reclaim@example.com' },
@@ -279,10 +291,47 @@ describe('postConfirmation handler — User row creation (issue #248)', () => {
     });
     await handler(event, {} as Context, () => undefined);
 
-    // For #248 scope: we MUST not create a fresh-signup row when a
-    // legacy row matches the email. The actual rewrite-and-claim flow
-    // lives in #16; here we conservatively skip creation and log so the
-    // claim flow can take over.
     expect(stub.createSpy).not.toHaveBeenCalled();
+    expect(dispatchSpy).toHaveBeenCalledOnce();
+    const payload = dispatchSpy.mock.calls[0]?.[0];
+    expect(payload?.realSub).toBe('cognito-sub-real-42');
+    expect(payload?.email).toBe('reclaim@example.com');
+
+    __setLegacyClaimDispatcher(undefined);
+  });
+
+  it('does not rethrow when the legacy-claim dispatcher fails (sign-up must complete)', async () => {
+    // Cognito's PostConfirmation trigger is synchronous — a rethrow here
+    // would surface to the user as a failed sign-up. The dispatch is
+    // best-effort; PR-C's replay sweep picks up unclaimed rows.
+    stub = makeStubDataClient({
+      existingByEmail: {
+        cognitoSub: 'legacy:99',
+        email: null,
+        legacyEmail: 'r@example.com',
+        legacyUserId: 99,
+        claimStatus: 'PENDING_CLAIM',
+      },
+    });
+    __setDataDeps({ client: stub.client });
+
+    const dispatchSpy = vi.fn<(p: LegacyClaimDispatchPayload) => Promise<void>>(() =>
+      Promise.reject(new Error('Lambda invoke failed')),
+    );
+    __setLegacyClaimDispatcher(dispatchSpy);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const event = makeEvent({
+      request: {
+        userAttributes: { sub: 'cognito-sub-99', email: 'r@example.com' },
+      },
+    });
+    await expect(handler(event, {} as Context, () => undefined)).resolves.toBeDefined();
+
+    expect(stub.createSpy).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalled();
+
+    errorSpy.mockRestore();
+    __setLegacyClaimDispatcher(undefined);
   });
 });

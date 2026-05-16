@@ -2,11 +2,13 @@ import {
   CognitoIdentityProviderClient,
   AdminAddUserToGroupCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
+import { LambdaClient, InvokeCommand, InvocationType } from '@aws-sdk/client-lambda';
 import type { PostConfirmationTriggerHandler } from 'aws-lambda';
 
 const DEFAULT_GROUP = 'member';
 
 const client = new CognitoIdentityProviderClient({});
+const lambdaClient = new LambdaClient({});
 
 /**
  * Structural shape of the Amplify Data client surface this handler uses.
@@ -58,6 +60,63 @@ export function __resetDataDeps(): void {
 
 let cachedClient: PostConfirmDataClient | undefined;
 
+/**
+ * Async-invoke the legacyClaimWorker Lambda. `InvocationType: 'Event'`
+ * fires and forgets — the SDK call resolves once Lambda enqueues the
+ * invocation, typically <50 ms, so the user's sign-up is not blocked
+ * on the worker's DDB transact + audit write. The worker handles
+ * retries + DLQ on its own end.
+ *
+ * The target Lambda's function name comes from
+ * `process.env.LEGACY_CLAIM_WORKER_FUNCTION_NAME`, wired in
+ * `amplify/backend.ts`.
+ *
+ * Test-only `__setLegacyClaimDispatcher` swaps the invoker so unit
+ * tests can assert dispatch shape without the SDK.
+ */
+export interface LegacyClaimDispatchPayload {
+  realSub: string;
+  email: string;
+}
+export type LegacyClaimDispatcher = (payload: LegacyClaimDispatchPayload) => Promise<void>;
+
+let injectedLegacyDispatcher: LegacyClaimDispatcher | undefined;
+
+export function __setLegacyClaimDispatcher(fn: LegacyClaimDispatcher | undefined): void {
+  injectedLegacyDispatcher = fn;
+}
+
+async function defaultLegacyClaimDispatcher(payload: LegacyClaimDispatchPayload): Promise<void> {
+  const functionName = process.env.LEGACY_CLAIM_WORKER_FUNCTION_NAME;
+  if (!functionName) {
+    throw new Error(
+      'postConfirmation: LEGACY_CLAIM_WORKER_FUNCTION_NAME env var is required to dispatch legacy claim',
+    );
+  }
+  await lambdaClient.send(
+    new InvokeCommand({
+      FunctionName: functionName,
+      InvocationType: InvocationType.Event,
+      Payload: Buffer.from(JSON.stringify(payload)),
+    }),
+  );
+}
+
+async function dispatchLegacyClaim(payload: LegacyClaimDispatchPayload): Promise<void> {
+  const dispatcher = injectedLegacyDispatcher ?? defaultLegacyClaimDispatcher;
+  try {
+    await dispatcher(payload);
+    console.info('postConfirmation: dispatched legacy-claim worker', {
+      realSub: payload.realSub,
+    });
+  } catch (err) {
+    // Dispatch failure is logged but never rethrown — the user's
+    // sign-up has already completed (group-add ran before this),
+    // and PR-C's replay sweep will pick up the unclaimed row.
+    console.error('postConfirmation: failed to dispatch legacy-claim worker', err);
+  }
+}
+
 async function getDataClient(): Promise<PostConfirmDataClient> {
   if (injected.client) return injected.client;
   if (cachedClient) return cachedClient;
@@ -93,14 +152,18 @@ async function ensureUserRow(input: {
     return;
   }
 
-  // Legacy email match — skip fresh-row creation. Row rewrite is owned
-  // by the claim flow in #16.
+  // Legacy email match — dispatch the PK rewrite to the
+  // `legacyClaimWorker` Lambda via async invoke so sign-up does not
+  // block on the DDB transact + audit write (sub-A of #16, #272).
+  // The worker re-queries the row server-side, so we trust nothing
+  // about its content here beyond "lookup returned ≥1 row".
   if (input.email) {
     try {
       const lookup = await data.models.User.listUserByEmail({ email: input.email });
       if (lookup.data && lookup.data.length > 0) {
-        console.info('postConfirmation: legacy row exists for email, skipping create', {
-          cognitoSub: input.cognitoSub,
+        await dispatchLegacyClaim({
+          realSub: input.cognitoSub,
+          email: input.email,
         });
         return;
       }
