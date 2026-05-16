@@ -6,6 +6,8 @@ import {
   InvokeMode,
 } from 'aws-cdk-lib/aws-lambda';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
+import { Rule, Schedule } from 'aws-cdk-lib/aws-events';
+import { LambdaFunction as LambdaTarget } from 'aws-cdk-lib/aws-events-targets';
 import { auth, discordIssuerUrl } from './auth/resource';
 import { data } from './data/resource';
 import { storage } from './storage/resource';
@@ -16,6 +18,7 @@ import { postConfirmation } from './functions/postConfirmation/resource';
 import { discordOidcBridge } from './functions/discordOidcBridge/resource';
 import { userMutations } from './functions/userMutations/resource';
 import { legacyClaimWorker } from './functions/legacyClaimWorker/resource';
+import { legacyClaimReplaySweeper } from './functions/legacyClaimReplaySweeper/resource';
 import { attachBudgetAlarms, readBudgetConfig } from './budgets';
 
 const backend = defineBackend({
@@ -29,6 +32,7 @@ const backend = defineBackend({
   discordOidcBridge,
   userMutations,
   legacyClaimWorker,
+  legacyClaimReplaySweeper,
 });
 
 // Wire the legacy-claim worker into postConfirmation (sub-A of #16 / #272).
@@ -175,6 +179,65 @@ backend.addOutput({
   custom: {
     discordOidcBridgeUrl: discordBridgeUrl.url,
   },
+});
+
+// Legacy-claim replay sweeper wiring (sub-C of #16 / #274).
+//
+// The sweeper runs on an EventBridge daily schedule. It Query-s User by
+// `claimStatus = CLAIMED`, reads each user's audit manifest, and re-runs
+// `fanOutLegacyFks` with `getCompletedTables` so only tables that were
+// never fanned out get re-queried.
+//
+// IAM grants on the sweeper Lambda:
+//   - Query on every fan-out table + index (re-uses the same shape as
+//     the worker — see `fanOutTableArns` above).
+//   - Query on AuditLog by `(targetType, targetId)` GSI to read the
+//     per-user manifest.
+//   - Query on User by `claimStatus` GSI to list claimed rows.
+//   - TransactWriteItems / Put / Delete / Update on every fan-out
+//     table so the actual rewrite executes.
+const legacyClaimSweeperLambda = backend.legacyClaimReplaySweeper.resources
+  .lambda as LambdaFunction;
+
+const auditLogTable = backend.data.resources.tables['AuditLog'];
+if (!auditLogTable) {
+  throw new Error('backend: AuditLog table not found on data resources');
+}
+const sweeperTableArns = [...fanOutTableArns, auditLogTable.tableArn];
+
+legacyClaimSweeperLambda.addEnvironment('USER_TABLE_NAME', userTable.tableName);
+legacyClaimSweeperLambda.addEnvironment('AUDIT_LOG_TABLE_NAME', auditLogTable.tableName);
+for (const key of fanOutTableKeys) {
+  const table = backend.data.resources.tables[key];
+  if (!table) {
+    throw new Error(`backend: ${key} table not found on data resources`);
+  }
+  legacyClaimSweeperLambda.addEnvironment(envKeyFor[key], table.tableName);
+}
+legacyClaimSweeperLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: [
+      'dynamodb:Query',
+      'dynamodb:GetItem',
+      'dynamodb:Scan',
+      'dynamodb:TransactWriteItems',
+      'dynamodb:PutItem',
+      'dynamodb:DeleteItem',
+      'dynamodb:UpdateItem',
+    ],
+    resources: [...sweeperTableArns, ...sweeperTableArns.map((arn) => `${arn}/index/*`)],
+  }),
+);
+
+// Daily 03:00 UTC schedule — quiet hours for the broadcast audience,
+// so any incidental write traffic the sweep generates lands when the
+// rest of the pipeline is idle. Switch to hourly only if backlog
+// monitoring shows the daily cadence is leaving claims unfinished.
+new Rule(backend.createStack('LegacyClaimSweeperSchedule'), 'DailyReplay', {
+  description:
+    'Daily replay of legacy-claim fan-out for any User row whose post-confirm worker did not finish (#274).',
+  schedule: Schedule.cron({ minute: '0', hour: '3' }),
+  targets: [new LambdaTarget(legacyClaimSweeperLambda)],
 });
 
 // Cost-discipline budget alarms (#7). Lives in its own nested stack so it can

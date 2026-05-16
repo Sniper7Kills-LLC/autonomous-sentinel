@@ -87,6 +87,11 @@ export const User = a
     // (only triggers when the issuing admin was also a legacy user) but
     // required to keep the audit chain attributable.
     i('bannedById'),
+    // Required for the legacy-claim replay sweeper (#274) — Query for
+    // `claimStatus = CLAIMED` rows so the daily cron can pick up users
+    // whose User-row claim completed but whose FK fan-out (#273) was
+    // interrupted. Sparse — only `CLAIMED` rows index here.
+    i('claimStatus'),
   ])
   .authorization((allow) => [
     // Direct model reads are restricted to admin + moderator so PII-

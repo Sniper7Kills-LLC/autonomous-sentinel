@@ -97,6 +97,15 @@ export interface AuditOptions {
    * `reason = NULL` predicate finds both shapes.
    */
   reason?: string | null;
+  /**
+   * Cross-entry correlation key. Persisted as the `claimId` column on
+   * AuditLog. The legacy-claim sub-flows (#272 / #273 / #274) thread
+   * the same `claimId` through every audit entry that belongs to a
+   * single claim — the replay sweeper (#274) groups by this column to
+   * know what work has already been done. Other audit actions can
+   * leave it undefined.
+   */
+  claimId?: string | null;
 }
 
 /**
@@ -131,6 +140,7 @@ export interface AuditLogCreateInput {
   reason: string | null;
   ipAddress: string | null;
   userAgent: string | null;
+  claimId: string | null;
 }
 
 export interface AuditDeps {
@@ -222,6 +232,7 @@ export async function audit(
     reason: opts.reason ?? null,
     ipAddress,
     userAgent,
+    claimId: opts.claimId ?? null,
   };
 
   const client = deps.client ?? (await getDefaultClient());

@@ -331,6 +331,115 @@ describe('fanOutLegacyFks — PK == userId (Reputation, NotificationPreference)'
   });
 });
 
+describe('fanOutLegacyFks — manifest-skip (PR C / #274)', () => {
+  it('skips tables present in deps.getCompletedTables(claimId)', async () => {
+    const deps = makeDeps(
+      {
+        'Sdr-table': [{ id: 'sdr-1', ownerId: OLD_SUB }],
+        'Comment-table': [{ id: 'c-1', authorId: OLD_SUB }],
+      },
+      {
+        getCompletedTables: vi.fn(() => Promise.resolve(new Set(['Sdr'] as const))),
+      },
+    );
+
+    await fanOutLegacyFks({
+      oldSub: OLD_SUB,
+      newSub: NEW_SUB,
+      claimId: CLAIM_ID,
+      deps,
+    });
+
+    // Sdr is in the completed set → no Query, no transact, no audit.
+    expect(
+      deps.querySpy.mock.calls.find(
+        (c) => (c[0] as { tableName: string }).tableName === 'Sdr-table',
+      ),
+    ).toBeUndefined();
+    // Comment is not in the completed set → fan-out runs as normal.
+    const allOps = deps.transactSpy.mock.calls.flatMap((c) => c[0] as TransactWriteOp[]);
+    const commentOps = allOps.filter((op) => op.tableName === 'Comment-table');
+    expect(commentOps.length).toBeGreaterThan(0);
+  });
+
+  it('summary reports 0 for skipped tables, real count for run tables', async () => {
+    const deps = makeDeps(
+      {
+        'Sdr-table': [
+          { id: 'sdr-1', ownerId: OLD_SUB },
+          { id: 'sdr-2', ownerId: OLD_SUB },
+        ],
+        'Comment-table': [{ id: 'c-1', authorId: OLD_SUB }],
+      },
+      {
+        getCompletedTables: vi.fn(() => Promise.resolve(new Set(['Sdr'] as const))),
+      },
+    );
+
+    const summary = await fanOutLegacyFks({
+      oldSub: OLD_SUB,
+      newSub: NEW_SUB,
+      claimId: CLAIM_ID,
+      deps,
+    });
+
+    expect(summary.Sdr).toBe(0); // skipped
+    expect(summary.Comment).toBe(1); // ran
+  });
+
+  it('passes claimId to getCompletedTables (manifest lookup is per-claim)', async () => {
+    const getCompletedTables = vi.fn(() => Promise.resolve(new Set<never>()));
+    const deps = makeDeps({}, { getCompletedTables });
+
+    await fanOutLegacyFks({
+      oldSub: OLD_SUB,
+      newSub: NEW_SUB,
+      claimId: CLAIM_ID,
+      deps,
+    });
+
+    expect(getCompletedTables).toHaveBeenCalledWith(CLAIM_ID);
+  });
+
+  it('is a no-op when getCompletedTables returns every table', async () => {
+    const deps = makeDeps(
+      {
+        'Sdr-table': [{ id: 'sdr-1', ownerId: OLD_SUB }],
+      },
+      {
+        getCompletedTables: vi.fn(() =>
+          Promise.resolve(
+            new Set([
+              'Sdr',
+              'Comment',
+              'AbuseReport',
+              'Donation',
+              'Recording',
+              'TranscriptRevision',
+              'User',
+              'FieldVote',
+              'RevisionVote',
+              'Reputation',
+              'NotificationPreference',
+            ] as const),
+          ),
+        ),
+      },
+    );
+
+    await fanOutLegacyFks({
+      oldSub: OLD_SUB,
+      newSub: NEW_SUB,
+      claimId: CLAIM_ID,
+      deps,
+    });
+
+    expect(deps.querySpy).not.toHaveBeenCalled();
+    expect(deps.transactSpy).not.toHaveBeenCalled();
+    expect(deps.auditSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe('fanOutLegacyFks — audit manifest', () => {
   it('emits one USER_CLAIM_FANOUT audit per (table, batch)', async () => {
     const sdrRows = Array.from({ length: 30 }, (_, i) => ({

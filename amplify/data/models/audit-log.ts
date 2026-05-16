@@ -70,6 +70,13 @@ export const AuditLog = a
     reason: a.string(),
     ipAddress: a.string(),
     userAgent: a.string(),
+    // Cross-entry correlation key (#274). Used by the legacy-claim
+    // sub-flows so the User-row claim (#272 USER_CLAIM) + every
+    // per-table fan-out batch (#273 USER_CLAIM_FANOUT) share a
+    // manifest key. The replay sweeper (#274) groups by this column
+    // to know what work has already been done for a given claim.
+    // Other audit actions leave it null.
+    claimId: a.string(),
   })
   .secondaryIndexes((i) => [
     // "What did actor X do" — sparse index, only populated for actor-emitted
@@ -77,8 +84,11 @@ export const AuditLog = a
     // by `createdAt` (Amplify Gen 2 does not allow the implicit `createdAt`
     // as an index sort key).
     i('actorId'),
-    // "What happened to this entity" — same client-side sort.
-    i('targetType'),
+    // "What happened to this entity" — sort on targetId so the
+    // legacy-claim replay sweeper (#274) can read every entry for
+    // a single (targetType=User, targetId=<sub>) pair without a
+    // table scan.
+    i('targetType').sortKeys(['targetId']),
   ])
   .authorization((allow) => [
     allow.guest().to(['read']),
