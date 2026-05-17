@@ -8,7 +8,7 @@ import { commentMutations } from '../functions/commentMutations/resource';
 import { getUserPublicLambda } from '../functions/getUserPublicLambda/resource';
 import { listAuditLogPublic } from '../functions/listAuditLogPublic/resource';
 import { Message, softDeleteMessage } from './models/message';
-import { Recording, softDeleteRecording } from './models/recording';
+import { Recording, softDeleteRecording, submitRecording } from './models/recording';
 import { Sdr } from './models/sdr';
 import { Transmitter } from './models/transmitter';
 import { Comment, createComment, softDeleteComment } from './models/comment';
@@ -104,6 +104,9 @@ export const schema = a
 
     // Recording soft-delete — issue #29
     softDeleteRecording,
+
+    // Recording authenticated upload + contentHash uniqueness — issue #284
+    submitRecording,
 
     // Comment create + soft-delete — issue #32
     createComment,

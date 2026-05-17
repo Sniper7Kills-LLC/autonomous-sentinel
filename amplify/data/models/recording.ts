@@ -108,7 +108,12 @@ export const Recording = a
   ])
   .authorization((allow) => [
     allow.guest().to(['read']),
-    allow.authenticated().to(['read', 'create']),
+    // `create` is intentionally dropped from authenticated authz: the
+    // `submitRecording` custom mutation (#284) is the sole client-
+    // callable create path so the server can enforce contentHash
+    // uniqueness + set `uploaderId` from `ctx.identity.sub` instead
+    // of trusting the client.
+    allow.authenticated().to(['read']),
     allow.groups(['moderator', 'admin']).to(['read', 'create', 'update', 'delete']),
   ]);
 
@@ -143,4 +148,47 @@ export const softDeleteRecording = a
   })
   .returns(a.ref('Recording'))
   .authorization((allow) => allow.group('admin'))
+  .handler(a.handler.function(recordingMutations));
+
+/**
+ * `submitRecording` — authenticated Recording upload mutation (#284).
+ *
+ * Sole client-callable create path on Recording. The Lambda handler:
+ *   1. Rejects callers with no identity sub.
+ *   2. Queries the `recording-contentHash-index` GSI for any row
+ *      with the same `contentHash`; if found (deleted or not),
+ *      throws `RECORDING_DUPLICATE_HASH` so the upload client can
+ *      surface the conflict to the user.
+ *   3. Creates the row with `uploaderId = ctx.identity.sub` (never
+ *      trusted from the client), `transcriptionStatus = QUEUED`, and
+ *      the optional pass-through fields (messageId, frequencyKhz,
+ *      modulation, broadcastedAt, automated, sdrId).
+ *
+ * `messageId` is intentionally optional: the v3 archive has
+ * Messages with no Recording AND the v4 submission flow allows
+ * recording-less entries (gated separately by an anti-spam
+ * verification step — tracked on a follow-up issue). A Recording
+ * uploaded ahead of attribution carries `messageId = null` until the
+ * transcription pipeline (or an admin) links it.
+ *
+ * No audit entry on create — only mutating-once-published events
+ * (RECORDING_DELETE, MESSAGE_EDIT) write to AuditLog. The Recording
+ * row's own existence is its source of truth.
+ */
+export const submitRecording = a
+  .mutation()
+  .arguments({
+    contentHash: a.string().required(),
+    originalKey: a.string().required(),
+    messageId: a.id(),
+    webCanonicalKey: a.string(),
+    durationMs: a.integer(),
+    frequencyKhz: a.integer(),
+    modulation: a.enum(['USB', 'LSB', 'AM', 'FM']),
+    broadcastedAt: a.datetime(),
+    automated: a.boolean(),
+    sdrId: a.id(),
+  })
+  .returns(a.ref('Recording'))
+  .authorization((allow) => allow.authenticated())
   .handler(a.handler.function(recordingMutations));

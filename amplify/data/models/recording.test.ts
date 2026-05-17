@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Recording, softDeleteRecording } from './recording';
+import { Recording, softDeleteRecording, submitRecording } from './recording';
 
 /**
  * Schema-shape tests for the `softDeleteRecording` custom mutation (#29).
@@ -24,7 +24,7 @@ interface FieldRuntime {
 }
 
 interface ModelRuntime {
-  data: { fields: Record<string, FieldRuntime> };
+  data: { fields: Record<string, FieldRuntime>; authorization: readonly AuthRuntime[] };
 }
 
 type HandlerRuntime = Record<symbol, unknown>;
@@ -50,6 +50,7 @@ function symbolData<T>(obj: object): T {
 
 const recordingModel = Recording as unknown as ModelRuntime;
 const softDeleteOp = softDeleteRecording as unknown as OperationRuntime;
+const submitOp = submitRecording as unknown as OperationRuntime;
 
 describe('Recording model — soft-delete columns present (#29)', () => {
   it('keeps deletedAt + deletedBy on the row shape (no deletedReason — audit-only)', () => {
@@ -90,6 +91,80 @@ describe('softDeleteRecording mutation (#29)', () => {
 
   it('wires the recordingMutations Lambda as the handler', () => {
     const handlers = softDeleteOp.data.handlers;
+    expect(handlers).toHaveLength(1);
+    const cfg = symbolData<CustomHandlerData>(handlers[0] as object);
+    expect(cfg.handler).toBeDefined();
+  });
+});
+
+describe('Recording model — authenticated create dropped (#284)', () => {
+  it('does not grant `create` to authenticated callers (submitRecording is the sole create path)', () => {
+    const rules = recordingModel.data.authorization.map((r) =>
+      symbolData<AuthData & { operations?: string[] }>(r as object),
+    );
+    const authRule = rules.find((r) => r.strategy === 'private');
+    expect(authRule).toBeDefined();
+    expect(authRule?.operations ?? []).not.toContain('create');
+  });
+
+  it('still lets guests read', () => {
+    const rules = recordingModel.data.authorization.map((r) =>
+      symbolData<AuthData & { operations?: string[] }>(r as object),
+    );
+    const guestRule = rules.find((r) => r.strategy === 'public');
+    expect(guestRule).toBeDefined();
+    expect(guestRule?.operations ?? []).toContain('read');
+  });
+
+  it('still lets moderator + admin create', () => {
+    const rules = recordingModel.data.authorization.map((r) =>
+      symbolData<AuthData & { operations?: string[] }>(r as object),
+    );
+    const groupsRule = rules.find((r) => r.strategy === 'groups');
+    expect(groupsRule?.groups ?? []).toEqual(expect.arrayContaining(['moderator', 'admin']));
+    expect(groupsRule?.operations ?? []).toEqual(expect.arrayContaining(['create']));
+  });
+});
+
+describe('submitRecording mutation (#284)', () => {
+  it('is a GraphQL mutation', () => {
+    expect(submitOp.data.typeName).toBe('Mutation');
+  });
+
+  it('requires contentHash + originalKey, optional pass-throughs', () => {
+    const args = submitOp.data.arguments;
+    expect(args.contentHash?.data?.fieldType).toBe('String');
+    expect(args.contentHash?.data?.required).toBe(true);
+    expect(args.originalKey?.data?.fieldType).toBe('String');
+    expect(args.originalKey?.data?.required).toBe(true);
+    // Optional pass-throughs — present but not required.
+    expect(args.messageId?.data?.required).toBeFalsy();
+    expect(args.frequencyKhz?.data?.required).toBeFalsy();
+    expect(args.modulation?.data?.required).toBeFalsy();
+    expect(args.broadcastedAt?.data?.required).toBeFalsy();
+    expect(args.automated?.data?.required).toBeFalsy();
+    expect(args.sdrId?.data?.required).toBeFalsy();
+    expect(args.webCanonicalKey?.data?.required).toBeFalsy();
+    expect(args.durationMs?.data?.required).toBeFalsy();
+  });
+
+  it('returns the created Recording row (a.ref("Recording"))', () => {
+    const ret = submitOp.data.returnType;
+    const linkName = ret.data?.link ?? ret.data?.type;
+    expect(linkName).toBe('Recording');
+  });
+
+  it('is authenticated-only (any signed-in user; no guest, no group gate)', () => {
+    const auth = submitOp.data.authorization;
+    expect(auth.length).toBeGreaterThanOrEqual(1);
+    const rules = auth.map((a) => symbolData<AuthData>(a as object));
+    expect(rules.some((r) => r.strategy === 'private')).toBe(true);
+    expect(rules.some((r) => r.strategy === 'public')).toBe(false);
+    expect(rules.some((r) => r.strategy === 'groups')).toBe(false);
+  });
+
+  it('wires the recordingMutations Lambda as the handler', () => {
+    const handlers = submitOp.data.handlers;
     expect(handlers).toHaveLength(1);
     const cfg = symbolData<CustomHandlerData>(handlers[0] as object);
     expect(cfg.handler).toBeDefined();
