@@ -108,13 +108,16 @@ export const Recording = a
   ])
   .authorization((allow) => [
     allow.guest().to(['read']),
-    // `create` is intentionally dropped from authenticated authz: the
-    // `submitRecording` custom mutation (#284) is the sole client-
-    // callable create path so the server can enforce contentHash
-    // uniqueness + set `uploaderId` from `ctx.identity.sub` instead
-    // of trusting the client.
+    // `create` is intentionally dropped from authenticated AND from
+    // the mod/admin group authz: the `submitRecording` custom mutation
+    // (#284) is the sole client-callable create path so the server
+    // can enforce contentHash uniqueness + set `uploaderId` from
+    // `ctx.identity.sub` instead of trusting the client. Mods and
+    // admins go through `submitRecording` too — otherwise the auto-
+    // generated `createRecording` mutation would let a mod account
+    // bypass uniqueness enforcement.
     allow.authenticated().to(['read']),
-    allow.groups(['moderator', 'admin']).to(['read', 'create', 'update', 'delete']),
+    allow.groups(['moderator', 'admin']).to(['read', 'update', 'delete']),
   ]);
 
 /**

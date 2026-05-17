@@ -116,13 +116,22 @@ describe('Recording model — authenticated create dropped (#284)', () => {
     expect(guestRule?.operations ?? []).toContain('read');
   });
 
-  it('still lets moderator + admin create', () => {
+  it('does not grant `create` to the moderator+admin group either (mods go through submitRecording too)', () => {
+    // Reviewer flagged on the #284 self-review pass: leaving
+    // `create` on the mod/admin group would expose the auto-
+    // generated `createRecording` mutation as a back-door that
+    // bypasses contentHash uniqueness. Mods + admins go through
+    // submitRecording like everyone else; they keep update/delete
+    // for moderation actions.
     const rules = recordingModel.data.authorization.map((r) =>
       symbolData<AuthData & { operations?: string[] }>(r as object),
     );
     const groupsRule = rules.find((r) => r.strategy === 'groups');
     expect(groupsRule?.groups ?? []).toEqual(expect.arrayContaining(['moderator', 'admin']));
-    expect(groupsRule?.operations ?? []).toEqual(expect.arrayContaining(['create']));
+    expect(groupsRule?.operations ?? []).not.toContain('create');
+    expect(groupsRule?.operations ?? []).toEqual(
+      expect.arrayContaining(['read', 'update', 'delete']),
+    );
   });
 });
 

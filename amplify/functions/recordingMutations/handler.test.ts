@@ -396,7 +396,7 @@ describe('recordingMutations — submitRecording (#284)', () => {
     expect(input.sdrId).toBe('sdr-1');
   });
 
-  it('rejects an invalid modulation value (must be USB/LSB/AM/FM)', async () => {
+  it('throws on an invalid modulation value (handler backstop for schema enum)', async () => {
     const { client, auditSpy, createSpy } = makeStubs();
     __setDeps({ dataClient: client, audit: auditSpy });
     const event = makeEvent({
@@ -407,13 +407,13 @@ describe('recordingMutations — submitRecording (#284)', () => {
         modulation: 'GARBAGE',
       },
     });
-    await handler(event, {} as Context, () => undefined);
-    // Invalid enum is silently dropped (omitted from create input).
-    // The schema-level enum constraint enforces this at the GraphQL
-    // layer in production; this test just pins the handler's
-    // defensive behaviour when something slips through.
-    const input = createSpy.mock.calls[0]?.[0] as RecordingRow;
-    expect(input.modulation).toBeUndefined();
+    // Schema-level enum already gates this at AppSync; handler
+    // backstop catches direct Lambda invocations that bypass the
+    // GraphQL layer. Silent-drop would mask a client bug.
+    await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(
+      /modulation must be one of/i,
+    );
+    expect(createSpy).not.toHaveBeenCalled();
   });
 
   it('returns the created Recording row', async () => {

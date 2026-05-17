@@ -236,10 +236,22 @@ async function dispatchSubmit(
   // hit. Reject regardless of soft-delete state on the existing
   // row: a deleted duplicate still resolves to an existing
   // content_hash that the uniqueness invariant applies to.
+  //
+  // Race window: a second `submitRecording` arriving between the
+  // GSI Query and the Create can clear the duplicate check and
+  // land a second row with the same contentHash. Tightening via
+  // DDB conditional-write + janitor sweep tracked on #297.
+  // Acceptable for v1: collision requires two uploaders racing the
+  // exact same audio in the sub-second window between Query and
+  // Create.
+  //
+  // The error intentionally omits the existing row's id — clients
+  // get a yes/no answer on whether the hash is taken; they don't
+  // need to walk to the existing row.
   const dup = await deps.client.models.Recording.listRecordingByContentHash({ contentHash });
   if (dup.data && dup.data.length > 0) {
     throw new Error(
-      `${RECORDING_DUPLICATE_HASH}: a Recording with contentHash=${contentHash} already exists (id=${dup.data[0]?.id})`,
+      `${RECORDING_DUPLICATE_HASH}: a Recording with the same contentHash already exists`,
     );
   }
 
@@ -253,12 +265,22 @@ async function dispatchSubmit(
   if (typeof args.webCanonicalKey === 'string') optional.webCanonicalKey = args.webCanonicalKey;
   if (typeof args.durationMs === 'number') optional.durationMs = args.durationMs;
   if (typeof args.frequencyKhz === 'number') optional.frequencyKhz = args.frequencyKhz;
-  if (
-    args.modulation === 'USB' ||
-    args.modulation === 'LSB' ||
-    args.modulation === 'AM' ||
-    args.modulation === 'FM'
-  ) {
+  if (args.modulation !== undefined && args.modulation !== null) {
+    if (
+      args.modulation !== 'USB' &&
+      args.modulation !== 'LSB' &&
+      args.modulation !== 'AM' &&
+      args.modulation !== 'FM'
+    ) {
+      // Fail fast on garbage modulation. The GraphQL enum should
+      // already gate this at the AppSync layer, but the handler
+      // also rejects so a directly-invoked Lambda (testing, AWS
+      // console replay) can't sneak an invalid value past the
+      // schema enum. Silent drop would mask a client bug.
+      throw new Error(
+        `submitRecording: modulation must be one of USB/LSB/AM/FM (got ${JSON.stringify(args.modulation)})`,
+      );
+    }
     optional.modulation = args.modulation;
   }
   if (typeof args.broadcastedAt === 'string') optional.broadcastedAt = args.broadcastedAt;
