@@ -161,6 +161,11 @@ async function dispatchSelfDelete(
     throw new Error(`selfDelete: User row not found for cognitoSub=${sub}`);
   }
   // Idempotent — if already blanked, return the existing row untouched.
+  // The Sdr cascade is also skipped in this branch: re-running it would
+  // re-emit `SDR_PII_BLANK` audits for already-wiped rows and pollute
+  // the audit log. Recovery from a partial first-pass cascade is the
+  // job of a janitor sweep follow-up (mirror of #274), not a user-
+  // triggered second selfDelete call.
   if (before.piiBlanked === true) {
     return before;
   }
@@ -240,7 +245,7 @@ async function cascadeSdrPii(
     }
     const after = updated.data ?? { ...before, ...patch };
     await deps.audit(auditContextFrom(event), {
-      action: 'USER_PII_BLANK',
+      action: 'SDR_PII_BLANK',
       targetType: 'Sdr',
       targetId: before.id,
       before: snapshotSdr(before),

@@ -380,12 +380,12 @@ describe('audit helper — every action enum value works', () => {
   });
 
   it('exports exactly the enum values defined on the AuditLog model', () => {
-    // The #258 issue body referred to "19 enum values"; ships 23 after
+    // The #258 issue body referred to "19 enum values"; ships 24 after
     // #272 (USER_CLAIM) + #273 (USER_CLAIM_FANOUT) + #270
-    // (FIELDVOTE_ORPHAN_SWEEP). Source of truth is
-    // `amplify/data/models/audit-log.ts`.
-    expect(AUDIT_ACTIONS).toHaveLength(23);
-    expect(new Set(AUDIT_ACTIONS).size).toBe(23);
+    // (FIELDVOTE_ORPHAN_SWEEP) + #286 (SDR_PII_BLANK). Source of truth
+    // is `amplify/data/models/audit-log.ts`.
+    expect(AUDIT_ACTIONS).toHaveLength(24);
+    expect(new Set(AUDIT_ACTIONS).size).toBe(24);
   });
 
   it('exports every value defined on the AuditLog.action enum', () => {
@@ -405,6 +405,7 @@ describe('audit helper — every action enum value works', () => {
         'USER_PII_BLANK',
         'USER_CLAIM',
         'USER_CLAIM_FANOUT',
+        'SDR_PII_BLANK',
         'FIELDVOTE_ORPHAN_SWEEP',
         'TRANSMITTER_CREATE',
         'TRANSMITTER_UPDATE',

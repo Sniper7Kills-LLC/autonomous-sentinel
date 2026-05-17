@@ -369,7 +369,7 @@ describe('userMutations handler — selfDelete', () => {
       expect(sdrs.get('sdr-other-owner')?.name).toBe('Not Mine');
     });
 
-    it('emits one USER_PII_BLANK audit per Sdr (targetType=Sdr)', async () => {
+    it('emits one SDR_PII_BLANK audit per Sdr (targetType=Sdr)', async () => {
       const event = makeEvent({ fieldName: 'selfDelete', arguments: {} });
       await handler(event, {} as Context, () => undefined);
 
@@ -379,7 +379,7 @@ describe('userMutations handler — selfDelete', () => {
       const auditedIds = sdrAudits.map((a) => a.targetId as string).sort();
       expect(auditedIds).toEqual(['sdr-city', 'sdr-exact']);
       for (const a of sdrAudits) {
-        expect(a.action).toBe('USER_PII_BLANK');
+        expect(a.action).toBe('SDR_PII_BLANK');
       }
     });
 
@@ -413,7 +413,11 @@ describe('userMutations handler — selfDelete', () => {
     });
 
     it('completes even when an individual Sdr update returns an error (cascade does not roll back the User blank)', async () => {
-      // Make the first Sdr update fail with a returned-errors payload.
+      // Make the first Sdr.update call fail (sdr-exact iterated first
+      // because the fan-out preserves Map insertion order); the second
+      // call (sdr-city) succeeds. Asserting the specific surviving id
+      // is what makes this test catch a regression where the cascade
+      // bails out on the first error instead of continuing.
       sdrUpdateSpy.mockImplementationOnce(() =>
         Promise.resolve({ data: null, errors: [{ message: 'boom' }] }),
       );
@@ -423,11 +427,37 @@ describe('userMutations handler — selfDelete', () => {
 
       // User row is still blanked.
       expect(result.piiBlanked).toBe(true);
-      // The successful Sdr still has an audit entry; the failing one does not.
       const sdrAudits = auditSpy.mock.calls
         .map((c) => c[1] as Record<string, unknown>)
         .filter((a) => a.targetType === 'Sdr');
-      expect(sdrAudits.length).toBeLessThan(2);
+      // The failing sdr-exact emitted no audit; sdr-city did.
+      const auditedIds = sdrAudits.map((a) => a.targetId as string).sort();
+      expect(auditedIds).toEqual(['sdr-city']);
+      // Both Sdr updates were attempted (cascade did not bail).
+      expect(sdrUpdateSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('skips the cascade entirely on idempotent re-call (already-blanked User)', async () => {
+      users.set('cognito-sub-actor-123', {
+        cognitoSub: 'cognito-sub-actor-123',
+        email: null,
+        preferredUsername: null,
+        displayName: null,
+        piiBlanked: true,
+        piiBlankedAt: '2026-05-15T00:00:00.000Z',
+      });
+
+      const event = makeEvent({ fieldName: 'selfDelete', arguments: {} });
+      await handler(event, {} as Context, () => undefined);
+
+      // The early-return short-circuits the cascade. Acceptable trade-off
+      // for v1: a partial cascade from a prior selfDelete (some Sdr
+      // updates failed) is recovered by a janitor sweep follow-up, not by
+      // a second user call. Replaying the cascade here would re-emit
+      // SDR_PII_BLANK audits for already-blanked rows, polluting the
+      // audit log. The janitor will be the dedicated recovery path.
+      expect(sdrListSpy).not.toHaveBeenCalled();
+      expect(sdrUpdateSpy).not.toHaveBeenCalled();
     });
 
     it('cascade is a no-op when the user owns zero Sdrs', async () => {

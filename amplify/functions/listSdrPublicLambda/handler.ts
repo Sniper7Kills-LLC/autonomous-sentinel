@@ -116,6 +116,18 @@ function roundCoord(n: number | null | undefined, decimals: number): number | nu
   return Math.round(n * f) / f;
 }
 
+/**
+ * Apply the granularity-based lat/lon blur to one Sdr row.
+ *
+ * "EXACT preserves full precision" matches the CLAUDE.md → Domain
+ * model → SDR public visibility decision: `locationGranularity` is
+ * the owner's chosen disclosure level, not a "blur one notch
+ * further" downgrade. An owner who picks EXACT has explicitly
+ * opted into showing real lat/lon to the public propagation map.
+ * If we ever want a sanity floor (e.g. always round to 2 dp ~1 km),
+ * add it inside the EXACT branch below — the test surface already
+ * pins the rounding contract per-granularity.
+ */
 export function blurForPublic(row: SdrRow): SdrRow {
   const g = row.locationGranularity;
   const out: SdrRow = { ...row };
