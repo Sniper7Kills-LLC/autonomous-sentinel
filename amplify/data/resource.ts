@@ -4,12 +4,13 @@ import { userMutations } from '../functions/userMutations/resource';
 import { postConfirmation } from '../functions/postConfirmation/resource';
 import { messageMutations } from '../functions/messageMutations/resource';
 import { recordingMutations } from '../functions/recordingMutations/resource';
+import { commentMutations } from '../functions/commentMutations/resource';
 import { getUserPublicLambda } from '../functions/getUserPublicLambda/resource';
 import { Message, softDeleteMessage } from './models/message';
 import { Recording, softDeleteRecording } from './models/recording';
 import { Sdr } from './models/sdr';
 import { Transmitter } from './models/transmitter';
-import { Comment } from './models/comment';
+import { Comment, createComment, softDeleteComment } from './models/comment';
 import { FieldVote, FieldVoteField, castFieldVote } from './models/field-vote';
 import { TranscriptRevision } from './models/transcript-revision';
 import { RevisionVote } from './models/revision-vote';
@@ -93,6 +94,10 @@ export const schema = a
 
     // Recording soft-delete — issue #29
     softDeleteRecording,
+
+    // Comment create + soft-delete — issue #32
+    createComment,
+    softDeleteComment,
   })
   .authorization((allow) => [
     // Schema-level Lambda access grants.
@@ -106,6 +111,7 @@ export const schema = a
     allow.resource(postConfirmation).to(['query', 'mutate']),
     allow.resource(messageMutations).to(['query', 'mutate']),
     allow.resource(recordingMutations).to(['query', 'mutate']),
+    allow.resource(commentMutations).to(['query', 'mutate']),
     // getUserPublicLambda is registered here as a data-source
     // consumer for completeness even though its production path
     // reads User directly via the DDB SDK (with the IAM grant in

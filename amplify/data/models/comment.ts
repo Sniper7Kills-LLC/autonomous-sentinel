@@ -1,4 +1,5 @@
 import { a } from '@aws-amplify/backend';
+import { commentMutations } from '../../functions/commentMutations/resource';
 
 /**
  * Comment — community discussion on Messages (#32).
@@ -10,10 +11,15 @@ import { a } from '@aws-amplify/backend';
  * Soft-delete only (`deletedAt` sentinel); body is replaced with `[removed]`
  * by the soft-delete custom mutation.
  *
+ * Custom mutations land below:
+ *   - `createComment` — server-side depth clamp + flatten + authorId
+ *     forced from `ctx.identity.sub`.
+ *   - `softDeleteComment` — author / mod / admin → sets deletedAt
+ *     + rewrites body to `[removed]` + emits COMMENT_DELETE audit.
+ *
  * Deferred:
- *   - Depth-clamp custom mutation (server-side enforcement).
- *   - Soft-delete custom mutation (writes AuditLog entry; needs #38).
- *   - Auto-flag hook from the hybrid wordlist + Comprehend pipeline.
+ *   - Auto-flag hook from the hybrid wordlist + Comprehend pipeline
+ *     (phase 9 #167).
  */
 export const Comment = a
   .model({
@@ -44,8 +50,54 @@ export const Comment = a
   ])
   .authorization((allow) => [
     allow.guest().to(['read']),
-    allow.authenticated().to(['read', 'create']),
-    // Owner = the Cognito sub stored in `authorId` (#259).
+    // No `create` on the model — `createComment` is the sole write
+    // path so the server can enforce depth-clamp + flatten + the
+    // authorId-from-ctx.identity.sub guard. Leaving the auto-
+    // generated `createComment` mutation live would accept a
+    // client-supplied authorId + depth and defeat both invariants.
+    allow.authenticated().to(['read']),
+    // Owner = the Cognito sub stored in `authorId` (#259). Kept for
+    // direct edit / delete paths if we ever expose them; the soft-
+    // delete custom mutation is the recommended route since it
+    // rewrites `body` to `[removed]` + emits the audit.
     allow.ownerDefinedIn('authorId').identityClaim('sub').to(['update', 'delete']),
     allow.groups(['moderator', 'admin']).to(['update', 'delete']),
   ]);
+
+/**
+ * `createComment` — depth-clamped + flatten Comment create (#32).
+ *
+ * Server-side guarantees the client can't forge:
+ *   - `authorId = ctx.identity.sub`.
+ *   - `depth = min(parent.depth + 1, 3)`.
+ *   - `parentCommentId` must belong to the same `messageId`.
+ *
+ * Returns the created Comment row.
+ */
+export const createComment = a
+  .mutation()
+  .arguments({
+    messageId: a.id().required(),
+    body: a.string().required(),
+    parentCommentId: a.id(),
+  })
+  .returns(a.ref('Comment'))
+  .authorization((allow) => allow.authenticated())
+  .handler(a.handler.function(commentMutations));
+
+/**
+ * `softDeleteComment` — author or moderator/admin soft-delete (#32).
+ *
+ * Sets `deletedAt = now`, rewrites `body` to `[removed]`, emits a
+ * `COMMENT_DELETE` AuditLog entry via the #258 helper. Idempotent on
+ * already-deleted rows.
+ */
+export const softDeleteComment = a
+  .mutation()
+  .arguments({
+    commentId: a.id().required(),
+    reason: a.string(),
+  })
+  .returns(a.ref('Comment'))
+  .authorization((allow) => allow.authenticated())
+  .handler(a.handler.function(commentMutations));
