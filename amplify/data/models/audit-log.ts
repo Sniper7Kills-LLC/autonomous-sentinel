@@ -1,13 +1,18 @@
 import { a } from '@aws-amplify/backend';
+import { listAuditLogPublic as listAuditLogPublicFn } from '../../functions/listAuditLogPublic/resource';
 
 /**
  * AuditLog — immutable record of every admin / mod / system action (#38).
  *
  * Retained forever per CLAUDE.md. Authz grants admins `create` only (no
  * `update`, no `delete`) so the API surface enforces append-only semantics —
- * client cannot mutate prior entries. Read access is intentionally public
- * (guest + authenticated): the audit log is a transparency surface so users
- * can see what mods did to their stuff.
+ * client cannot mutate prior entries.
+ *
+ * Read access on the model is locked to admin + moderator. Public reads
+ * route through the `listAuditLogPublic` custom query (defined below)
+ * which filters by action class + caller-vs-actor/target so visitors
+ * only see entries relevant to them (#38 public-read filter). Mirrors
+ * the User → getUserPublic lockdown pattern from PR #269.
  *
  * `targetType` + `targetId` are polymorphic — string for cross-table
  * compatibility. `targetMessageId` is a typed optional FK so AppSync can
@@ -95,8 +100,37 @@ export const AuditLog = a
     i('targetType').sortKeys(['targetId']),
   ])
   .authorization((allow) => [
-    allow.guest().to(['read']),
-    allow.authenticated().to(['read']),
-    // Admins create only — never update or delete. Append-only forever.
-    allow.groups(['admin']).to(['create']),
+    // Public + authenticated reads route through the
+    // `listAuditLogPublic` query below. Direct model reads stay
+    // restricted to admin + moderator so PII-bearing entries
+    // (USER_BAN with `before.bannedReason`, USER_PII_BLANK diffs,
+    // CALLSIGN_MERGE notes, etc.) never surface via the auto-
+    // generated `listAuditLog` / `getAuditLog` queries.
+    allow.groups(['moderator']).to(['read']),
+    allow.groups(['admin']).to(['read', 'create']),
   ]);
+
+/**
+ * `listAuditLogPublic` — PII-filtered AuditLog read (#38).
+ *
+ * Visible to guest + authenticated callers. Returns rows scoped to
+ * a single `(targetType, targetId)` pair (forced — bare lists would
+ * scan + return too much data). The Lambda handler filters by
+ * action class:
+ *   - Content-mutation actions visible to everyone.
+ *   - USER_* actions visible only to the actor or the target.
+ *   - Internal / admin-tooling actions stay invisible.
+ * Admin + moderator callers bypass the filter (the model also gives
+ * them direct read).
+ */
+export const listAuditLogPublic = a
+  .query()
+  .arguments({
+    targetType: a.string().required(),
+    targetId: a.string().required(),
+    limit: a.integer(),
+    nextToken: a.string(),
+  })
+  .returns(a.json())
+  .authorization((allow) => [allow.guest(), allow.authenticated()])
+  .handler(a.handler.function(listAuditLogPublicFn));

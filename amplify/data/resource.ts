@@ -6,6 +6,7 @@ import { messageMutations } from '../functions/messageMutations/resource';
 import { recordingMutations } from '../functions/recordingMutations/resource';
 import { commentMutations } from '../functions/commentMutations/resource';
 import { getUserPublicLambda } from '../functions/getUserPublicLambda/resource';
+import { listAuditLogPublic } from '../functions/listAuditLogPublic/resource';
 import { Message, softDeleteMessage } from './models/message';
 import { Recording, softDeleteRecording } from './models/recording';
 import { Sdr } from './models/sdr';
@@ -16,7 +17,7 @@ import { TranscriptRevision } from './models/transcript-revision';
 import { RevisionVote } from './models/revision-vote';
 import { Reputation } from './models/reputation';
 import { AbuseReport } from './models/abuse-report';
-import { AuditLog } from './models/audit-log';
+import { AuditLog, listAuditLogPublic as listAuditLogPublicQuery } from './models/audit-log';
 import { Callsign } from './models/callsign';
 import { Donation } from './models/donation';
 import { NotificationPreference } from './models/notification-preference';
@@ -98,6 +99,9 @@ export const schema = a
     // Comment create + soft-delete — issue #32
     createComment,
     softDeleteComment,
+
+    // AuditLog public-filtered read — issue #38
+    listAuditLogPublicQuery,
   })
   .authorization((allow) => [
     // Schema-level Lambda access grants.
@@ -112,6 +116,9 @@ export const schema = a
     allow.resource(messageMutations).to(['query', 'mutate']),
     allow.resource(recordingMutations).to(['query', 'mutate']),
     allow.resource(commentMutations).to(['query', 'mutate']),
+    // listAuditLogPublic Lambda Queries AuditLog directly via the
+    // Amplify Data client; `query` scope is enough.
+    allow.resource(listAuditLogPublic).to(['query']),
     // getUserPublicLambda is registered here as a data-source
     // consumer for completeness even though its production path
     // reads User directly via the DDB SDK (with the IAM grant in
