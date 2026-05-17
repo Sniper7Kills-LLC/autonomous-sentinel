@@ -21,6 +21,7 @@ import { messageMutations } from './functions/messageMutations/resource';
 import { recordingMutations } from './functions/recordingMutations/resource';
 import { commentMutations } from './functions/commentMutations/resource';
 import { getUserPublicLambda } from './functions/getUserPublicLambda/resource';
+import { listAuditLogPublic } from './functions/listAuditLogPublic/resource';
 import { legacyClaimWorker } from './functions/legacyClaimWorker/resource';
 import { legacyClaimReplaySweeper } from './functions/legacyClaimReplaySweeper/resource';
 import { fieldVoteOrphanJanitor } from './functions/fieldVoteOrphanJanitor/resource';
@@ -39,6 +40,7 @@ const backend = defineBackend({
   messageMutations,
   recordingMutations,
   commentMutations,
+  listAuditLogPublic,
   getUserPublicLambda,
   legacyClaimWorker,
   legacyClaimReplaySweeper,
