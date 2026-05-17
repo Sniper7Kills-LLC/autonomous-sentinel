@@ -6,15 +6,21 @@ import {
 } from '../../data/audit-log-helper';
 
 /**
- * Lambda-backed AppSync resolver for the `softDeleteRecording`
- * custom mutation (#29). Mirrors the `softDeleteMessage` shape from
- * #28 / PR #280 so the cross-cutting AuditLog helper (#258) stays
- * the sole writer of the `RECORDING_DELETE` row.
+ * Lambda-backed AppSync resolver for Recording custom mutations
+ * (#29 / #284). Cross-cutting AuditLog helper (#258) is the sole
+ * writer of the `RECORDING_*` audit rows.
  *
  * Dispatches on `event.info.fieldName`:
  *   - `softDeleteRecording` — admin-only. Sets `deletedAt` /
  *     `deletedBy` on the Recording row. Idempotent — a second call
  *     on an already-deleted row returns the row untouched.
+ *   - `submitRecording` — authenticated. Enforces `contentHash`
+ *     uniqueness server-side (#284): Queries the
+ *     `recording-contentHash-index` GSI; if any row with the same
+ *     hash exists (deleted or not), throws
+ *     `RECORDING_DUPLICATE_HASH`. Otherwise creates the row with
+ *     `uploaderId` set from `ctx.identity.sub` (never trusted from
+ *     the client).
  *
  * Recording carries no `deletedReason` column at the row level (per
  * the model definition in #257); the moderator's reason is captured
@@ -38,7 +44,19 @@ import {
 export type RecordingRow = {
   id: string;
   messageId?: string | null;
+  uploaderId?: string | null;
   contentHash?: string | null;
+  originalKey?: string | null;
+  webCanonicalKey?: string | null;
+  durationMs?: number | null;
+  frequencyKhz?: number | null;
+  modulation?: 'USB' | 'LSB' | 'AM' | 'FM' | null;
+  broadcastedAt?: string | null;
+  automated?: boolean | null;
+  sdrId?: string | null;
+  transcriptionStatus?: string | null;
+  transcriptionFailed?: boolean | null;
+  migratedFromV3?: boolean | null;
   deletedAt?: string | null;
   deletedBy?: string | null;
   [k: string]: unknown;
@@ -51,9 +69,22 @@ export interface RecordingMutationsDataClient {
         data: RecordingRow | null;
         errors?: unknown;
       }>;
+      create: (input: Omit<RecordingRow, 'id'>) => Promise<{
+        data: RecordingRow | null;
+        errors?: unknown;
+      }>;
       update: (
         input: Partial<RecordingRow> & { id: string },
       ) => Promise<{ data: RecordingRow | null; errors?: unknown }>;
+      /**
+       * GSI lookup auto-generated for `i('contentHash')` on Recording
+       * (#257). Used by `submitRecording` (#284) to reject duplicate
+       * uploads with the same SHA-256.
+       */
+      listRecordingByContentHash: (input: { contentHash: string }) => Promise<{
+        data: RecordingRow[] | null;
+        errors?: unknown;
+      }>;
     };
   };
 }
@@ -176,6 +207,103 @@ async function dispatchSoftDelete(
   return after;
 }
 
+/**
+ * Typed error code for duplicate-hash rejection so consumers can
+ * match without parsing the human message.
+ */
+const RECORDING_DUPLICATE_HASH = 'RECORDING_DUPLICATE_HASH';
+
+async function dispatchSubmit(
+  event: Parameters<AppSyncResolverHandler<Record<string, unknown>, RecordingRow | null>>[0],
+  deps: { client: RecordingMutationsDataClient; now: () => Date },
+): Promise<RecordingRow | null> {
+  const uploaderSub = identitySub(event.identity);
+  if (!uploaderSub) {
+    throw new Error('submitRecording: caller has no identity sub');
+  }
+  const args = event.arguments;
+  const contentHash = typeof args.contentHash === 'string' ? args.contentHash : '';
+  const originalKey = typeof args.originalKey === 'string' ? args.originalKey : '';
+  if (!contentHash) {
+    throw new Error('submitRecording: contentHash argument is required');
+  }
+  if (!originalKey) {
+    throw new Error('submitRecording: originalKey argument is required');
+  }
+
+  // Server-side uniqueness check (#284). The GSI on contentHash
+  // catches duplicate uploads — same audio bytes → same SHA-256 →
+  // hit. Reject regardless of soft-delete state on the existing
+  // row: a deleted duplicate still resolves to an existing
+  // content_hash that the uniqueness invariant applies to.
+  //
+  // Race window: a second `submitRecording` arriving between the
+  // GSI Query and the Create can clear the duplicate check and
+  // land a second row with the same contentHash. Tightening via
+  // DDB conditional-write + janitor sweep tracked on #297.
+  // Acceptable for v1: collision requires two uploaders racing the
+  // exact same audio in the sub-second window between Query and
+  // Create.
+  //
+  // The error intentionally omits the existing row's id — clients
+  // get a yes/no answer on whether the hash is taken; they don't
+  // need to walk to the existing row.
+  const dup = await deps.client.models.Recording.listRecordingByContentHash({ contentHash });
+  if (dup.data && dup.data.length > 0) {
+    throw new Error(
+      `${RECORDING_DUPLICATE_HASH}: a Recording with the same contentHash already exists`,
+    );
+  }
+
+  // Optional pass-through fields. `messageId` may be null when the
+  // recording is uploaded ahead of a Message being attributed (the
+  // transcription pipeline links them later, or v3 archive entries
+  // are imported without one — per the recording-less / messageless
+  // semantics introduced on #285).
+  const optional: Partial<RecordingRow> = {};
+  if (typeof args.messageId === 'string') optional.messageId = args.messageId;
+  if (typeof args.webCanonicalKey === 'string') optional.webCanonicalKey = args.webCanonicalKey;
+  if (typeof args.durationMs === 'number') optional.durationMs = args.durationMs;
+  if (typeof args.frequencyKhz === 'number') optional.frequencyKhz = args.frequencyKhz;
+  if (args.modulation !== undefined && args.modulation !== null) {
+    if (
+      args.modulation !== 'USB' &&
+      args.modulation !== 'LSB' &&
+      args.modulation !== 'AM' &&
+      args.modulation !== 'FM'
+    ) {
+      // Fail fast on garbage modulation. The GraphQL enum should
+      // already gate this at the AppSync layer, but the handler
+      // also rejects so a directly-invoked Lambda (testing, AWS
+      // console replay) can't sneak an invalid value past the
+      // schema enum. Silent drop would mask a client bug.
+      throw new Error(
+        `submitRecording: modulation must be one of USB/LSB/AM/FM (got ${JSON.stringify(args.modulation)})`,
+      );
+    }
+    optional.modulation = args.modulation;
+  }
+  if (typeof args.broadcastedAt === 'string') optional.broadcastedAt = args.broadcastedAt;
+  if (typeof args.automated === 'boolean') optional.automated = args.automated;
+  if (typeof args.sdrId === 'string') optional.sdrId = args.sdrId;
+
+  const created = await deps.client.models.Recording.create({
+    contentHash,
+    originalKey,
+    uploaderId: uploaderSub,
+    transcriptionStatus: 'QUEUED',
+    transcriptionFailed: false,
+    migratedFromV3: false,
+    ...optional,
+  });
+  if (created.errors) {
+    throw new Error(
+      `submitRecording: Recording.create returned errors: ${JSON.stringify(created.errors)}`,
+    );
+  }
+  return created.data;
+}
+
 export const handler: AppSyncResolverHandler<Record<string, unknown>, RecordingRow | null> = async (
   event,
 ) => {
@@ -188,6 +316,8 @@ export const handler: AppSyncResolverHandler<Record<string, unknown>, RecordingR
   switch (field) {
     case 'softDeleteRecording':
       return dispatchSoftDelete(event, deps);
+    case 'submitRecording':
+      return dispatchSubmit(event, { client, now });
     default:
       throw new Error(`recordingMutations: unsupported fieldName "${field}"`);
   }
