@@ -25,11 +25,13 @@ function ctxFor(
   args: CastFieldVoteArgs,
   identitySub = 'sub-voter-1',
   result?: Record<string, unknown>,
+  prev?: { result?: { computedWeight?: number } | null },
 ): CastFieldVoteContext {
   return {
     arguments: args,
     identity: { sub: identitySub },
     result,
+    prev,
   };
 }
 
@@ -106,14 +108,33 @@ describe('castFieldVote request resolver', () => {
     expect(() => request(ctx)).toThrow(/identity/i);
   });
 
-  it('records weightAtVoteTime as a numeric column on the upsert', () => {
-    // weightAtVoteTime defaults to 1 on a fresh vote — the request resolver
-    // pins it via if_not_exists so subsequent re-casts don't recompute the
-    // snapshot. The proper Reputation lookup is deferred to a follow-up.
+  it('snapshots weightAtVoteTime from ctx.prev.result.computedWeight (#33)', () => {
+    // Pipeline step 1 (lookup-voter-reputation) reads the voter's
+    // current Reputation row and hands it through `ctx.prev.result`.
+    // The cast resolver uses that for the snapshot so the tally
+    // stays stable when the voter's reputation changes later.
+    const op = request(
+      ctxFor({ messageId: 'msg-w', field: 'RECEIVER', value: 'A' }, 'sub-voter-w', undefined, {
+        result: { computedWeight: 2.75 },
+      }),
+    );
+    expect(op.update.expression).toMatch(/#weightAtVoteTime = if_not_exists/);
+    expect(op.update.expressionValues[':weightAtVoteTime']?.N).toBe('2.75');
+  });
+
+  it('falls back to weight=1 when ctx.prev.result is null (pre-#36 lazy-create users)', () => {
+    const op = request(
+      ctxFor({ messageId: 'msg-w', field: 'RECEIVER', value: 'A' }, 'sub-voter-w', undefined, {
+        result: null,
+      }),
+    );
+    expect(op.update.expressionValues[':weightAtVoteTime']?.N).toBe('1');
+  });
+
+  it('falls back to weight=1 when ctx.prev is missing entirely (single-handler test path)', () => {
     const op = request(
       ctxFor({ messageId: 'msg-w', field: 'RECEIVER', value: 'A' }, 'sub-voter-w'),
     );
-    expect(op.update.expression).toMatch(/#weightAtVoteTime = if_not_exists/);
     expect(op.update.expressionValues[':weightAtVoteTime']?.N).toBe('1');
   });
 });

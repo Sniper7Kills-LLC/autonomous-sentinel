@@ -22,6 +22,14 @@ export interface CastFieldVoteContext {
   arguments: CastFieldVoteArgs;
   identity: CastFieldVoteIdentity | undefined;
   result?: Record<string, unknown>;
+  /**
+   * Result of the upstream pipeline step
+   * (`lookup-voter-reputation.js`) — the voter's live Reputation
+   * row. Null when the row is missing (pre-#36 lazy-create users).
+   * The cast resolver reads `prev.result.computedWeight` (or falls
+   * back to 1) to stamp `weightAtVoteTime`.
+   */
+  prev?: { result?: { computedWeight?: number } | null };
 }
 
 export interface AttributeValue {
