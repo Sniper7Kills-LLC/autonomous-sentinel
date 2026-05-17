@@ -14,7 +14,7 @@ import { Transmitter } from './models/transmitter';
 import { Comment, createComment, softDeleteComment } from './models/comment';
 import { FieldVote, FieldVoteField, castFieldVote } from './models/field-vote';
 import { TranscriptRevision } from './models/transcript-revision';
-import { RevisionVote } from './models/revision-vote';
+import { RevisionVote, RevisionVoteValue, castRevisionVote } from './models/revision-vote';
 import { Reputation } from './models/reputation';
 import { AbuseReport } from './models/abuse-report';
 import { AuditLog, listAuditLogPublic as listAuditLogPublicQuery } from './models/audit-log';
@@ -84,6 +84,10 @@ export const schema = a
 
     // Synthesised composite-PK FieldVote upsert — issue #266
     castFieldVote,
+
+    // RevisionVote enum + upsert (compound-PK + weight-snapshot) — issue #35
+    RevisionVoteValue,
+    castRevisionVote,
 
     // User lifecycle mutations + PII-filtered read — issue #248
     selfDelete,
