@@ -25,18 +25,17 @@ import { a } from '@aws-amplify/backend';
  * (`{ "type": { "SKYKING": 12.5, ... } }` weighted sums); individual
  * vote rows are restricted to mod / admin.
  *
- * Deferred (do not in-scope on #266):
+ * `weightAtVoteTime` is stamped by a two-step pipeline resolver
+ * (#33): step 1 GetItems the voter's Reputation row, step 2 runs
+ * the FieldVote UpdateItem using `ctx.prev.result.computedWeight`
+ * (or 1 when the row is missing).
+ *
+ * Deferred (still tracked under #33):
  *   - Custom resolver that returns aggregate counts to guest / authed
  *     while preserving raw access for mods + admins.
- *   - Reputation-snapshot hook that pulls live `computedWeight` at
- *     vote-cast time (the resolver currently snapshots 1).
- *   - Orphan-vote janitor: `castFieldVote` does not pre-check that
- *     `messageId` references an existing Message row, so a vote cast
- *     concurrently with a Message delete can land an orphan. Orphans
- *     are inert (no aggregate query joins them to a public message),
- *     so they consume DDB storage only. A scheduled janitor that
- *     sweeps FieldVote rows whose `messageId` no longer resolves is
- *     tracked as a follow-up.
+ *
+ * Other deferred items:
+ *   - Orphan-vote janitor — landed at #270 / PR #281.
  */
 export const FieldVote = a
   .model({
@@ -91,7 +90,7 @@ export const FieldVote = a
 export const FieldVoteField = a.enum(['SENDER', 'RECEIVER', 'BODY', 'TYPE']);
 
 /**
- * `castFieldVote` — upsert a FieldVote row (#266).
+ * `castFieldVote` — upsert a FieldVote row (#266 + #33).
  *
  * The mutation synthesises the composite `fieldKey` server-side so the
  * client never composes a PK by hand and an authenticated user cannot
@@ -100,8 +99,16 @@ export const FieldVoteField = a.enum(['SENDER', 'RECEIVER', 'BODY', 'TYPE']);
  * `value` + `lastCastAt` columns without restamping the natural-key
  * components or the `weightAtVoteTime` snapshot.
  *
- * Resolver source: ./resolvers/cast-field-vote.js (JS — shipped as-is to
- * the APPSYNC_JS runtime).
+ * Two-step JS pipeline (#33):
+ *   1. `lookup-voter-reputation.js` — GetItem on Reputation by the
+ *      voter's Cognito sub. Returns the row (or null when missing).
+ *   2. `cast-field-vote.js` — UpdateItem on FieldVote; uses
+ *      `ctx.prev.result.computedWeight` for the snapshot
+ *      (falls back to 1 when the row is missing).
+ *
+ * Resolver sources: ./resolvers/lookup-voter-reputation.js +
+ * ./resolvers/cast-field-vote.js (both JS — shipped as-is to the
+ * APPSYNC_JS runtime).
  */
 export const castFieldVote = a
   .mutation()
@@ -112,9 +119,13 @@ export const castFieldVote = a
   })
   .returns(a.ref('FieldVote'))
   .authorization((allow) => allow.authenticated())
-  .handler(
+  .handler([
+    a.handler.custom({
+      dataSource: a.ref('Reputation'),
+      entry: './resolvers/lookup-voter-reputation.js',
+    }),
     a.handler.custom({
       dataSource: a.ref('FieldVote'),
       entry: './resolvers/cast-field-vote.js',
     }),
-  );
+  ]);

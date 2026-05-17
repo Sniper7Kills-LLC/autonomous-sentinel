@@ -23,9 +23,10 @@
  *   - `value` and `lastCastAt` are overwritten on every call so the
  *     row reflects the voter's current pick.
  *
- * `weightAtVoteTime` defaults to 1 here. Pulling the live
- * Reputation.computedWeight at vote-cast time is a follow-up (tracked on
- * #266 as deferred behaviour — see field-vote.ts docstring).
+ * `weightAtVoteTime` snapshots the voter's live
+ * `Reputation.computedWeight` (read by the upstream pipeline step
+ * `lookup-voter-reputation.js`). Missing rows fall back to 1 (the
+ * model default) — pre-#36 lazy-create users + future opt-out cases.
  *
  * Orphan votes: this resolver does not GetItem on Message before the
  * upsert, so a vote cast concurrently with a Message delete can land
@@ -54,6 +55,7 @@
  * @property {CastFieldVoteArgs} arguments
  * @property {CastFieldVoteIdentity | undefined} identity
  * @property {Record<string, unknown>} [result]
+ * @property {{ result?: { computedWeight?: number } | null } | undefined} [prev]
  */
 
 /**
@@ -84,6 +86,12 @@ export function request(ctx) {
   const fieldKey = `${messageId}#${field}#${voterId}`;
   const now = new Date().toISOString();
 
+  // Live Reputation snapshot read by the upstream pipeline step.
+  // Missing row falls back to 1 (base weight) — pre-#36 lazy-create
+  // users + future opt-out cases.
+  const liveWeight =
+    typeof ctx.prev?.result?.computedWeight === 'number' ? ctx.prev.result.computedWeight : 1;
+
   /** @type {Record<string, string>} */
   const expressionNames = {
     '#fieldKey': 'fieldKey',
@@ -102,7 +110,7 @@ export function request(ctx) {
     ':field': { S: field },
     ':voterId': { S: voterId },
     ':value': { S: value },
-    ':weightAtVoteTime': { N: '1' },
+    ':weightAtVoteTime': { N: String(liveWeight) },
     ':now': { S: now },
   };
 

@@ -186,8 +186,12 @@ describe('castFieldVote custom mutation (issue #266)', () => {
     expect(linkName).toBe('FieldVote');
   });
 
-  it('wires the cast-field-vote JS resolver on the FieldVote data source', () => {
+  it('wires the two-step JS resolver pipeline (#33 weight-snapshot)', () => {
+    // Step 1: lookup-voter-reputation (Reputation data source);
+    // Step 2: cast-field-vote (FieldVote data source). The runtime
+    // resolves `ctx.prev.result.computedWeight` from step 1's
+    // GetItem into step 2's UpdateItem.
     const handlers = castOp.data.handlers;
-    expect(handlers).toHaveLength(1);
+    expect(handlers).toHaveLength(2);
   });
 });
