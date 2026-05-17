@@ -27,6 +27,17 @@ import {
  *     parent Recording (transcript lives there). Idempotent on
  *     already-accepted revisions.
  *
+ *     **Race trade-off**: the sibling-cascade reads the live
+ *     revision list once via the GSI. A
+ *     `submitTranscriptRevision` arriving mid-cascade can land a
+ *     new revision with `superseded=false` after the list is
+ *     snapshotted. The new revision is harmless in practice
+ *     because the public revision-list query orders by `voteScore`
+ *     (the accepted revision already won), but admins may see a
+ *     stray live sibling. Acceptable trade-off for v1; tighten
+ *     with a DDB conditional-write Recording-level guard if it
+ *     becomes observable.
+ *
  * MACHINE / CORRECTION sources are out of scope for these
  * mutations:
  *   - `MACHINE` rows are inserted by the transcribe Lambda

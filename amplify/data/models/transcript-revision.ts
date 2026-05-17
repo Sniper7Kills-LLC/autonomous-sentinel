@@ -79,6 +79,11 @@ export const submitTranscriptRevision = a
  * `Recording.transcript`. Emits a `MESSAGE_EDIT` AuditLog entry
  * targeting the Recording (transcript lives there). Idempotent
  * on already-accepted revisions.
+ *
+ * Schema-level authz is `allow.groups(['moderator', 'admin'])` so
+ * AppSync rejects unauthorised callers before the Lambda is
+ * invoked. The handler keeps a defense-in-depth check on the
+ * caller's groups for the same reason `banUser` etc. do.
  */
 export const acceptTranscriptRevision = a
   .mutation()
@@ -86,5 +91,5 @@ export const acceptTranscriptRevision = a
     revisionId: a.id().required(),
   })
   .returns(a.ref('TranscriptRevision'))
-  .authorization((allow) => allow.authenticated())
+  .authorization((allow) => allow.groups(['moderator', 'admin']))
   .handler(a.handler.function(transcriptRevisionMutations));
