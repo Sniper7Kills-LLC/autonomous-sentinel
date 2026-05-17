@@ -13,7 +13,12 @@ import { Sdr } from './models/sdr';
 import { Transmitter } from './models/transmitter';
 import { Comment, createComment, softDeleteComment } from './models/comment';
 import { FieldVote, FieldVoteField, castFieldVote } from './models/field-vote';
-import { TranscriptRevision } from './models/transcript-revision';
+import {
+  TranscriptRevision,
+  submitTranscriptRevision,
+  acceptTranscriptRevision,
+} from './models/transcript-revision';
+import { transcriptRevisionMutations } from '../functions/transcriptRevisionMutations/resource';
 import { RevisionVote, RevisionVoteValue, castRevisionVote } from './models/revision-vote';
 import { Reputation } from './models/reputation';
 import { AbuseReport } from './models/abuse-report';
@@ -106,6 +111,10 @@ export const schema = a
 
     // AuditLog public-filtered read — issue #38
     listAuditLogPublicQuery,
+
+    // TranscriptRevision gated submit + accept-cascade — issue #287
+    submitTranscriptRevision,
+    acceptTranscriptRevision,
   })
   .authorization((allow) => [
     // Schema-level Lambda access grants.
@@ -120,6 +129,7 @@ export const schema = a
     allow.resource(messageMutations).to(['query', 'mutate']),
     allow.resource(recordingMutations).to(['query', 'mutate']),
     allow.resource(commentMutations).to(['query', 'mutate']),
+    allow.resource(transcriptRevisionMutations).to(['query', 'mutate']),
     // listAuditLogPublic Lambda Queries AuditLog directly via the
     // Amplify Data client; `query` scope is enough.
     allow.resource(listAuditLogPublic).to(['query']),
