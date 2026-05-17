@@ -9,7 +9,8 @@ import { getUserPublicLambda } from '../functions/getUserPublicLambda/resource';
 import { listAuditLogPublic } from '../functions/listAuditLogPublic/resource';
 import { Message, softDeleteMessage } from './models/message';
 import { Recording, softDeleteRecording, submitRecording } from './models/recording';
-import { Sdr } from './models/sdr';
+import { Sdr, listSdrPublic } from './models/sdr';
+import { listSdrPublicLambda } from '../functions/listSdrPublicLambda/resource';
 import { Transmitter } from './models/transmitter';
 import { Comment, createComment, softDeleteComment } from './models/comment';
 import { FieldVote, FieldVoteField, castFieldVote } from './models/field-vote';
@@ -118,6 +119,9 @@ export const schema = a
     // TranscriptRevision gated submit + accept-cascade — issue #287
     submitTranscriptRevision,
     acceptTranscriptRevision,
+
+    // Sdr public listing with granularity-blurred lat/lon — issue #286
+    listSdrPublic,
   })
   .authorization((allow) => [
     // Schema-level Lambda access grants.
@@ -143,6 +147,11 @@ export const schema = a
     // switch to the Amplify Data client without re-touching the
     // schema-level grant.
     allow.resource(getUserPublicLambda).to(['query']),
+    // listSdrPublicLambda reads Sdr directly via the DDB SDK (Scan
+    // — see handler comment). The `query` scope keeps room for a
+    // future switch to the Amplify Data client without re-touching
+    // the schema-level grant.
+    allow.resource(listSdrPublicLambda).to(['query']),
   ]);
 
 export type Schema = ClientSchema<typeof schema>;

@@ -1,27 +1,22 @@
 import { a } from '@aws-amplify/backend';
+import { listSdrPublicLambda } from '../../functions/listSdrPublicLambda/resource';
 
 /**
  * SDR — a software-defined radio registered by a user (issue #30).
  *
  * Owner FK to User (#248); survives the owner's self-deletion with PII blanked
- * (name + exact lat/lon wiped when granularity is EXACT). Lat/lon are
- * user-chosen via the map selector with user-selectable granularity (EXACT /
- * CITY / REGION). The owner's `publicVisible` toggle controls whether the SDR
- * appears on the propagation map; non-public SDRs are still readable by
- * authenticated users for cross-reference but excluded from guest reads.
+ * (name replaced by `[deleted]`, notes wiped, lat/lon wiped when granularity is
+ * EXACT — see `userMutations.selfDelete` cascade). Lat/lon are user-chosen via
+ * the map selector with user-selectable granularity (EXACT / CITY / REGION).
+ * The owner's `publicVisible` toggle controls whether the SDR appears on the
+ * propagation map; non-public SDRs are still readable by authenticated users
+ * for cross-reference but excluded from guest reads.
  *
  * `recordings` hasMany Recording is intentionally sparse — `Recording.sdrId`
  * is optional because migrated v3 audio and certain admin-imported recordings
  * have no associated SDR. Querying `sdr.recordings` returns only the rows
  * whose `sdrId` actually matches; recordings with `sdrId=null` are excluded
  * by design.
- *
- * Deferred to follow-ups:
- *   - Custom public-listing resolver that filters out non-publicVisible rows
- *     and blurs lat/lon by granularity (`a.authorization` cannot express
- *     per-row visibility on its own).
- *   - PII-blanking cascade on owner self-deletion (rides on the same custom
- *     mutation tracked off #248).
  */
 export const Sdr = a
   .model({
@@ -53,3 +48,24 @@ export const Sdr = a
     allow.ownerDefinedIn('ownerId').identityClaim('sub').to(['read', 'create', 'update', 'delete']),
     allow.groups(['admin']).to(['read', 'update', 'delete']),
   ]);
+
+/**
+ * `listSdrPublic` — public-facing Sdr listing (issue #286).
+ *
+ * Guests + authenticated callers hit this for the propagation map.
+ * The Lambda filters soft-deleted rows for everyone, then for non-
+ * admin callers also filters down to `publicVisible=true` and blurs
+ * lat/lon to the owner's `locationGranularity` (EXACT → no blur,
+ * CITY → 1 dp, REGION → 0 dp, unset → null). Admin callers see the
+ * un-filtered, un-blurred set so the admin propagation view can pin
+ * exact locations.
+ *
+ * Lambda-backed (vs. `a.handler.custom` JS) so `allow.guest()`
+ * works under the identityPool default auth mode — same constraint
+ * that forced `getUserPublic` to migrate to a Lambda in #271.
+ */
+export const listSdrPublic = a
+  .query()
+  .returns(a.ref('Sdr').array())
+  .authorization((allow) => [allow.guest(), allow.authenticated()])
+  .handler(a.handler.function(listSdrPublicLambda));
