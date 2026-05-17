@@ -32,11 +32,22 @@ import {
  * Schema-level grant for the Lambda's IAM role lives in
  * `data/resource.ts` under `allow.resource(commentMutations)`.
  *
+ * Orphan-comment risk: `createComment` does not GetItem on Message
+ * to confirm `messageId` references an existing row. Top-level
+ * comments + parent-supplied comments both can land on a fake
+ * messageId (parent-supplied path only checks parent-messageId
+ * consistency, not Message existence). Orphans are inert — every
+ * consumer query joins on Message, so a row with no parent never
+ * surfaces — and the per-create GetItem would double the hot-path
+ * cost. Cleanup tracked at #290 (mirrors the FieldVote orphan
+ * janitor pattern from #270 / #281).
+ *
  * Deferred (out of scope, tracked elsewhere):
  *   - Auto-flag hook from the hybrid wordlist + Comprehend pipeline
  *     (phase 9 #167). Flipping `flagged=true` on new bodies is a
  *     post-create side effect that the create resolver does not
  *     currently call.
+ *   - Orphan-comment janitor (#290).
  */
 
 export type CommentRow = {
