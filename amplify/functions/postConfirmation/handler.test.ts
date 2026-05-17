@@ -37,11 +37,15 @@ function makeStubDataClient(opts: { existingByEmail?: UserRow | null } = {}): {
         create: ReturnType<typeof vi.fn>;
         update: ReturnType<typeof vi.fn>;
       };
+      Reputation: {
+        create: ReturnType<typeof vi.fn>;
+      };
     };
   };
   createSpy: ReturnType<typeof vi.fn>;
   updateSpy: ReturnType<typeof vi.fn>;
   listByEmailSpy: ReturnType<typeof vi.fn>;
+  reputationCreateSpy: ReturnType<typeof vi.fn>;
 } {
   const createSpy = vi.fn((input: UserRow) =>
     Promise.resolve({
@@ -61,16 +65,26 @@ function makeStubDataClient(opts: { existingByEmail?: UserRow | null } = {}): {
       errors: undefined,
     }),
   );
+  const reputationCreateSpy = vi.fn((input: { userId: string }) =>
+    Promise.resolve({
+      data: { ...input, computedWeight: 1 },
+      errors: undefined,
+    }),
+  );
   return {
     createSpy,
     updateSpy,
     listByEmailSpy,
+    reputationCreateSpy,
     client: {
       models: {
         User: {
           listUserByEmail: listByEmailSpy,
           create: createSpy,
           update: updateSpy,
+        },
+        Reputation: {
+          create: reputationCreateSpy,
         },
       },
     },
@@ -333,5 +347,108 @@ describe('postConfirmation handler — User row creation (issue #248)', () => {
 
     errorSpy.mockRestore();
     __setLegacyClaimDispatcher(undefined);
+  });
+});
+
+describe('postConfirmation handler — Reputation lazy-create (issue #36)', () => {
+  let stub: ReturnType<typeof makeStubDataClient>;
+
+  beforeEach(() => {
+    cognitoMock.reset();
+    cognitoMock.on(AdminAddUserToGroupCommand).resolves({});
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    stub = makeStubDataClient();
+    __setDataDeps({ client: stub.client });
+  });
+
+  afterAll(() => {
+    __resetDataDeps();
+  });
+
+  it('creates a Reputation row keyed on the new Cognito sub with default weight=1', async () => {
+    const event = makeEvent({
+      request: {
+        userAttributes: { sub: 'cognito-sub-rep', email: 'fresh@example.com' },
+      },
+    });
+
+    await handler(event, {} as Context, () => undefined);
+
+    expect(stub.reputationCreateSpy).toHaveBeenCalledOnce();
+    const input = stub.reputationCreateSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(input.userId).toBe('cognito-sub-rep');
+    expect(input.computedWeight).toBe(1);
+    expect(input.validatedSubmissions).toBe(0);
+    expect(input.acceptedCorrections).toBe(0);
+    expect(input.roleBonus).toBe(0);
+  });
+
+  it('skips Reputation create when User.create fails', async () => {
+    stub.createSpy.mockImplementationOnce(() =>
+      Promise.resolve({ data: null, errors: [{ message: 'DDB throttled' }] }),
+    );
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const event = makeEvent();
+    await handler(event, {} as Context, () => undefined);
+
+    expect(stub.reputationCreateSpy).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('skips Reputation create on legacy-email match (worker path; backfill via phase 3 recompute)', async () => {
+    stub = makeStubDataClient({
+      existingByEmail: {
+        cognitoSub: 'legacy:42',
+        email: null,
+        legacyEmail: 'reclaim@example.com',
+        legacyUserId: 42,
+        claimStatus: 'PENDING_CLAIM',
+      },
+    });
+    __setDataDeps({ client: stub.client });
+    __setLegacyClaimDispatcher(() => Promise.resolve());
+
+    const event = makeEvent({
+      request: {
+        userAttributes: { sub: 'cognito-sub-real-42', email: 'reclaim@example.com' },
+      },
+    });
+    await handler(event, {} as Context, () => undefined);
+
+    expect(stub.reputationCreateSpy).not.toHaveBeenCalled();
+    __setLegacyClaimDispatcher(undefined);
+  });
+
+  it('does not break sign-up when Reputation.create throws (log + continue)', async () => {
+    stub.reputationCreateSpy.mockImplementationOnce(() =>
+      Promise.reject(new Error('DDB ECONNRESET')),
+    );
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const event = makeEvent();
+    await expect(handler(event, {} as Context, () => undefined)).resolves.toBeDefined();
+
+    // User row created; Reputation create attempted; error logged but
+    // not rethrown.
+    expect(stub.createSpy).toHaveBeenCalledOnce();
+    expect(stub.reputationCreateSpy).toHaveBeenCalledOnce();
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('does not break sign-up when Reputation.create returns errors (log + continue)', async () => {
+    stub.reputationCreateSpy.mockImplementationOnce(() =>
+      Promise.resolve({ data: null, errors: [{ message: 'DDB conditional check failed' }] }),
+    );
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const event = makeEvent();
+    await expect(handler(event, {} as Context, () => undefined)).resolves.toBeDefined();
+
+    expect(stub.createSpy).toHaveBeenCalledOnce();
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 });

@@ -40,6 +40,21 @@ export interface PostConfirmDataClient {
         [k: string]: unknown;
       }) => Promise<{ data: unknown; errors?: unknown }>;
     };
+    /**
+     * Reputation lazy-create (#36) — fresh-signup rows land with a
+     * default `computedWeight=1` so the FieldVote / RevisionVote
+     * weight-snapshot resolvers always have a row to read. Recompute
+     * on Recording publish + TranscriptRevision accept is phase 3.
+     */
+    Reputation: {
+      create: (input: {
+        userId: string;
+        validatedSubmissions?: number;
+        acceptedCorrections?: number;
+        roleBonus?: number;
+        computedWeight?: number;
+      }) => Promise<{ data: unknown; errors?: unknown }>;
+    };
   };
 }
 
@@ -196,6 +211,29 @@ async function ensureUserRow(input: {
     console.info('postConfirmation: User row created', { cognitoSub: input.cognitoSub });
   } catch (err) {
     console.error('postConfirmation: User.create threw', err);
+    return;
+  }
+
+  // Lazy-create the Reputation row (#36). Default weight=1 so the
+  // vote-weight-snapshot resolvers always have a row to read. Failure
+  // here is logged but never rethrown — the phase 3 recompute hook
+  // will backfill on the first activity, so a transient DDB blip on
+  // a single signup doesn't break the sign-up flow.
+  try {
+    const repResult = await data.models.Reputation.create({
+      userId: input.cognitoSub,
+      validatedSubmissions: 0,
+      acceptedCorrections: 0,
+      roleBonus: 0,
+      computedWeight: 1,
+    });
+    if (repResult.errors) {
+      console.error('postConfirmation: Reputation.create returned errors', repResult.errors);
+      return;
+    }
+    console.info('postConfirmation: Reputation row created', { userId: input.cognitoSub });
+  } catch (err) {
+    console.error('postConfirmation: Reputation.create threw', err);
   }
 }
 
