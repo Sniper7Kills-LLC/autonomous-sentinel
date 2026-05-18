@@ -74,24 +74,38 @@ describe('Transmitter model — row shape', () => {
     expect(model.data.fields.frequencyKhzList?.data?.required).toBeFalsy();
   });
 
-  it('models frequencyKhzList as an integer array (curated kHz frequencies)', () => {
+  it('models frequencyKhzList as an optional integer array (curated kHz frequencies)', () => {
     const f = model.data.fields.frequencyKhzList?.data;
     expect(f?.array).toBe(true);
     // Field type is the Amplify Gen 2 scalar name; tolerate any
     // integer alias the runtime uses ('integer' / 'int' depending on
     // SDK version).
     expect(f?.fieldType?.toLowerCase()).toMatch(/integer|int/);
+    // Explicit per-field optionality assertion — the model declares
+    // `a.integer().array()` with no `.required()`. The shared
+    // "leaves … optional" test above also covers this but only via a
+    // negative `toBeFalsy()` check, which passes for `undefined`
+    // whether the field was inspected or not. Pin it here too.
+    expect(f?.required).toBeFalsy();
   });
 });
 
 describe('Transmitter model — authorization', () => {
   const rules = model.data.authorization.map((r) => symbolData<AuthData>(r as object));
+  const WRITE_OPS = ['create', 'update', 'delete'] as const;
+  const hasAnyWrite = (r: AuthData): boolean =>
+    WRITE_OPS.some((op) => (r.operations ?? []).includes(op));
 
-  it('grants public (guest) read', () => {
-    const guestRead = rules.find(
-      (r) => r.strategy === 'public' && (r.operations ?? []).includes('read'),
-    );
-    expect(guestRead).toBeDefined();
+  it('grants public (guest) read — exactly one rule, read-only', () => {
+    // `toHaveLength(1)` rather than "at least one" so an accidental
+    // duplicate `allow.guest()` declaration becomes a visible diff.
+    const publicRules = rules.filter((r) => r.strategy === 'public');
+    expect(publicRules).toHaveLength(1);
+    const publicRule = publicRules[0]!;
+    expect(publicRule.operations ?? []).toContain('read');
+    // Guest must never carry a write scope — public-write would
+    // allow anonymous edits to the admin-managed propagation map.
+    expect(hasAnyWrite(publicRule)).toBe(false);
   });
 
   it('restricts create / update / delete to the admin group only', () => {
@@ -99,33 +113,18 @@ describe('Transmitter model — authorization', () => {
       (r) =>
         r.strategy === 'groups' &&
         (r.groups ?? []).includes('admin') &&
-        (r.operations ?? []).includes('create') &&
-        (r.operations ?? []).includes('update') &&
-        (r.operations ?? []).includes('delete'),
+        WRITE_OPS.every((op) => (r.operations ?? []).includes(op)),
     );
     expect(adminAll).toBeDefined();
   });
 
-  it('does NOT grant create / update / delete to authenticated callers (non-admin write rejected)', () => {
-    const authWriter = rules.find(
-      (r) =>
-        r.strategy === 'private' &&
-        ((r.operations ?? []).includes('create') ||
-          (r.operations ?? []).includes('update') ||
-          (r.operations ?? []).includes('delete')),
-    );
-    expect(authWriter).toBeUndefined();
-  });
-
-  it('does NOT grant create / update / delete to the moderator group (admin-only write)', () => {
-    const modWriter = rules.find(
-      (r) =>
-        r.strategy === 'groups' &&
-        (r.groups ?? []).includes('moderator') &&
-        ((r.operations ?? []).includes('create') ||
-          (r.operations ?? []).includes('update') ||
-          (r.operations ?? []).includes('delete')),
-    );
-    expect(modWriter).toBeUndefined();
+  it('no rule other than the admin-group rule grants any write op', () => {
+    // Belt-and-suspenders across every strategy (public / private /
+    // groups / owner / custom). The only writer must be the admin
+    // group rule asserted above.
+    const writers = rules.filter(hasAnyWrite);
+    expect(writers).toHaveLength(1);
+    expect(writers[0]?.strategy).toBe('groups');
+    expect(writers[0]?.groups ?? []).toEqual(['admin']);
   });
 });
