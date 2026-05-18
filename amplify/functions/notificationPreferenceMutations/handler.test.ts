@@ -89,6 +89,7 @@ function getEvent(
 interface Stubs extends NotificationPrefDeps {
   getSpy: ReturnType<typeof vi.fn>;
   updateSpy: ReturnType<typeof vi.fn>;
+  createIfMissingSpy: ReturnType<typeof vi.fn>;
   encryptSpy: ReturnType<typeof vi.fn>;
   decryptSpy: ReturnType<typeof vi.fn>;
   rows: Map<string, NotificationPreferenceRow>;
@@ -104,6 +105,16 @@ function makeStubs(initial: Iterable<NotificationPreferenceRow> = []): Stubs {
     const merged: NotificationPreferenceRow = { ...prior, ...patch, userId };
     rows.set(userId, merged);
     return Promise.resolve(merged);
+  });
+  // Conditional create — atomic vs. the underlying `rows` map. If a row
+  // already exists for `userId`, returns it untouched (race winner);
+  // otherwise stores + returns `defaults`. Matches the production
+  // PutItem-with-attribute_not_exists shape closely enough for tests.
+  const createIfMissingSpy = vi.fn((userId: string, defaults: NotificationPreferenceRow) => {
+    const existing = rows.get(userId);
+    if (existing) return Promise.resolve(existing);
+    rows.set(userId, defaults);
+    return Promise.resolve(defaults);
   });
 
   // Reversible stub: "CIPHER:<plaintext>" — lets the round-trip assertion
@@ -123,10 +134,12 @@ function makeStubs(initial: Iterable<NotificationPreferenceRow> = []): Stubs {
     rows,
     getSpy,
     updateSpy,
+    createIfMissingSpy,
     encryptSpy,
     decryptSpy,
     getRow: getSpy,
     updateRow: updateSpy,
+    createDefaultRowIfMissing: createIfMissingSpy,
     encrypt: encryptSpy,
     decrypt: decryptSpy,
   };
@@ -339,7 +352,64 @@ describe('getNotificationPreference', () => {
     expect(result.discordWebhookUrl).toBeNull();
     expect(result.weeklyDigest).toBe(false);
     expect(stubs.rows.has('fresh-user')).toBe(true);
-    expect(stubs.updateSpy).toHaveBeenCalledOnce();
+    // Lazy-create routes through createDefaultRowIfMissing (conditional),
+    // never the unconditional updateRow.
+    expect(stubs.createIfMissingSpy).toHaveBeenCalledOnce();
+    expect(stubs.updateSpy).not.toHaveBeenCalled();
+  });
+
+  it('on lazy-create race, returns the other writer row instead of overwriting with defaults', async () => {
+    // Simulates: caller A starts getNotificationPreference for sub=racer
+    // (getRow returns null); meanwhile caller B's setNotificationPreference
+    // landed with emailEnabled=true. A's conditional create finds the row
+    // already present and returns B's row — not the defaults that would
+    // have wiped B's just-saved settings.
+    const stubs = makeStubs([
+      {
+        userId: 'racer',
+        emailEnabled: true,
+        discordWebhookEnabled: true,
+        discordWebhookUrlEnc: Buffer.from('CIPHER:https://saved').toString('base64'),
+      },
+    ]);
+    stubs.getSpy.mockResolvedValueOnce(null);
+    __setDeps(stubs);
+    const event = getEvent({}, { sub: 'racer' });
+    const result = (await handler(
+      event,
+      {} as Context,
+      () => undefined,
+    )) as NotificationPreferenceView;
+    expect(result.emailEnabled).toBe(true);
+    expect(result.discordWebhookEnabled).toBe(true);
+    expect(result.discordWebhookUrl).toBe('https://saved');
+  });
+
+  it('returns null discordWebhookUrl when KMS decrypt fails (does not throw)', async () => {
+    // Stored ciphertext that the decrypt stub rejects on (no CIPHER:
+    // prefix once decoded). Mirrors real-world InvalidCiphertext /
+    // base64 decode failure paths.
+    const corrupt = Buffer.from('not-stub-prefixed').toString('base64');
+    const stubs = makeStubs([
+      {
+        userId: 'user-corrupt',
+        emailEnabled: true,
+        discordWebhookEnabled: true,
+        discordWebhookUrlEnc: corrupt,
+      },
+    ]);
+    __setDeps(stubs);
+    const event = getEvent({}, { sub: 'user-corrupt' });
+    const result = (await handler(
+      event,
+      {} as Context,
+      () => undefined,
+    )) as NotificationPreferenceView;
+    expect(result.discordWebhookUrl).toBeNull();
+    // Other preferences still render — decrypt failure does not kill
+    // the whole row.
+    expect(result.emailEnabled).toBe(true);
+    expect(result.discordWebhookEnabled).toBe(true);
   });
 
   it('admin reading another user that does not exist returns null (no auto-provision)', async () => {

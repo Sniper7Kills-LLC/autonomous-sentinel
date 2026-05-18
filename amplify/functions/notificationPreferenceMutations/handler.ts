@@ -1,5 +1,5 @@
 import type { AppSyncResolverHandler } from 'aws-lambda';
-import { GetItemCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
+import { GetItemCommand, PutItemCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
 import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
 import { KMSClient, EncryptCommand, DecryptCommand } from '@aws-sdk/client-kms';
 import { getDdbClient } from '../legacyClaimWorker/fan-out-production';
@@ -85,11 +85,25 @@ export interface NotificationPrefDeps {
   getRow: (userId: string) => Promise<NotificationPreferenceRow | null>;
   /**
    * Upserts a row: SETs every provided patch column and creates the
-   * row if it does not exist. Returns the resulting row.
+   * row if it does not exist. Used by `setNotificationPreference`;
+   * does NOT enforce a conditional create — that's
+   * `createDefaultRowIfMissing`'s job. Returns the resulting row.
    */
   updateRow: (
     userId: string,
     patch: Partial<NotificationPreferenceRow>,
+  ) => Promise<NotificationPreferenceRow>;
+  /**
+   * Conditional create — writes `defaults` only when no row exists
+   * for `userId`. On race (a concurrent setNotificationPreference or
+   * a parallel first-read landed between our `getRow` and this
+   * write), returns whatever the other writer left there instead of
+   * clobbering it with defaults. Used exclusively by the get-side
+   * lazy-create path.
+   */
+  createDefaultRowIfMissing: (
+    userId: string,
+    defaults: NotificationPreferenceRow,
   ) => Promise<NotificationPreferenceRow>;
   /** Returns base64-encoded ciphertext. */
   encrypt: (plaintext: string) => Promise<string>;
@@ -160,6 +174,35 @@ async function defaultDecrypt(ciphertextB64: string): Promise<string> {
   return new TextDecoder().decode(res.Plaintext);
 }
 
+async function defaultCreateDefaultRowIfMissing(
+  userId: string,
+  defaults: NotificationPreferenceRow,
+): Promise<NotificationPreferenceRow> {
+  try {
+    await getDdbClient().send(
+      new PutItemCommand({
+        TableName: requireTableName(),
+        Item: marshall(defaults, { removeUndefinedValues: true }),
+        ConditionExpression: 'attribute_not_exists(userId)',
+      }),
+    );
+    return defaults;
+  } catch (err: unknown) {
+    const name = typeof err === 'object' && err !== null && 'name' in err ? err.name : undefined;
+    if (name === 'ConditionalCheckFailedException') {
+      // Lost the race — another writer landed first. Re-fetch their
+      // row so we never overwrite a concurrent set with our defaults.
+      const fresh = await defaultGetRow(userId);
+      if (fresh) return fresh;
+      // The conditional only fails when the row exists, so a null
+      // GetItem here implies a delete between the two operations.
+      // Fall back to the defaults so callers don't crash.
+      return defaults;
+    }
+    throw err;
+  }
+}
+
 async function defaultGetRow(userId: string): Promise<NotificationPreferenceRow | null> {
   const res = await getDdbClient().send(
     new GetItemCommand({
@@ -226,6 +269,8 @@ function resolveDeps(): NotificationPrefDeps {
   return {
     getRow: injected.getRow ?? defaultGetRow,
     updateRow: injected.updateRow ?? defaultUpdateRow,
+    createDefaultRowIfMissing:
+      injected.createDefaultRowIfMissing ?? defaultCreateDefaultRowIfMissing,
     encrypt: injected.encrypt ?? defaultEncrypt,
     decrypt: injected.decrypt ?? defaultDecrypt,
   };
@@ -271,7 +316,22 @@ async function toView(
     typeof row.discordWebhookUrlEnc === 'string' &&
     row.discordWebhookUrlEnc.length > 0
   ) {
-    url = await decrypt(row.discordWebhookUrlEnc);
+    try {
+      url = await decrypt(row.discordWebhookUrlEnc);
+    } catch (err: unknown) {
+      // KMS throttle / InvalidCiphertext / base64 decode failure —
+      // degrade to "no webhook" rather than throwing a resolver
+      // error. The owner can re-enter the URL via
+      // setNotificationPreference if the stored ciphertext is
+      // genuinely corrupt; raising here would block every other
+      // preference (email, push, etc.) from rendering.
+      console.warn(
+        `notificationPreferenceMutations: decrypt failed for userId=${row.userId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      url = null;
+    }
   }
   return {
     userId: row.userId,
@@ -358,10 +418,12 @@ async function dispatchGet(
       // don't auto-provision; just return null.
       return null;
     }
-    // Lazy-create on first owner-read: write the default row + return
-    // it. Sub-millisecond DDB UpdateItem keeps the SLA clean and
-    // gives subsequent UI saves a simple PUT shape.
-    row = await deps.updateRow(target, defaultDefaults(target));
+    // Lazy-create on first owner-read: conditionally PUT the default
+    // row. The conditional shape (`attribute_not_exists(userId)`)
+    // means a concurrent `setNotificationPreference` from another
+    // tab cannot be overwritten by our defaults — on race, we
+    // re-fetch and return whatever the other writer left behind.
+    row = await deps.createDefaultRowIfMissing(target, defaultDefaults(target));
   }
 
   const callerCanDecrypt = target === callerSub || callerIsAdmin;
