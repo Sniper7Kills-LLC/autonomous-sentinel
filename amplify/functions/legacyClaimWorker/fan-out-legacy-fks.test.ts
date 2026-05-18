@@ -40,6 +40,7 @@ const TABLES: FanOutTableNames = {
   Recording: 'Recording-table',
   TranscriptRevision: 'TranscriptRevision-table',
   User: 'User-table',
+  Message: 'Message-table',
   FieldVote: 'FieldVote-table',
   RevisionVote: 'RevisionVote-table',
   Reputation: 'Reputation-table',
@@ -110,7 +111,7 @@ describe('fanOutLegacyFks — simple FK column rewrite', () => {
     expect(sdrUpdates[0]?.kind === 'Update' && sdrUpdates[0].set.ownerId).toBe(NEW_SUB);
   });
 
-  it('rewrites Comment.authorId, AbuseReport.reporterId, Donation.userId, Recording.uploaderId, TranscriptRevision.proposedBy, User.bannedById', async () => {
+  it('rewrites Comment.authorId, AbuseReport.reporterId, Donation.userId, Recording.uploaderId, TranscriptRevision.proposedBy, User.bannedById, Message.submitterId', async () => {
     const deps = makeDeps({
       'Comment-table': [{ id: 'c-1', authorId: OLD_SUB, body: 'hi' }],
       'AbuseReport-table': [{ id: 'a-1', reporterId: OLD_SUB }],
@@ -118,6 +119,8 @@ describe('fanOutLegacyFks — simple FK column rewrite', () => {
       'Recording-table': [{ id: 'r-1', uploaderId: OLD_SUB }],
       'TranscriptRevision-table': [{ id: 't-1', proposedBy: OLD_SUB }],
       'User-table': [{ cognitoSub: 'cog-admin', bannedById: OLD_SUB }],
+      // #305 — recording-less Message witness FK
+      'Message-table': [{ id: 'm-1', submitterId: OLD_SUB, broadcastTs: '2026-05-17T00:00:00Z' }],
     });
 
     await fanOutLegacyFks({
@@ -136,6 +139,7 @@ describe('fanOutLegacyFks — simple FK column rewrite', () => {
       { table: 'Recording-table', column: 'uploaderId' },
       { table: 'TranscriptRevision-table', column: 'proposedBy' },
       { table: 'User-table', column: 'bannedById' },
+      { table: 'Message-table', column: 'submitterId' },
     ];
     for (const { table, column } of checks) {
       const ops = allOps.filter((op) => op.tableName === table && op.kind === 'Update');
@@ -417,6 +421,7 @@ describe('fanOutLegacyFks — manifest-skip (PR C / #274)', () => {
               'Recording',
               'TranscriptRevision',
               'User',
+              'Message',
               'FieldVote',
               'RevisionVote',
               'Reputation',

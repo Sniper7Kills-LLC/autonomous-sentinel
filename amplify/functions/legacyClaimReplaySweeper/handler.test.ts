@@ -47,6 +47,7 @@ function makeDeps(
       Recording: 0,
       TranscriptRevision: 0,
       User: 0,
+      Message: 0,
       FieldVote: 0,
       RevisionVote: 0,
       Reputation: 0,
@@ -90,6 +91,7 @@ describe('legacyClaimReplaySweeper', () => {
       'Recording',
       'TranscriptRevision',
       'User',
+      'Message',
       'FieldVote',
       'RevisionVote',
       'Reputation',
@@ -128,7 +130,7 @@ describe('legacyClaimReplaySweeper', () => {
       deps: { getCompletedTables: (claimId: string) => Promise<ReadonlySet<string>> };
     };
     const completed = await args.deps.getCompletedTables('claim-a');
-    expect(completed.size).toBe(11);
+    expect(completed.size).toBe(12);
   });
 
   it('re-runs fan-out for tables missing from the manifest (partial-state)', async () => {
@@ -293,6 +295,7 @@ describe('legacyClaimReplaySweeper', () => {
           Recording: 0,
           TranscriptRevision: 0,
           User: 0,
+          Message: 0,
           FieldVote: 0,
           RevisionVote: 0,
           Reputation: 0,

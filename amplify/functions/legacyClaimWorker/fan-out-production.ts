@@ -59,6 +59,7 @@ export function defaultFanOutTableNames(userTableName: string): FanOutTableNames
     Recording: fromEnv('RECORDING_TABLE_NAME'),
     TranscriptRevision: fromEnv('TRANSCRIPT_REVISION_TABLE_NAME'),
     User: userTableName,
+    Message: fromEnv('MESSAGE_TABLE_NAME'),
     FieldVote: fromEnv('FIELD_VOTE_TABLE_NAME'),
     RevisionVote: fromEnv('REVISION_VOTE_TABLE_NAME'),
     Reputation: fromEnv('REPUTATION_TABLE_NAME'),

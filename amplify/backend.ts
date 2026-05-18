@@ -192,6 +192,7 @@ const fanOutTableKeys = [
   'Donation',
   'Recording',
   'TranscriptRevision',
+  'Message',
   'FieldVote',
   'RevisionVote',
   'Reputation',
@@ -204,6 +205,10 @@ const envKeyFor: Record<(typeof fanOutTableKeys)[number], string> = {
   Donation: 'DONATION_TABLE_NAME',
   Recording: 'RECORDING_TABLE_NAME',
   TranscriptRevision: 'TRANSCRIPT_REVISION_TABLE_NAME',
+  // #305 — Message.submitterId joins the fan-out set after the
+  // recording-less submission flow (#285) gave Message its first
+  // User FK.
+  Message: 'MESSAGE_TABLE_NAME',
   FieldVote: 'FIELD_VOTE_TABLE_NAME',
   RevisionVote: 'REVISION_VOTE_TABLE_NAME',
   Reputation: 'REPUTATION_TABLE_NAME',
