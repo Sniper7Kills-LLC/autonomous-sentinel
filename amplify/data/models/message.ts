@@ -66,8 +66,11 @@ export const Message = a
     i('type').sortKeys(['broadcastTs']),
     // Legacy claim path: look up a backfilled Message by its v3 UUID.
     i('legacyUuid'),
-    // Recording-less submission rate-limit (#285): query Messages
-    // submitted by a given user within a (submittedAt) time window.
+    // Recording-less submission rate-limit (#285): sortable by
+    // submittedAt so the per-user rate-limit Query can pass a
+    // `submittedAt: { ge: windowStart }` predicate against the GSI's
+    // range key. The time-window enforcement lives in the handler,
+    // not the index — the index just makes the Query efficient.
     i('submitterId').sortKeys(['submittedAt']),
   ])
   .authorization((allow) => [

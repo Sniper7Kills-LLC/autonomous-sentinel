@@ -416,7 +416,7 @@ describe('messageMutations — submitRecordingLessMessage', () => {
     expect(auditOpts.after.verification.outcome).toBe('QUEUED');
   });
 
-  it('member with no Reputation row defaults to weight=1 (queued)', async () => {
+  it('member with no Reputation row defaults to weight=1 (queued) + still audits', async () => {
     const stubs = makeStubs({
       users: [{ cognitoSub: 'cog-member-001' }],
     });
@@ -424,6 +424,71 @@ describe('messageMutations — submitRecordingLessMessage', () => {
     const ev = memberEvent({ broadcastTs: '2026-05-17T11:30:00.000Z' });
     const result = (await handler(ev, {} as Context, () => undefined)) as MessageRow;
     expect(result.publishedAt).toBeNull();
+    // Audit must still fire when the Reputation lookup returns null —
+    // the gate decision is part of the audit trail even (especially)
+    // for the default-to-queue path.
+    expect(stubs.auditSpy).toHaveBeenCalledOnce();
+    const auditOpts = stubs.auditSpy.mock.calls[0]?.[1] as {
+      after: { verification: { reputationWeight: number; outcome: string } };
+    };
+    expect(auditOpts.after.verification.reputationWeight).toBe(1);
+    expect(auditOpts.after.verification.outcome).toBe('QUEUED');
+  });
+
+  it('audit failure does not roll back the just-created Message', async () => {
+    const stubs = makeStubs({
+      users: [{ cognitoSub: 'cog-member-001' }],
+      reputations: [{ userId: 'cog-member-001', computedWeight: 3 }],
+    });
+    stubs.auditSpy.mockRejectedValueOnce(new Error('AuditLog.create timed out'));
+    __setDeps({ dataClient: stubs.client, audit: stubs.auditSpy, now: () => fixedNow });
+    const ev = memberEvent({ broadcastTs: '2026-05-17T11:30:00.000Z' });
+    const result = (await handler(ev, {} as Context, () => undefined)) as MessageRow;
+    // Message still created + returned; audit failure is logged not thrown.
+    expect(result.publishedAt).toBe(fixedNow.toISOString());
+    expect(stubs.createSpy).toHaveBeenCalledOnce();
+  });
+
+  it('rate-limit query errors abort the submission (no Message create, no audit)', async () => {
+    const stubs = makeStubs({
+      users: [{ cognitoSub: 'cog-member-001' }],
+      reputations: [{ userId: 'cog-member-001', computedWeight: 3 }],
+    });
+    stubs.listBySubmitterSpy.mockResolvedValueOnce({
+      data: null,
+      errors: [{ message: 'GSI Query failed' }],
+    });
+    __setDeps({ dataClient: stubs.client, audit: stubs.auditSpy, now: () => fixedNow });
+    const ev = memberEvent({ broadcastTs: '2026-05-17T11:30:00.000Z' });
+    await expect(handler(ev, {} as Context, () => undefined)).rejects.toThrow(
+      /rate-limit query returned errors/,
+    );
+    expect(stubs.createSpy).not.toHaveBeenCalled();
+    expect(stubs.auditSpy).not.toHaveBeenCalled();
+  });
+
+  it('boundary-filters out stray rows whose submittedAt falls outside the window', async () => {
+    // The handler re-filters by the windowStart boundary on top of
+    // the GSI predicate as belt-and-suspenders. Pass two rows: one
+    // inside the window, one outside. Only the in-window row should
+    // count toward the rate-limit total.
+    const priors = [
+      { id: 'recent', submitterId: 'cog-member-001', submittedAt: '2026-05-17T09:00:00.000Z' },
+      { id: 'old', submitterId: 'cog-member-001', submittedAt: '2026-05-15T00:00:00.000Z' },
+    ];
+    const stubs = makeStubs({
+      users: [{ cognitoSub: 'cog-member-001' }],
+      reputations: [{ userId: 'cog-member-001', computedWeight: 3 }],
+      recentBySubmitter: { 'cog-member-001': priors },
+    });
+    __setDeps({ dataClient: stubs.client, audit: stubs.auditSpy, now: () => fixedNow });
+    const ev = memberEvent({ broadcastTs: '2026-05-17T11:30:00.000Z' });
+    await handler(ev, {} as Context, () => undefined);
+    const auditOpts = stubs.auditSpy.mock.calls[0]?.[1] as {
+      after: { verification: { rateLimitCount: number } };
+    };
+    // 'old' is dropped by the boundary filter; only 'recent' counts.
+    expect(auditOpts.after.verification.rateLimitCount).toBe(1);
   });
 
   it('moderator bypasses the reputation gate (auto-publish even with low rep)', async () => {
@@ -504,7 +569,12 @@ describe('messageMutations — submitRecordingLessMessage', () => {
     expect(result.publishedAt).toBe(fixedNow.toISOString());
   });
 
-  it('rate-limit GSI is queried with the trailing-window submittedAt predicate', async () => {
+  it('rate-limit GSI is queried with the trailing-window submittedAt predicate (inclusive `ge`)', async () => {
+    // `ge` (greater-or-equal) is intentional rather than `gt`: the
+    // window boundary is inclusive of any row whose submittedAt
+    // exactly equals `now - windowHours`. Matters only at the
+    // microsecond boundary, but pins the contract explicitly so a
+    // future change to `gt` becomes a visible test diff.
     const stubs = makeStubs({
       users: [{ cognitoSub: 'cog-member-001' }],
       reputations: [{ userId: 'cog-member-001', computedWeight: 3 }],

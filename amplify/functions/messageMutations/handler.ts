@@ -299,7 +299,15 @@ async function dispatchSubmitRecordingLess(
         )}`,
       );
     }
-    recentCount = (recent.data ?? []).length;
+    // Belt-and-suspenders boundary filter. The GSI predicate
+    // `submittedAt: { ge: windowStart }` already restricts the Query
+    // to in-window rows on the DDB side, but recount in-handler so
+    // (a) a stub / future Amplify change that ignores the predicate
+    // can't silently inflate the count, and (b) any row whose
+    // `submittedAt` is null / missing is excluded explicitly.
+    recentCount = (recent.data ?? []).filter(
+      (m) => typeof m.submittedAt === 'string' && m.submittedAt >= windowStart,
+    ).length;
     if (recentCount >= cap) {
       throw new Error(
         `submitRecordingLessMessage: rate limit exceeded (${recentCount}/${cap} in last ${windowHours}h)`,
@@ -313,6 +321,14 @@ async function dispatchSubmitRecordingLess(
   // Message still exists and is visible to mods, but `publishedAt`
   // stays null so it doesn't appear in public lists until a mod
   // approves it (mod-approval flow tracked separately).
+  //
+  // Default weight when no Reputation row exists is 1 — same as the
+  // baseline `.default(1)` on the model. That means a fresh signup
+  // with no validated history defaults to *queued* under the default
+  // 1.5 threshold. That is the intended safety-first stance: a brand-
+  // new account has no track record, so the first few submissions go
+  // through moderator review until accepted corrections / submissions
+  // lift the weight above the threshold.
   const repThreshold = envNumber('RECORDINGLESS_REP_THRESHOLD', 1.5);
   const repFetched = await deps.client.models.Reputation.get({ userId: sub });
   const repWeight = repFetched.data?.computedWeight ?? 1;
@@ -348,23 +364,37 @@ async function dispatchSubmitRecordingLess(
   // future incident reviewer) needs to understand why this submission
   // landed where it did. Stored in the audit row's `after` payload so
   // the audit-helper diff also picks it up.
-  await deps.audit(auditContextFrom(event), {
-    action: 'MESSAGE_SUBMIT_RECORDINGLESS',
-    targetType: 'Message',
-    targetId: after.id,
-    after: {
-      ...snapshot(after),
-      verification: {
-        role: callerIsAdmin ? 'admin' : callerIsModerator ? 'moderator' : 'member',
-        reputationWeight: repWeight,
-        reputationThreshold: repThreshold,
-        rateLimitCount: recentCount,
-        rateLimitCap: Number.isFinite(cap) ? cap : null,
-        rateLimitWindowHours: windowHours,
-        outcome: queued ? 'QUEUED' : 'PUBLISHED',
+  //
+  // Audit failure must NOT roll back the user's just-created Message
+  // — the Message is the user-facing artefact and the right of way.
+  // Log + continue keeps the submission usable while the audit gap
+  // can be back-filled by ops (or picked up by a janitor sweep
+  // following the #274 pattern, if it ever becomes a real problem).
+  try {
+    await deps.audit(auditContextFrom(event), {
+      action: 'MESSAGE_SUBMIT_RECORDINGLESS',
+      targetType: 'Message',
+      targetId: after.id,
+      after: {
+        ...snapshot(after),
+        verification: {
+          role: callerIsAdmin ? 'admin' : callerIsModerator ? 'moderator' : 'member',
+          reputationWeight: repWeight,
+          reputationThreshold: repThreshold,
+          rateLimitCount: recentCount,
+          rateLimitCap: Number.isFinite(cap) ? cap : null,
+          rateLimitWindowHours: windowHours,
+          outcome: queued ? 'QUEUED' : 'PUBLISHED',
+        },
       },
-    },
-  });
+    });
+  } catch (err: unknown) {
+    console.warn(
+      `submitRecordingLessMessage: audit write failed for messageId=${after.id}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
 
   return after;
 }
