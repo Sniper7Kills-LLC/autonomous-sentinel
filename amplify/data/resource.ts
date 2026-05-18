@@ -26,7 +26,13 @@ import { AbuseReport } from './models/abuse-report';
 import { AuditLog, listAuditLogPublic as listAuditLogPublicQuery } from './models/audit-log';
 import { Callsign } from './models/callsign';
 import { Donation } from './models/donation';
-import { NotificationPreference } from './models/notification-preference';
+import {
+  NotificationPreference,
+  NotificationPreferenceView,
+  getNotificationPreference,
+  setNotificationPreference,
+} from './models/notification-preference';
+import { notificationPreferenceMutations } from '../functions/notificationPreferenceMutations/resource';
 import { BannedRegionPage } from './models/banned-region-page';
 import { LinguisticConfig } from './models/linguistic-config';
 import {
@@ -78,6 +84,7 @@ export const schema = a
     // Money + accounts
     Donation,
     NotificationPreference,
+    NotificationPreferenceView,
     EmailSuppression,
     SuppressionReason,
 
@@ -122,6 +129,10 @@ export const schema = a
 
     // Sdr public listing with granularity-blurred lat/lon — issue #286
     listSdrPublic,
+
+    // NotificationPreference KMS-encrypted webhook URL + lazy-create — issue #288
+    getNotificationPreference,
+    setNotificationPreference,
   })
   .authorization((allow) => [
     // Schema-level Lambda access grants.
@@ -152,6 +163,12 @@ export const schema = a
     // future switch to the Amplify Data client without re-touching
     // the schema-level grant.
     allow.resource(listSdrPublicLambda).to(['query']),
+    // notificationPreferenceMutations reads / writes the
+    // NotificationPreference table directly via the DDB SDK (GetItem
+    // + UpdateItem — see handler comment). The `query` + `mutate`
+    // scopes keep room for a future switch to the Amplify Data
+    // client without re-touching the schema-level grant.
+    allow.resource(notificationPreferenceMutations).to(['query', 'mutate']),
   ]);
 
 export type Schema = ClientSchema<typeof schema>;
