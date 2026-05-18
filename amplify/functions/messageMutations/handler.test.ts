@@ -6,6 +6,8 @@ import {
   __resetDeps,
   type MessageMutationsDataClient,
   type MessageRow,
+  type ReputationRow,
+  type UserRow,
 } from './handler';
 
 /**
@@ -50,16 +52,41 @@ function makeEvent(
   return { ...base, ...rest };
 }
 
-function makeStubs(opts: { existing?: MessageRow | null } = {}): {
+interface MakeStubsResult {
   client: MessageMutationsDataClient;
   getSpy: ReturnType<typeof vi.fn>;
   updateSpy: ReturnType<typeof vi.fn>;
+  createSpy: ReturnType<typeof vi.fn>;
+  listBySubmitterSpy: ReturnType<typeof vi.fn>;
+  userGetSpy: ReturnType<typeof vi.fn>;
+  reputationGetSpy: ReturnType<typeof vi.fn>;
   auditSpy: ReturnType<typeof vi.fn>;
-} {
+  messages: Map<string, MessageRow>;
+  users: Map<string, UserRow>;
+  reputations: Map<string, ReputationRow>;
+  recentBySubmitter: Map<string, MessageRow[]>;
+}
+
+function makeStubs(
+  opts: {
+    existing?: MessageRow | null;
+    users?: UserRow[];
+    reputations?: ReputationRow[];
+    recentBySubmitter?: Record<string, MessageRow[]>;
+  } = {},
+): MakeStubsResult {
   const messages = new Map<string, MessageRow>();
   if (opts.existing) {
     messages.set(opts.existing.id, opts.existing);
   }
+  const users = new Map<string, UserRow>();
+  for (const u of opts.users ?? []) users.set(u.cognitoSub, u);
+  const reputations = new Map<string, ReputationRow>();
+  for (const r of opts.reputations ?? []) reputations.set(r.userId, r);
+  const recentBySubmitter = new Map<string, MessageRow[]>(
+    Object.entries(opts.recentBySubmitter ?? {}),
+  );
+
   const getSpy = vi.fn((input: { id: string }) =>
     Promise.resolve({ data: messages.get(input.id) ?? null, errors: undefined }),
   );
@@ -69,12 +96,50 @@ function makeStubs(opts: { existing?: MessageRow | null } = {}): {
     messages.set(input.id, merged);
     return Promise.resolve({ data: merged, errors: undefined });
   });
+  let createSeq = 0;
+  const createSpy = vi.fn((input: Partial<MessageRow>) => {
+    const id = `msg-created-${++createSeq}`;
+    const row: MessageRow = { id, ...input };
+    messages.set(id, row);
+    return Promise.resolve({ data: row, errors: undefined });
+  });
+  const listBySubmitterSpy = vi.fn(
+    (input: { submitterId: string; submittedAt?: { ge?: string; gt?: string } }) => {
+      const list = recentBySubmitter.get(input.submitterId) ?? [];
+      return Promise.resolve({ data: list, errors: undefined });
+    },
+  );
+  const userGetSpy = vi.fn((input: { cognitoSub: string }) =>
+    Promise.resolve({ data: users.get(input.cognitoSub) ?? null, errors: undefined }),
+  );
+  const reputationGetSpy = vi.fn((input: { userId: string }) =>
+    Promise.resolve({ data: reputations.get(input.userId) ?? null, errors: undefined }),
+  );
   const auditSpy = vi.fn(() => Promise.resolve('audit-id-1'));
   return {
-    client: { models: { Message: { get: getSpy, update: updateSpy } } },
+    client: {
+      models: {
+        Message: {
+          get: getSpy,
+          update: updateSpy,
+          create: createSpy,
+          listMessageBySubmitterId: listBySubmitterSpy,
+        },
+        User: { get: userGetSpy },
+        Reputation: { get: reputationGetSpy },
+      },
+    },
     getSpy,
     updateSpy,
+    createSpy,
+    listBySubmitterSpy,
+    userGetSpy,
+    reputationGetSpy,
     auditSpy,
+    messages,
+    users,
+    reputations,
+    recentBySubmitter,
   };
 }
 
@@ -220,5 +285,309 @@ describe('messageMutations — softDeleteMessage', () => {
     expect(result.deletedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
     expect(result.deletedBy).toBe('cog-admin-001');
     expect(result.deletedReason).toBe('returning');
+  });
+});
+
+/**
+ * `submitRecordingLessMessage` tests (#285) — witness-account
+ * submission gated by ban + per-day rate-limit + reputation. Every
+ * landed Message keeps `flaggedForReview = true`; `publishedAt`
+ * decides queued vs. visible.
+ */
+describe('messageMutations — submitRecordingLessMessage', () => {
+  const fixedNow = new Date('2026-05-17T12:00:00.000Z');
+
+  function memberEvent(
+    args: Record<string, unknown>,
+  ): AppSyncResolverEvent<Record<string, unknown>> {
+    const ev = makeEvent({ fieldName: 'submitRecordingLessMessage', arguments: args });
+    if (ev.identity && 'groups' in ev.identity) {
+      ev.identity.sub = 'cog-member-001';
+      ev.identity.groups = ['member'];
+    }
+    return ev;
+  }
+  function modEvent(args: Record<string, unknown>): AppSyncResolverEvent<Record<string, unknown>> {
+    const ev = makeEvent({ fieldName: 'submitRecordingLessMessage', arguments: args });
+    if (ev.identity && 'groups' in ev.identity) {
+      ev.identity.sub = 'cog-mod-001';
+      ev.identity.groups = ['moderator'];
+    }
+    return ev;
+  }
+  function adminEvent(
+    args: Record<string, unknown>,
+  ): AppSyncResolverEvent<Record<string, unknown>> {
+    return makeEvent({ fieldName: 'submitRecordingLessMessage', arguments: args });
+  }
+
+  beforeEach(() => {
+    __resetDeps();
+  });
+
+  it('rejects when caller is not signed in', async () => {
+    const stubs = makeStubs();
+    __setDeps({ dataClient: stubs.client, audit: stubs.auditSpy, now: () => fixedNow });
+    const ev = memberEvent({ broadcastTs: fixedNow.toISOString() });
+    ev.identity = null;
+    await expect(handler(ev, {} as Context, () => undefined)).rejects.toThrow(/not signed in/);
+    expect(stubs.createSpy).not.toHaveBeenCalled();
+    expect(stubs.auditSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects when broadcastTs argument is missing', async () => {
+    const stubs = makeStubs();
+    __setDeps({ dataClient: stubs.client, audit: stubs.auditSpy, now: () => fixedNow });
+    const ev = memberEvent({});
+    await expect(handler(ev, {} as Context, () => undefined)).rejects.toThrow(/broadcastTs/);
+  });
+
+  it('rejects when broadcastTs is not ISO-8601 parseable', async () => {
+    const stubs = makeStubs();
+    __setDeps({ dataClient: stubs.client, audit: stubs.auditSpy, now: () => fixedNow });
+    const ev = memberEvent({ broadcastTs: 'not-a-date' });
+    await expect(handler(ev, {} as Context, () => undefined)).rejects.toThrow(/ISO-8601/);
+  });
+
+  it('rejects an unknown message type enum value', async () => {
+    const stubs = makeStubs();
+    __setDeps({ dataClient: stubs.client, audit: stubs.auditSpy, now: () => fixedNow });
+    const ev = memberEvent({ broadcastTs: fixedNow.toISOString(), type: 'BOGUS' });
+    await expect(handler(ev, {} as Context, () => undefined)).rejects.toThrow(
+      /unknown message type/,
+    );
+  });
+
+  it('rejects banned callers (User.bannedAt set)', async () => {
+    const stubs = makeStubs({
+      users: [{ cognitoSub: 'cog-member-001', bannedAt: '2026-01-01T00:00:00.000Z' }],
+    });
+    __setDeps({ dataClient: stubs.client, audit: stubs.auditSpy, now: () => fixedNow });
+    const ev = memberEvent({ broadcastTs: fixedNow.toISOString() });
+    await expect(handler(ev, {} as Context, () => undefined)).rejects.toThrow(/banned/);
+    expect(stubs.createSpy).not.toHaveBeenCalled();
+    expect(stubs.auditSpy).not.toHaveBeenCalled();
+  });
+
+  it('happy path (high-rep member): publishes immediately + flagged + audits', async () => {
+    const stubs = makeStubs({
+      users: [{ cognitoSub: 'cog-member-001' }],
+      reputations: [{ userId: 'cog-member-001', computedWeight: 3 }],
+    });
+    __setDeps({ dataClient: stubs.client, audit: stubs.auditSpy, now: () => fixedNow });
+    const ev = memberEvent({
+      broadcastTs: '2026-05-17T11:30:00.000Z',
+      sender: 'SKYKING',
+      receiver: 'ALLSTATIONS',
+      type: 'SKYKING',
+      body: 'WHISKEY TANGO',
+    });
+    const result = (await handler(ev, {} as Context, () => undefined)) as MessageRow;
+    expect(result.flaggedForReview).toBe(true);
+    expect(result.publishedAt).toBe(fixedNow.toISOString());
+    expect(result.submitterId).toBe('cog-member-001');
+    expect(result.submittedAt).toBe(fixedNow.toISOString());
+    expect(result.sender).toBe('SKYKING');
+    expect(result.body).toBe('WHISKEY TANGO');
+    expect(stubs.auditSpy).toHaveBeenCalledOnce();
+    const auditOpts = stubs.auditSpy.mock.calls[0]?.[1] as {
+      action: string;
+      after: { verification: { outcome: string; reputationWeight: number; role: string } };
+    };
+    expect(auditOpts.action).toBe('MESSAGE_SUBMIT_RECORDINGLESS');
+    expect(auditOpts.after.verification.outcome).toBe('PUBLISHED');
+    expect(auditOpts.after.verification.role).toBe('member');
+    expect(auditOpts.after.verification.reputationWeight).toBe(3);
+  });
+
+  it('low-rep member is queued (publishedAt=null) but still flagged + audited', async () => {
+    const stubs = makeStubs({
+      users: [{ cognitoSub: 'cog-member-001' }],
+      reputations: [{ userId: 'cog-member-001', computedWeight: 1 }],
+    });
+    __setDeps({ dataClient: stubs.client, audit: stubs.auditSpy, now: () => fixedNow });
+    const ev = memberEvent({ broadcastTs: '2026-05-17T11:30:00.000Z' });
+    const result = (await handler(ev, {} as Context, () => undefined)) as MessageRow;
+    expect(result.flaggedForReview).toBe(true);
+    expect(result.publishedAt).toBeNull();
+    const auditOpts = stubs.auditSpy.mock.calls[0]?.[1] as {
+      after: { verification: { outcome: string } };
+    };
+    expect(auditOpts.after.verification.outcome).toBe('QUEUED');
+  });
+
+  it('member with no Reputation row defaults to weight=1 (queued) + still audits', async () => {
+    const stubs = makeStubs({
+      users: [{ cognitoSub: 'cog-member-001' }],
+    });
+    __setDeps({ dataClient: stubs.client, audit: stubs.auditSpy, now: () => fixedNow });
+    const ev = memberEvent({ broadcastTs: '2026-05-17T11:30:00.000Z' });
+    const result = (await handler(ev, {} as Context, () => undefined)) as MessageRow;
+    expect(result.publishedAt).toBeNull();
+    // Audit must still fire when the Reputation lookup returns null —
+    // the gate decision is part of the audit trail even (especially)
+    // for the default-to-queue path.
+    expect(stubs.auditSpy).toHaveBeenCalledOnce();
+    const auditOpts = stubs.auditSpy.mock.calls[0]?.[1] as {
+      after: { verification: { reputationWeight: number; outcome: string } };
+    };
+    expect(auditOpts.after.verification.reputationWeight).toBe(1);
+    expect(auditOpts.after.verification.outcome).toBe('QUEUED');
+  });
+
+  it('audit failure does not roll back the just-created Message', async () => {
+    const stubs = makeStubs({
+      users: [{ cognitoSub: 'cog-member-001' }],
+      reputations: [{ userId: 'cog-member-001', computedWeight: 3 }],
+    });
+    stubs.auditSpy.mockRejectedValueOnce(new Error('AuditLog.create timed out'));
+    __setDeps({ dataClient: stubs.client, audit: stubs.auditSpy, now: () => fixedNow });
+    const ev = memberEvent({ broadcastTs: '2026-05-17T11:30:00.000Z' });
+    const result = (await handler(ev, {} as Context, () => undefined)) as MessageRow;
+    // Message still created + returned; audit failure is logged not thrown.
+    expect(result.publishedAt).toBe(fixedNow.toISOString());
+    expect(stubs.createSpy).toHaveBeenCalledOnce();
+  });
+
+  it('rate-limit query errors abort the submission (no Message create, no audit)', async () => {
+    const stubs = makeStubs({
+      users: [{ cognitoSub: 'cog-member-001' }],
+      reputations: [{ userId: 'cog-member-001', computedWeight: 3 }],
+    });
+    stubs.listBySubmitterSpy.mockResolvedValueOnce({
+      data: null,
+      errors: [{ message: 'GSI Query failed' }],
+    });
+    __setDeps({ dataClient: stubs.client, audit: stubs.auditSpy, now: () => fixedNow });
+    const ev = memberEvent({ broadcastTs: '2026-05-17T11:30:00.000Z' });
+    await expect(handler(ev, {} as Context, () => undefined)).rejects.toThrow(
+      /rate-limit query returned errors/,
+    );
+    expect(stubs.createSpy).not.toHaveBeenCalled();
+    expect(stubs.auditSpy).not.toHaveBeenCalled();
+  });
+
+  it('boundary-filters out stray rows whose submittedAt falls outside the window', async () => {
+    // The handler re-filters by the windowStart boundary on top of
+    // the GSI predicate as belt-and-suspenders. Pass two rows: one
+    // inside the window, one outside. Only the in-window row should
+    // count toward the rate-limit total.
+    const priors = [
+      { id: 'recent', submitterId: 'cog-member-001', submittedAt: '2026-05-17T09:00:00.000Z' },
+      { id: 'old', submitterId: 'cog-member-001', submittedAt: '2026-05-15T00:00:00.000Z' },
+    ];
+    const stubs = makeStubs({
+      users: [{ cognitoSub: 'cog-member-001' }],
+      reputations: [{ userId: 'cog-member-001', computedWeight: 3 }],
+      recentBySubmitter: { 'cog-member-001': priors },
+    });
+    __setDeps({ dataClient: stubs.client, audit: stubs.auditSpy, now: () => fixedNow });
+    const ev = memberEvent({ broadcastTs: '2026-05-17T11:30:00.000Z' });
+    await handler(ev, {} as Context, () => undefined);
+    const auditOpts = stubs.auditSpy.mock.calls[0]?.[1] as {
+      after: { verification: { rateLimitCount: number } };
+    };
+    // 'old' is dropped by the boundary filter; only 'recent' counts.
+    expect(auditOpts.after.verification.rateLimitCount).toBe(1);
+  });
+
+  it('moderator bypasses the reputation gate (auto-publish even with low rep)', async () => {
+    const stubs = makeStubs({
+      users: [{ cognitoSub: 'cog-mod-001' }],
+      reputations: [{ userId: 'cog-mod-001', computedWeight: 0.5 }],
+    });
+    __setDeps({ dataClient: stubs.client, audit: stubs.auditSpy, now: () => fixedNow });
+    const ev = modEvent({ broadcastTs: '2026-05-17T11:30:00.000Z' });
+    const result = (await handler(ev, {} as Context, () => undefined)) as MessageRow;
+    expect(result.publishedAt).toBe(fixedNow.toISOString());
+    const auditOpts = stubs.auditSpy.mock.calls[0]?.[1] as {
+      after: { verification: { role: string; outcome: string } };
+    };
+    expect(auditOpts.after.verification.role).toBe('moderator');
+    expect(auditOpts.after.verification.outcome).toBe('PUBLISHED');
+  });
+
+  it('admin bypasses both the rate-limit and the reputation gate', async () => {
+    const stubs = makeStubs({
+      users: [{ cognitoSub: 'cog-admin-001' }],
+      // Pre-seed 999 prior submissions — admin still sails through.
+      recentBySubmitter: {
+        'cog-admin-001': Array.from({ length: 999 }, (_, i) => ({
+          id: `prior-${i}`,
+          submitterId: 'cog-admin-001',
+        })),
+      },
+    });
+    __setDeps({ dataClient: stubs.client, audit: stubs.auditSpy, now: () => fixedNow });
+    const ev = adminEvent({ broadcastTs: '2026-05-17T11:30:00.000Z' });
+    const result = (await handler(ev, {} as Context, () => undefined)) as MessageRow;
+    expect(result.publishedAt).toBe(fixedNow.toISOString());
+    // Admin path skips the GSI count entirely (cap=Infinity).
+    expect(stubs.listBySubmitterSpy).not.toHaveBeenCalled();
+    const auditOpts = stubs.auditSpy.mock.calls[0]?.[1] as {
+      after: { verification: { role: string; rateLimitCap: number | null } };
+    };
+    expect(auditOpts.after.verification.role).toBe('admin');
+    expect(auditOpts.after.verification.rateLimitCap).toBeNull();
+  });
+
+  it('member rate-limit: rejects when prior 24h submissions hit the cap (default 5)', async () => {
+    const priors = Array.from({ length: 5 }, (_, i) => ({
+      id: `prior-${i}`,
+      submitterId: 'cog-member-001',
+      submittedAt: '2026-05-17T06:00:00.000Z',
+    }));
+    const stubs = makeStubs({
+      users: [{ cognitoSub: 'cog-member-001' }],
+      reputations: [{ userId: 'cog-member-001', computedWeight: 5 }],
+      recentBySubmitter: { 'cog-member-001': priors },
+    });
+    __setDeps({ dataClient: stubs.client, audit: stubs.auditSpy, now: () => fixedNow });
+    const ev = memberEvent({ broadcastTs: '2026-05-17T11:30:00.000Z' });
+    await expect(handler(ev, {} as Context, () => undefined)).rejects.toThrow(
+      /rate limit exceeded/,
+    );
+    expect(stubs.createSpy).not.toHaveBeenCalled();
+    expect(stubs.auditSpy).not.toHaveBeenCalled();
+  });
+
+  it('moderator rate-limit cap higher than member cap (default 20)', async () => {
+    // 10 prior submissions exceeds member cap of 5 but stays well
+    // under the moderator cap of 20 — should pass for a mod.
+    const priors = Array.from({ length: 10 }, (_, i) => ({
+      id: `prior-${i}`,
+      submitterId: 'cog-mod-001',
+      submittedAt: '2026-05-17T06:00:00.000Z',
+    }));
+    const stubs = makeStubs({
+      users: [{ cognitoSub: 'cog-mod-001' }],
+      recentBySubmitter: { 'cog-mod-001': priors },
+    });
+    __setDeps({ dataClient: stubs.client, audit: stubs.auditSpy, now: () => fixedNow });
+    const ev = modEvent({ broadcastTs: '2026-05-17T11:30:00.000Z' });
+    const result = (await handler(ev, {} as Context, () => undefined)) as MessageRow;
+    expect(result.publishedAt).toBe(fixedNow.toISOString());
+  });
+
+  it('rate-limit GSI is queried with the trailing-window submittedAt predicate (inclusive `ge`)', async () => {
+    // `ge` (greater-or-equal) is intentional rather than `gt`: the
+    // window boundary is inclusive of any row whose submittedAt
+    // exactly equals `now - windowHours`. Matters only at the
+    // microsecond boundary, but pins the contract explicitly so a
+    // future change to `gt` becomes a visible test diff.
+    const stubs = makeStubs({
+      users: [{ cognitoSub: 'cog-member-001' }],
+      reputations: [{ userId: 'cog-member-001', computedWeight: 3 }],
+    });
+    __setDeps({ dataClient: stubs.client, audit: stubs.auditSpy, now: () => fixedNow });
+    const ev = memberEvent({ broadcastTs: '2026-05-17T11:30:00.000Z' });
+    await handler(ev, {} as Context, () => undefined);
+    const call = stubs.listBySubmitterSpy.mock.calls[0]?.[0] as {
+      submitterId: string;
+      submittedAt: { ge?: string };
+    };
+    expect(call.submitterId).toBe('cog-member-001');
+    // Trailing 24h window: now (12:00) - 24h = previous day 12:00.
+    expect(call.submittedAt.ge).toBe('2026-05-16T12:00:00.000Z');
   });
 });
