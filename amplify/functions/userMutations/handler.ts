@@ -41,6 +41,22 @@ type UserRow = {
 };
 
 /**
+ * Subset of Sdr columns the selfDelete cascade reads + writes. The
+ * cascade leaves transmitter / recordings / publicVisible alone — only
+ * PII (name, notes, lat/lon when EXACT) is touched.
+ */
+type SdrRow = {
+  id: string;
+  name?: string | null;
+  notes?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  locationGranularity?: 'EXACT' | 'CITY' | 'REGION' | null;
+  ownerId?: string | null;
+  [k: string]: unknown;
+};
+
+/**
  * Structural shape of the Amplify Data client we need. Declared narrowly
  * so tests inject a stub without dragging the full `generateClient`
  * surface into the unit test.
@@ -52,6 +68,20 @@ export interface UserMutationsDataClient {
       update: (
         input: Partial<UserRow> & { cognitoSub: string },
       ) => Promise<{ data: UserRow | null; errors?: unknown }>;
+    };
+    Sdr: {
+      /**
+       * Auto-generated GSI lookup for `i('ownerId')` on Sdr (#257).
+       * Selfdelete cascade Queries this to find every Sdr owned by
+       * the user whose row is being blanked.
+       */
+      listSdrByOwnerId: (input: { ownerId: string }) => Promise<{
+        data: SdrRow[] | null;
+        errors?: unknown;
+      }>;
+      update: (
+        input: Partial<SdrRow> & { id: string },
+      ) => Promise<{ data: SdrRow | null; errors?: unknown }>;
     };
   };
 }
@@ -131,6 +161,11 @@ async function dispatchSelfDelete(
     throw new Error(`selfDelete: User row not found for cognitoSub=${sub}`);
   }
   // Idempotent — if already blanked, return the existing row untouched.
+  // The Sdr cascade is also skipped in this branch: re-running it would
+  // re-emit `SDR_PII_BLANK` audits for already-wiped rows and pollute
+  // the audit log. Recovery from a partial first-pass cascade is the
+  // job of a janitor sweep follow-up (mirror of #274), not a user-
+  // triggered second selfDelete call.
   if (before.piiBlanked === true) {
     return before;
   }
@@ -158,7 +193,69 @@ async function dispatchSelfDelete(
     after: snapshot(after),
   });
 
+  // PII cascade to owned Sdrs (#286). Each Sdr row owned by this
+  // user has `name` replaced with `[deleted]` (name is required at
+  // the model level, so we can't null it), `notes` nulled, and (only
+  // when `locationGranularity === 'EXACT'`) lat/lon nulled. Non-
+  // EXACT granularities are already blurred by `listSdrPublic`, so
+  // the public-facing precision degrades gracefully without touching
+  // the row.
+  //
+  // We do NOT soft-delete the Sdr — recordings that link back to
+  // this Sdr (via `Recording.sdrId`) keep resolving the row so admin
+  // attribution tooling still works.
+  //
+  // One audit entry per Sdr (targetType=Sdr, action=USER_PII_BLANK)
+  // so the user-facing audit log shows what was wiped. Errors on a
+  // single Sdr do NOT roll back the User blank — the User row is
+  // the source of truth for "this account is gone", and a partial
+  // Sdr cascade is recoverable by the daily replay sweeper pattern
+  // (mirror of #274 if it ever becomes a real issue).
+  await cascadeSdrPii(event, deps, sub);
+
   return after;
+}
+
+async function cascadeSdrPii(
+  event: Parameters<AppSyncResolverHandler<Record<string, unknown>, UserRow | null>>[0],
+  deps: { client: UserMutationsDataClient; audit: AuditFn; now: () => Date },
+  ownerSub: string,
+): Promise<void> {
+  const sdrs = await deps.client.models.Sdr.listSdrByOwnerId({ ownerId: ownerSub });
+  const rows = sdrs.data ?? [];
+  for (const before of rows) {
+    const patch: Partial<SdrRow> & { id: string } = {
+      id: before.id,
+      name: '[deleted]',
+      notes: null,
+    };
+    if (before.locationGranularity === 'EXACT') {
+      patch.latitude = null;
+      patch.longitude = null;
+    }
+    const updated = await deps.client.models.Sdr.update(patch);
+    if (updated.errors) {
+      // Do not throw — the User row is the source of truth for the
+      // account being gone. Leave a console trace so a janitor sweep
+      // can pick this up later if needed.
+      console.warn(
+        `selfDelete: Sdr.update returned errors for id=${before.id}: ${JSON.stringify(updated.errors)}`,
+      );
+      continue;
+    }
+    const after = updated.data ?? { ...before, ...patch };
+    await deps.audit(auditContextFrom(event), {
+      action: 'SDR_PII_BLANK',
+      targetType: 'Sdr',
+      targetId: before.id,
+      before: snapshotSdr(before),
+      after: snapshotSdr(after),
+    });
+  }
+}
+
+function snapshotSdr(row: SdrRow): Record<string, unknown> {
+  return { ...row };
 }
 
 async function dispatchBanUser(

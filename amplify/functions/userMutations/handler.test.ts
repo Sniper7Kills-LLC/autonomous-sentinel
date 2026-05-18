@@ -79,6 +79,10 @@ describe('userMutations handler — dispatch', () => {
             get: vi.fn(),
             update: vi.fn(),
           },
+          Sdr: {
+            listSdrByOwnerId: vi.fn(),
+            update: vi.fn(),
+          },
         },
       },
       audit: vi.fn(),
@@ -91,9 +95,22 @@ describe('userMutations handler — dispatch', () => {
   });
 });
 
+interface SdrTestRow {
+  id: string;
+  name?: string | null;
+  notes?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  locationGranularity?: 'EXACT' | 'CITY' | 'REGION' | null;
+  ownerId?: string | null;
+}
+
 describe('userMutations handler — selfDelete', () => {
   let users: Map<string, UserRow>;
+  let sdrs: Map<string, SdrTestRow>;
   let userUpdateSpy: ReturnType<typeof vi.fn>;
+  let sdrListSpy: ReturnType<typeof vi.fn>;
+  let sdrUpdateSpy: ReturnType<typeof vi.fn>;
   let auditSpy: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -109,6 +126,7 @@ describe('userMutations handler — selfDelete', () => {
         },
       ],
     ]);
+    sdrs = new Map<string, SdrTestRow>();
 
     userUpdateSpy = vi.fn((input: Partial<UserRow> & { cognitoSub: string }) => {
       const before = users.get(input.cognitoSub);
@@ -117,6 +135,18 @@ describe('userMutations handler — selfDelete', () => {
         ...input,
       };
       users.set(input.cognitoSub, merged);
+      return Promise.resolve({ data: merged, errors: undefined });
+    });
+    sdrListSpy = vi.fn(({ ownerId }: { ownerId: string }) =>
+      Promise.resolve({
+        data: Array.from(sdrs.values()).filter((s) => s.ownerId === ownerId),
+        errors: undefined,
+      }),
+    );
+    sdrUpdateSpy = vi.fn((input: Partial<SdrTestRow> & { id: string }) => {
+      const before = sdrs.get(input.id);
+      const merged: SdrTestRow = { ...(before ?? { id: input.id }), ...input };
+      sdrs.set(input.id, merged);
       return Promise.resolve({ data: merged, errors: undefined });
     });
     auditSpy = vi.fn(() => Promise.resolve('audit-id-1'));
@@ -132,6 +162,10 @@ describe('userMutations handler — selfDelete', () => {
               }),
             ),
             update: userUpdateSpy,
+          },
+          Sdr: {
+            listSdrByOwnerId: sdrListSpy,
+            update: sdrUpdateSpy,
           },
         },
       },
@@ -258,6 +292,186 @@ describe('userMutations handler — selfDelete', () => {
     // No further update, no further audit row — the row is already blanked.
     expect(userUpdateSpy).not.toHaveBeenCalled();
     expect(auditSpy).not.toHaveBeenCalled();
+    // And no cascade probe either; the early-return short-circuits
+    // before the Sdr fan-out runs.
+    expect(sdrListSpy).not.toHaveBeenCalled();
+  });
+
+  describe('selfDelete cascade to owned Sdrs (#286)', () => {
+    beforeEach(() => {
+      sdrs.set('sdr-exact', {
+        id: 'sdr-exact',
+        name: 'My Home SDR',
+        notes: 'rooftop antenna',
+        latitude: 37.774929,
+        longitude: -122.419416,
+        locationGranularity: 'EXACT',
+        ownerId: 'cognito-sub-actor-123',
+      });
+      sdrs.set('sdr-city', {
+        id: 'sdr-city',
+        name: 'My Office SDR',
+        notes: 'desk',
+        latitude: 40.7128,
+        longitude: -74.006,
+        locationGranularity: 'CITY',
+        ownerId: 'cognito-sub-actor-123',
+      });
+      sdrs.set('sdr-other-owner', {
+        id: 'sdr-other-owner',
+        name: 'Not Mine',
+        notes: 'someone else',
+        locationGranularity: 'EXACT',
+        ownerId: 'different-owner',
+      });
+    });
+
+    it('queries the ownerId GSI with the caller sub', async () => {
+      const event = makeEvent({ fieldName: 'selfDelete', arguments: {} });
+      await handler(event, {} as Context, () => undefined);
+
+      expect(sdrListSpy).toHaveBeenCalledOnce();
+      expect(sdrListSpy.mock.calls[0]?.[0]).toEqual({ ownerId: 'cognito-sub-actor-123' });
+    });
+
+    it('blanks name + notes on every owned Sdr', async () => {
+      const event = makeEvent({ fieldName: 'selfDelete', arguments: {} });
+      await handler(event, {} as Context, () => undefined);
+
+      const patches = sdrUpdateSpy.mock.calls.map((c) => c[0] as SdrTestRow);
+      const byId = new Map(patches.map((p) => [p.id, p]));
+      expect(byId.get('sdr-exact')?.name).toBe('[deleted]');
+      expect(byId.get('sdr-exact')?.notes).toBeNull();
+      expect(byId.get('sdr-city')?.name).toBe('[deleted]');
+      expect(byId.get('sdr-city')?.notes).toBeNull();
+    });
+
+    it('nulls lat/lon only for granularity=EXACT Sdrs (CITY/REGION already blurred at display)', async () => {
+      const event = makeEvent({ fieldName: 'selfDelete', arguments: {} });
+      await handler(event, {} as Context, () => undefined);
+
+      const patches = sdrUpdateSpy.mock.calls.map((c) => c[0] as SdrTestRow);
+      const byId = new Map(patches.map((p) => [p.id, p]));
+      expect(byId.get('sdr-exact')?.latitude).toBeNull();
+      expect(byId.get('sdr-exact')?.longitude).toBeNull();
+      // CITY granularity: lat/lon NOT touched (listSdrPublic blurs to 1 dp).
+      expect(byId.get('sdr-city')?.latitude).toBeUndefined();
+      expect(byId.get('sdr-city')?.longitude).toBeUndefined();
+    });
+
+    it('does not touch Sdrs owned by other users', async () => {
+      const event = makeEvent({ fieldName: 'selfDelete', arguments: {} });
+      await handler(event, {} as Context, () => undefined);
+
+      const patchedIds = sdrUpdateSpy.mock.calls.map((c) => (c[0] as SdrTestRow).id);
+      expect(patchedIds).not.toContain('sdr-other-owner');
+      // sdrs map should still hold the other owner's row unchanged.
+      expect(sdrs.get('sdr-other-owner')?.name).toBe('Not Mine');
+    });
+
+    it('emits one SDR_PII_BLANK audit per Sdr (targetType=Sdr)', async () => {
+      const event = makeEvent({ fieldName: 'selfDelete', arguments: {} });
+      await handler(event, {} as Context, () => undefined);
+
+      const auditCalls = auditSpy.mock.calls.map((c) => c[1] as Record<string, unknown>);
+      const sdrAudits = auditCalls.filter((a) => a.targetType === 'Sdr');
+      expect(sdrAudits).toHaveLength(2);
+      const auditedIds = sdrAudits.map((a) => a.targetId as string).sort();
+      expect(auditedIds).toEqual(['sdr-city', 'sdr-exact']);
+      for (const a of sdrAudits) {
+        expect(a.action).toBe('SDR_PII_BLANK');
+      }
+    });
+
+    it('audit before/after snapshots capture the wiped fields', async () => {
+      const event = makeEvent({ fieldName: 'selfDelete', arguments: {} });
+      await handler(event, {} as Context, () => undefined);
+
+      const auditCalls = auditSpy.mock.calls.map((c) => c[1] as Record<string, unknown>);
+      const exactAudit = auditCalls.find(
+        (a) => a.targetType === 'Sdr' && a.targetId === 'sdr-exact',
+      );
+      expect(exactAudit).toBeDefined();
+      const before = exactAudit?.before as SdrTestRow;
+      const after = exactAudit?.after as SdrTestRow;
+      expect(before.name).toBe('My Home SDR');
+      expect(before.latitude).toBe(37.774929);
+      expect(after.name).toBe('[deleted]');
+      expect(after.latitude).toBeNull();
+    });
+
+    it('runs the User blank + Sdr cascade in order (User audit first, then Sdr audits)', async () => {
+      const event = makeEvent({ fieldName: 'selfDelete', arguments: {} });
+      await handler(event, {} as Context, () => undefined);
+
+      // The User audit lands first; Sdr audits follow.
+      const targetTypes = auditSpy.mock.calls.map(
+        (c) => (c[1] as Record<string, unknown>).targetType,
+      );
+      expect(targetTypes[0]).toBe('User');
+      expect(targetTypes.slice(1).every((t) => t === 'Sdr')).toBe(true);
+    });
+
+    it('completes even when an individual Sdr update returns an error (cascade does not roll back the User blank)', async () => {
+      // Make the first Sdr.update call fail (sdr-exact iterated first
+      // because the fan-out preserves Map insertion order); the second
+      // call (sdr-city) succeeds. Asserting the specific surviving id
+      // is what makes this test catch a regression where the cascade
+      // bails out on the first error instead of continuing.
+      sdrUpdateSpy.mockImplementationOnce(() =>
+        Promise.resolve({ data: null, errors: [{ message: 'boom' }] }),
+      );
+
+      const event = makeEvent({ fieldName: 'selfDelete', arguments: {} });
+      const result = (await handler(event, {} as Context, () => undefined)) as UserRow;
+
+      // User row is still blanked.
+      expect(result.piiBlanked).toBe(true);
+      const sdrAudits = auditSpy.mock.calls
+        .map((c) => c[1] as Record<string, unknown>)
+        .filter((a) => a.targetType === 'Sdr');
+      // The failing sdr-exact emitted no audit; sdr-city did.
+      const auditedIds = sdrAudits.map((a) => a.targetId as string).sort();
+      expect(auditedIds).toEqual(['sdr-city']);
+      // Both Sdr updates were attempted (cascade did not bail).
+      expect(sdrUpdateSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('skips the cascade entirely on idempotent re-call (already-blanked User)', async () => {
+      users.set('cognito-sub-actor-123', {
+        cognitoSub: 'cognito-sub-actor-123',
+        email: null,
+        preferredUsername: null,
+        displayName: null,
+        piiBlanked: true,
+        piiBlankedAt: '2026-05-15T00:00:00.000Z',
+      });
+
+      const event = makeEvent({ fieldName: 'selfDelete', arguments: {} });
+      await handler(event, {} as Context, () => undefined);
+
+      // The early-return short-circuits the cascade. Acceptable trade-off
+      // for v1: a partial cascade from a prior selfDelete (some Sdr
+      // updates failed) is recovered by a janitor sweep follow-up, not by
+      // a second user call. Replaying the cascade here would re-emit
+      // SDR_PII_BLANK audits for already-blanked rows, polluting the
+      // audit log. The janitor will be the dedicated recovery path.
+      expect(sdrListSpy).not.toHaveBeenCalled();
+      expect(sdrUpdateSpy).not.toHaveBeenCalled();
+    });
+
+    it('cascade is a no-op when the user owns zero Sdrs', async () => {
+      sdrs.clear();
+      const event = makeEvent({ fieldName: 'selfDelete', arguments: {} });
+      await handler(event, {} as Context, () => undefined);
+
+      expect(sdrListSpy).toHaveBeenCalledOnce();
+      expect(sdrUpdateSpy).not.toHaveBeenCalled();
+      // Only the User audit fires.
+      const auditCalls = auditSpy.mock.calls.map((c) => c[1] as Record<string, unknown>);
+      expect(auditCalls).toHaveLength(1);
+      expect(auditCalls[0]?.targetType).toBe('User');
+    });
   });
 });
 
@@ -300,6 +514,10 @@ describe('userMutations handler — banUser', () => {
               }),
             ),
             update: userUpdateSpy,
+          },
+          Sdr: {
+            listSdrByOwnerId: vi.fn(() => Promise.resolve({ data: [], errors: undefined })),
+            update: vi.fn(),
           },
         },
       },

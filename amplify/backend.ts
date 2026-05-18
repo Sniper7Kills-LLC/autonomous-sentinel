@@ -22,6 +22,7 @@ import { recordingMutations } from './functions/recordingMutations/resource';
 import { commentMutations } from './functions/commentMutations/resource';
 import { transcriptRevisionMutations } from './functions/transcriptRevisionMutations/resource';
 import { getUserPublicLambda } from './functions/getUserPublicLambda/resource';
+import { listSdrPublicLambda } from './functions/listSdrPublicLambda/resource';
 import { listAuditLogPublic } from './functions/listAuditLogPublic/resource';
 import { legacyClaimWorker } from './functions/legacyClaimWorker/resource';
 import { legacyClaimReplaySweeper } from './functions/legacyClaimReplaySweeper/resource';
@@ -44,6 +45,7 @@ const backend = defineBackend({
   transcriptRevisionMutations,
   listAuditLogPublic,
   getUserPublicLambda,
+  listSdrPublicLambda,
   legacyClaimWorker,
   legacyClaimReplaySweeper,
   fieldVoteOrphanJanitor,
@@ -95,6 +97,25 @@ getUserPublicLambdaFn.addToRolePolicy(
   new PolicyStatement({
     actions: ['dynamodb:GetItem'],
     resources: [userTable.tableArn],
+  }),
+);
+
+// listSdrPublic Lambda wiring (#286). Read-only Scan on the Sdr
+// table; granularity blur + publicVisible filter happen in-handler.
+// Scan is the right shape for v1 because Sdr row count is bounded by
+// the active-user count; switch to a sparse GSI if/when the table
+// outgrows single-page Scans. SDR_TABLE_NAME env var addresses the
+// table without an SDK lookup.
+const sdrTable = backend.data.resources.tables['Sdr'];
+if (!sdrTable) {
+  throw new Error('backend: Sdr table not found on data resources');
+}
+const listSdrPublicLambdaFn = backend.listSdrPublicLambda.resources.lambda as LambdaFunction;
+listSdrPublicLambdaFn.addEnvironment('SDR_TABLE_NAME', sdrTable.tableName);
+listSdrPublicLambdaFn.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:Scan'],
+    resources: [sdrTable.tableArn],
   }),
 );
 
