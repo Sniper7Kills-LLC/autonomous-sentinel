@@ -5,15 +5,15 @@
  * After `linkLegacyClaim` (sub-A / #272) atomically rewrites the User
  * row PK from `legacy:<id>` to the real Cognito sub, every child
  * table that holds a FK pointing at the old PK still references it.
- * This helper sweeps the 11 User-FK tables and rewrites each FK.
+ * This helper sweeps the 12 User-FK tables and rewrites each FK.
  *
  * Three operation shapes (driven by table identifier semantics):
  *
  *   1. **Simple FK column** — Sdr.ownerId, Comment.authorId,
  *      AbuseReport.reporterId, Donation.userId, Recording.uploaderId,
- *      TranscriptRevision.proposedBy, User.bannedById. Row PK does not
- *      change; emit a single `Update` per row inside a `TransactWriteItems`
- *      batch of `batchSize` ops.
+ *      TranscriptRevision.proposedBy, User.bannedById, Message.submitterId
+ *      (#285 / #305). Row PK does not change; emit a single `Update` per
+ *      row inside a `TransactWriteItems` batch of `batchSize` ops.
  *
  *   2. **PK-part FK** — FieldVote.voterId (part of synthesised
  *      `fieldKey`), RevisionVote.voterId (part of compound identifier).
@@ -67,6 +67,7 @@ export interface FanOutTableNames {
   Recording: string;
   TranscriptRevision: string;
   User: string;
+  Message: string;
   FieldVote: string;
   RevisionVote: string;
   Reputation: string;
@@ -211,6 +212,20 @@ const TABLE_DESCRIPTORS: readonly FanOutTableDescriptor[] = [
     fkColumn: 'bannedById',
     pkColumn: 'cognitoSub',
   },
+  // #305 — recording-less Message submitter FK (#285 introduced
+  // `Message.submitterId` + the supporting GSI). The risk surface is
+  // narrow (the worker only ever rewrites `legacy:<id>` FKs, which a
+  // fresh submitterId never carries), so this is hardening rather than
+  // a functional bug. Wiring keeps the migration story complete should
+  // a v3-claimer race a recording-less submission against their
+  // post-confirmation fan-out.
+  {
+    shape: 'simple-column',
+    table: 'Message',
+    indexName: 'message-submitterId-index',
+    fkColumn: 'submitterId',
+    pkColumn: 'id',
+  },
 
   // Shape 2 — PK-part FK
   {
@@ -252,6 +267,7 @@ function blankSummary(): FanOutSummary {
     Recording: 0,
     TranscriptRevision: 0,
     User: 0,
+    Message: 0,
     FieldVote: 0,
     RevisionVote: 0,
     Reputation: 0,

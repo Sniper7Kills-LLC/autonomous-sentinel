@@ -76,6 +76,7 @@ function makeStubDeps(opts: { rowsByEmail?: UserRow[]; transactErr?: Error } = {
         Recording: 'Recording-t',
         TranscriptRevision: 'TranscriptRevision-t',
         User: TABLE,
+        Message: 'Message-t',
         FieldVote: 'FieldVote-t',
         RevisionVote: 'RevisionVote-t',
         Reputation: 'Reputation-t',
