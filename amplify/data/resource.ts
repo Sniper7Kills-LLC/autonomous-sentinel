@@ -7,7 +7,7 @@ import { recordingMutations } from '../functions/recordingMutations/resource';
 import { commentMutations } from '../functions/commentMutations/resource';
 import { getUserPublicLambda } from '../functions/getUserPublicLambda/resource';
 import { listAuditLogPublic } from '../functions/listAuditLogPublic/resource';
-import { Message, softDeleteMessage } from './models/message';
+import { Message, softDeleteMessage, submitRecordingLessMessage } from './models/message';
 import { Recording, softDeleteRecording, submitRecording } from './models/recording';
 import { Sdr, listSdrPublic } from './models/sdr';
 import { listSdrPublicLambda } from '../functions/listSdrPublicLambda/resource';
@@ -109,6 +109,9 @@ export const schema = a
 
     // Message soft-delete — issue #28
     softDeleteMessage,
+
+    // Recording-less Message witness submission — issue #285
+    submitRecordingLessMessage,
 
     // Recording soft-delete — issue #29
     softDeleteRecording,

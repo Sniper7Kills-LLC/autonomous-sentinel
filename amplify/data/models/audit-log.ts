@@ -36,6 +36,14 @@ export const AuditLog = a
       'MESSAGE_DELETE',
       'MESSAGE_RESTORE',
       'MESSAGE_EDIT',
+      // Recording-less witness submission (#285). Emitted by
+      // `submitRecordingLessMessage` after the Message lands. The
+      // audit row's `after.verification` payload carries the gate
+      // provenance — caller role, reputation weight, rate-limit
+      // count, queued vs. published outcome — so moderators (and
+      // future incident reviewers) can see why each submission was
+      // accepted.
+      'MESSAGE_SUBMIT_RECORDINGLESS',
       'RECORDING_DELETE',
       'RECORDING_RESTORE',
       'COMMENT_DELETE',

@@ -134,7 +134,16 @@ Live updates pushed via AppSync subscription to all connected clients
 ### Recording-less submissions
 
 - v3 archive contains Messages with no Recording. They stay in v4 for analytics + searchable history.
-- v4 submission flow accepts user-submitted Messages **without** a Recording, gated by a verification step to prevent spam. Mechanism TBD (CAPTCHA / reputation-gate / queued-for-mod-review / proof-of-witnessing — pick at scoping time).
+- v4 submission flow accepts user-submitted Messages **without** a Recording via the `submitRecordingLessMessage` mutation (`amplify/functions/messageMutations`, #285). Implementation gates spam without a third-party dependency at v1:
+  - **Ban check** — banned users (`User.bannedAt` set) rejected outright.
+  - **Per-day rate-limit** — `Message.submitterId` GSI counts the caller's submissions in the trailing N hours; reject when count ≥ cap.
+    - Defaults: `5/day` member, `20/day` moderator, **unlimited** admin.
+    - Env-tunable: `RECORDINGLESS_RATE_LIMIT_MEMBER`, `RECORDINGLESS_RATE_LIMIT_MOD`, `RECORDINGLESS_RATE_LIMIT_WINDOW_HOURS`.
+  - **Reputation gate for publish-vs-queue** — `Reputation.computedWeight ≥ threshold` lands the Message with `publishedAt = now`; below threshold the Message lands with `publishedAt = null` (mod queue). Moderators + admins always publish-now.
+    - Default threshold: `1.5`. Env-tunable: `RECORDINGLESS_REP_THRESHOLD`.
+  - **Always flagged** — every recording-less submission lands with `flaggedForReview = true` regardless of the gate outcome, so it never sits alongside SDR-derived entries unchallenged.
+  - **Audit provenance** — every submission writes a `MESSAGE_SUBMIT_RECORDINGLESS` AuditLog entry whose `after.verification` payload captures role, rep weight, threshold, rate-limit count, cap, window hours, and `outcome ∈ {QUEUED, PUBLISHED}`.
+- CAPTCHA / Turnstile / hCaptcha layer is deferred — the gate is reputation + rate-limit only at v1. Owner can wire a verification-provider hook later behind a feature flag once a site key is provisioned; that integration was called out as out-of-scope on #285.
 - The "no manual entry" rule from CLAUDE.md ("Eliminate manual message entry" goal) was an _automation preference_, not a hard ban: organic recording-less submissions are still allowed when the verification step passes.
 - One Message → 0..N Recordings (was: 1..N).
 
