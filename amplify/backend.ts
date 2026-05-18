@@ -8,6 +8,7 @@ import {
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { Rule, Schedule } from 'aws-cdk-lib/aws-events';
 import { LambdaFunction as LambdaTarget } from 'aws-cdk-lib/aws-events-targets';
+import { Key } from 'aws-cdk-lib/aws-kms';
 import { auth, discordIssuerUrl } from './auth/resource';
 import { data } from './data/resource';
 import { storage } from './storage/resource';
@@ -23,6 +24,7 @@ import { commentMutations } from './functions/commentMutations/resource';
 import { transcriptRevisionMutations } from './functions/transcriptRevisionMutations/resource';
 import { getUserPublicLambda } from './functions/getUserPublicLambda/resource';
 import { listSdrPublicLambda } from './functions/listSdrPublicLambda/resource';
+import { notificationPreferenceMutations } from './functions/notificationPreferenceMutations/resource';
 import { listAuditLogPublic } from './functions/listAuditLogPublic/resource';
 import { legacyClaimWorker } from './functions/legacyClaimWorker/resource';
 import { legacyClaimReplaySweeper } from './functions/legacyClaimReplaySweeper/resource';
@@ -46,6 +48,7 @@ const backend = defineBackend({
   listAuditLogPublic,
   getUserPublicLambda,
   listSdrPublicLambda,
+  notificationPreferenceMutations,
   legacyClaimWorker,
   legacyClaimReplaySweeper,
   fieldVoteOrphanJanitor,
@@ -118,6 +121,49 @@ listSdrPublicLambdaFn.addToRolePolicy(
     resources: [sdrTable.tableArn],
   }),
 );
+
+// notificationPreferenceMutations Lambda wiring (#288).
+//
+// Two responsibilities:
+//   1. Dedicated symmetric KMS key — encrypts the user-supplied
+//      Discord webhook URL at rest. Lives in its own nested stack
+//      (`NotificationPrefKmsStack`) so the key + alias can be
+//      rotated / migrated without touching the data stack. Key
+//      policy stays at the AWS default (root-account access only);
+//      the handler's IAM role is granted Encrypt + Decrypt by the
+//      `grantEncryptDecrypt` call below.
+//   2. DDB GetItem + UpdateItem on the NotificationPreference table
+//      (upsert; lazy-creates the row on first owner read).
+//
+// `NOTIFICATION_PREFERENCE_TABLE_NAME` is already populated for the
+// legacy-claim worker (it fans out the same table). Re-read it from
+// the data resources here so the new Lambda doesn't depend on the
+// fan-out wiring block executing first.
+const notificationPreferenceTable = backend.data.resources.tables['NotificationPreference'];
+if (!notificationPreferenceTable) {
+  throw new Error('backend: NotificationPreference table not found on data resources');
+}
+const notificationPrefKmsStack = backend.createStack('NotificationPrefKmsStack');
+const notificationPrefKey = new Key(notificationPrefKmsStack, 'NotificationPrefWebhookUrlKey', {
+  description:
+    'Symmetric KMS key for NotificationPreference.discordWebhookUrl encryption-at-rest (#288).',
+  enableKeyRotation: true,
+  alias: 'autonomous-sentinel/notification-preference-webhook-url',
+});
+const notificationPrefLambda = backend.notificationPreferenceMutations.resources
+  .lambda as LambdaFunction;
+notificationPrefLambda.addEnvironment(
+  'NOTIFICATION_PREFERENCE_TABLE_NAME',
+  notificationPreferenceTable.tableName,
+);
+notificationPrefLambda.addEnvironment('KMS_KEY_ID', notificationPrefKey.keyId);
+notificationPrefLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'],
+    resources: [notificationPreferenceTable.tableArn],
+  }),
+);
+notificationPrefKey.grantEncryptDecrypt(notificationPrefLambda);
 
 // FK fan-out wiring (sub-B of #16 / #273).
 //
