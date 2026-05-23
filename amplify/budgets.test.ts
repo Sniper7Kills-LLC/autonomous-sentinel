@@ -144,6 +144,24 @@ describe('budget alarms', () => {
     ).toThrow(/soft < loud < hard/);
   });
 
+  it('does NOT pin an explicit BudgetName so the same template can deploy into multiple stacks in one account (#326)', () => {
+    // AWS Budgets names are account-scoped uniques, NOT stack-scoped.
+    // A hardcoded `budgetName` collides when both the local sandbox
+    // and an Amplify Hosting branch deploy the same CDK template into
+    // the same AWS account — Budgets rejects the second create with
+    // "A budget or resource with the same name but a different
+    // internalId already exists." Omitting the property lets CFN
+    // generate a unique name per stack instance.
+    const t = synth();
+    const budgets = t.findResources('AWS::Budgets::Budget');
+    const ids = Object.keys(budgets);
+    expect(ids.length).toBeGreaterThan(0);
+    for (const id of ids) {
+      const props = budgets[id]?.Properties as { Budget?: { BudgetName?: string } } | undefined;
+      expect(props?.Budget?.BudgetName).toBeUndefined();
+    }
+  });
+
   it('uses only AWS-Budgets-valid comparisonOperator enum values on every notification (#320)', () => {
     // The AWS::Budgets::Budget API only accepts `EQUAL_TO`,
     // `GREATER_THAN`, and `LESS_THAN` for `comparisonOperator`. CDK
