@@ -186,7 +186,7 @@ export function buildSegments(silences: SilenceInterval[], totalDurationMs: numb
   let cursor = 0;
   // Drop silence intervals that are entirely outside the
   // duration window or invalid; clamp the rest.
-  const cleaned = silences
+  const sorted = silences
     .filter((s) => Number.isFinite(s.startMs) && Number.isFinite(s.endMs) && s.endMs > s.startMs)
     .map((s) => ({
       startMs: Math.max(0, Math.min(s.startMs, totalDurationMs)),
@@ -194,6 +194,22 @@ export function buildSegments(silences: SilenceInterval[], totalDurationMs: numb
     }))
     .filter((s) => s.endMs > s.startMs)
     .sort((a, b) => a.startMs - b.startMs);
+
+  // Merge overlapping / adjacent silence intervals so the
+  // segment walk below cannot emit two silences in a row.
+  // ffmpeg shouldn't produce overlapping silences in practice,
+  // but a malformed stderr (mid-line truncation, mis-ordered
+  // start/end pairs) could; cheaper to fix once here than to
+  // chase the bug at every consumer.
+  const cleaned: SilenceInterval[] = [];
+  for (const s of sorted) {
+    const last = cleaned[cleaned.length - 1];
+    if (last && s.startMs <= last.endMs) {
+      last.endMs = Math.max(last.endMs, s.endMs);
+    } else {
+      cleaned.push({ ...s });
+    }
+  }
 
   for (const s of cleaned) {
     if (s.startMs > cursor) {

@@ -140,6 +140,39 @@ describe('buildSegments', () => {
     ]);
   });
 
+  it('merges overlapping silence intervals (defensive against malformed ffmpeg stream)', () => {
+    const segs = buildSegments(
+      [
+        { startMs: 2_000, endMs: 5_000 },
+        { startMs: 3_000, endMs: 6_000 }, // overlaps the previous
+        { startMs: 8_000, endMs: 9_000 },
+      ],
+      12_000,
+    );
+    expect(segs).toEqual([
+      { startMs: 0, endMs: 2_000, isSpeech: true },
+      { startMs: 2_000, endMs: 6_000, isSpeech: false }, // merged
+      { startMs: 6_000, endMs: 8_000, isSpeech: true },
+      { startMs: 8_000, endMs: 9_000, isSpeech: false },
+      { startMs: 9_000, endMs: 12_000, isSpeech: true },
+    ]);
+  });
+
+  it('merges adjacent (touching) silence intervals into one', () => {
+    const segs = buildSegments(
+      [
+        { startMs: 2_000, endMs: 4_000 },
+        { startMs: 4_000, endMs: 6_000 }, // touches the previous
+      ],
+      10_000,
+    );
+    expect(segs).toEqual([
+      { startMs: 0, endMs: 2_000, isSpeech: true },
+      { startMs: 2_000, endMs: 6_000, isSpeech: false },
+      { startMs: 6_000, endMs: 10_000, isSpeech: true },
+    ]);
+  });
+
   it('sorts unsorted silence intervals before building', () => {
     const segs = buildSegments(
       [
