@@ -103,11 +103,20 @@ describe('FieldVote model identifier (issue #266)', () => {
     expect(fieldKey?.data?.required).toBe(true);
   });
 
-  it('keeps `field` as the enum column so semantic queries stay typed', () => {
-    const field = model.data.fields.field;
+  it('references the shared `FieldVoteField` enum so the column + castFieldVote argument stay in lockstep (#310)', () => {
+    // Switched from an inline `a.enum([...])` to `a.ref('FieldVoteField')`
+    // to fix the duplicate-enum SchemaValidationError surfaced at synth
+    // (the named enum is already registered on the schema for
+    // castFieldVote's argument). The column must now be a required ref
+    // pointing at that named enum — the runtime field record carries
+    // `type: 'ref'` + `link: 'FieldVoteField'` + `valueRequired: true`.
+    const field = model.data.fields.field as
+      | { data?: { type?: string; link?: string; valueRequired?: boolean } }
+      | undefined;
     expect(field).toBeDefined();
-    expect(field?.type).toBe('enum');
-    expect(field?.values).toEqual(['SENDER', 'RECEIVER', 'BODY', 'TYPE']);
+    expect(field?.data?.type).toBe('ref');
+    expect(field?.data?.link).toBe('FieldVoteField');
+    expect(field?.data?.valueRequired).toBe(true);
   });
 
   it('keeps messageId / voterId as required id columns', () => {

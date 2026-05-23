@@ -23,7 +23,11 @@ export const RevisionVote = a
     // Cognito sub of the voter — `User.id = cognitoSub` (#259).
     voterId: a.id().required(),
     voter: a.belongsTo('User', 'voterId'),
-    value: a.enum(['UP', 'DOWN']),
+    // Ref the named `RevisionVoteValue` enum exported below (#310) —
+    // an inline `a.enum([...])` here used to ship alongside the named
+    // enum and AppSync rejected the resulting schema for declaring
+    // `enum RevisionVoteValue` twice.
+    value: a.ref('RevisionVoteValue').required(),
     weightAtVoteTime: a.float().required(),
   })
   .identifier(['revisionId', 'voterId'])
