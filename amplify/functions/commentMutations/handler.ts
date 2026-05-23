@@ -10,7 +10,7 @@ import {
  *
  * Two dispatch cases:
  *
- *   - `createComment` — server-side depth clamp + flatten. The
+ *   - `submitComment` — server-side depth clamp + flatten. The
  *     client provides `messageId`, `body`, and optionally
  *     `parentCommentId`. The handler:
  *       - Validates the parent exists + is on the same Message
@@ -32,7 +32,7 @@ import {
  * Schema-level grant for the Lambda's IAM role lives in
  * `data/resource.ts` under `allow.resource(commentMutations)`.
  *
- * Orphan-comment risk: `createComment` does not GetItem on Message
+ * Orphan-comment risk: `submitComment` does not GetItem on Message
  * to confirm `messageId` references an existing row. Top-level
  * comments + parent-supplied comments both can land on a fake
  * messageId (parent-supplied path only checks parent-messageId
@@ -144,17 +144,17 @@ async function dispatchCreate(
 ): Promise<CommentRow | null> {
   const authorSub = identitySub(event.identity);
   if (!authorSub) {
-    throw new Error('createComment: caller has no identity sub');
+    throw new Error('submitComment: caller has no identity sub');
   }
   const args = event.arguments;
   const messageId = typeof args.messageId === 'string' ? args.messageId : '';
   const body = typeof args.body === 'string' ? args.body : '';
   const parentArg = typeof args.parentCommentId === 'string' ? args.parentCommentId : null;
   if (!messageId) {
-    throw new Error('createComment: messageId argument is required');
+    throw new Error('submitComment: messageId argument is required');
   }
   if (!body) {
-    throw new Error('createComment: body argument is required');
+    throw new Error('submitComment: body argument is required');
   }
 
   let depth = 0;
@@ -164,11 +164,11 @@ async function dispatchCreate(
     const parentFetch = await deps.client.models.Comment.get({ id: parentCommentId });
     const parent = parentFetch.data;
     if (!parent) {
-      throw new Error(`createComment: parentCommentId ${parentCommentId} not found`);
+      throw new Error(`submitComment: parentCommentId ${parentCommentId} not found`);
     }
     if (parent.messageId !== messageId) {
       throw new Error(
-        `createComment: parent comment belongs to message ${parent.messageId}, not ${messageId}`,
+        `submitComment: parent comment belongs to message ${parent.messageId}, not ${messageId}`,
       );
     }
     // Depth-clamp + flatten. If parent is already at MAX_DEPTH, the
@@ -188,7 +188,7 @@ async function dispatchCreate(
   });
   if (created.errors) {
     throw new Error(
-      `createComment: Comment.create returned errors: ${JSON.stringify(created.errors)}`,
+      `submitComment: Comment.create returned errors: ${JSON.stringify(created.errors)}`,
     );
   }
   return created.data;
@@ -261,7 +261,7 @@ export const handler: AppSyncResolverHandler<Record<string, unknown>, CommentRow
 
   const field = event.info.fieldName;
   switch (field) {
-    case 'createComment':
+    case 'submitComment':
       return dispatchCreate(event, { client, now });
     case 'softDeleteComment':
       return dispatchSoftDelete(event, { client, audit: auditFn, now });

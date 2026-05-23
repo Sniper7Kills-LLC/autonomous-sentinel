@@ -143,6 +143,65 @@ describe('schema.transform() — no duplicate enum declarations (issue #310)', (
   });
 });
 
+describe('schema.transform() — custom mutation / query names never collide with auto-generated CRUD (issue #314)', () => {
+  // Amplify Gen 2 auto-generates a fixed set of fields on every
+  // `@model` row, regardless of whether the model's authz block
+  // grants the corresponding op. Dropping `create` (etc.) from a
+  // model's authz only gates *access* — it does NOT prevent the
+  // field from being emitted onto `type Mutation` / `type Query`.
+  //
+  // Auto-generated surface (per model):
+  //   - Mutation: create<Model>, update<Model>, delete<Model>
+  //   - Query:    get<Model>, list<Model>
+  //
+  // The fix is to give every custom mutation / query a distinct
+  // verb (e.g. `submitComment`, `castFieldVote`, `getMyNotification
+  // Preference`). This test enforces that convention across every
+  // model + custom operation pair so a future drift back to e.g.
+  // `createComment` / `getNotificationPreference` is a CI-visible
+  // diff rather than a `SchemaValidationError` surfaced only at
+  // `ampx sandbox` synth time.
+  function modelNamesFromSdl(sdl: string): string[] {
+    return [...sdl.matchAll(/^type\s+(\w+)\s+@model\b/gm)]
+      .map((m) => m[1])
+      .filter((n): n is string => n !== undefined);
+  }
+
+  function fieldNamesIn(sdl: string, typeName: 'Mutation' | 'Query'): string[] {
+    // `type Mutation { ... }` / `type Query { ... }` block — pull
+    // the field-name prefix from each `<name>(...)` declaration.
+    const block =
+      sdl.match(new RegExp(`^type\\s+${typeName}\\s*\\{([\\s\\S]*?)^\\}`, 'm'))?.[1] ?? '';
+    return [...block.matchAll(/^\s*(\w+)\s*\(/gm)]
+      .map((m) => m[1])
+      .filter((n): n is string => n !== undefined);
+  }
+
+  it('no custom mutation field name matches create<Model> / update<Model> / delete<Model>', () => {
+    const sdl = schema.transform().schema;
+    const modelNames = modelNamesFromSdl(sdl);
+    expect(modelNames.length).toBeGreaterThan(0);
+
+    const mutationNames = fieldNamesIn(sdl, 'Mutation');
+    const banned = new Set(
+      modelNames.flatMap((m) => [`create${m}`, `update${m}`, `delete${m}`]),
+    );
+    const collisions = mutationNames.filter((n) => banned.has(n));
+    expect(collisions).toEqual([]);
+  });
+
+  it('no custom query field name matches get<Model> / list<Model>', () => {
+    const sdl = schema.transform().schema;
+    const modelNames = modelNamesFromSdl(sdl);
+    expect(modelNames.length).toBeGreaterThan(0);
+
+    const queryNames = fieldNamesIn(sdl, 'Query');
+    const banned = new Set(modelNames.flatMap((m) => [`get${m}`, `list${m}`]));
+    const collisions = queryNames.filter((n) => banned.has(n));
+    expect(collisions).toEqual([]);
+  });
+});
+
 describe('Soft-delete actor FKs are sub-as-id, not relationships (issue #260)', () => {
   it('Recording.deletedBy is a plain id field (Cognito sub string)', () => {
     const field = getField(Recording, 'deletedBy') as ScalarFieldShape;

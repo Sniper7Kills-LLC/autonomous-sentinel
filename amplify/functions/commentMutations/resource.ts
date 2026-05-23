@@ -3,7 +3,7 @@ import { defineFunction } from '@aws-amplify/backend';
 /**
  * Lambda-backed AppSync resolver for Comment custom mutations (#32).
  *
- * Dispatches `createComment` (depth-clamp + flatten) and
+ * Dispatches `submitComment` (depth-clamp + flatten) and
  * `softDeleteComment` (author / mod / admin → sets deletedAt +
  * rewrites body to `[removed]` + emits COMMENT_DELETE audit).
  *

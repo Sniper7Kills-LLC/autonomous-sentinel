@@ -19,7 +19,7 @@ import { getDdbClient } from '../legacyClaimWorker/fan-out-production';
  *     `identity.sub`. Returns the post-write view with the plaintext
  *     URL surfaced back to the owner.
  *
- *   - `getNotificationPreference` (query): returns the row for the
+ *   - `getMyNotificationPreference` (query): returns the row for the
  *     caller's own sub. Admin callers may pass a `userId` argument to
  *     read another user's row. First read by the owner against a
  *     missing row lazy-creates a default row (so subsequent UI calls
@@ -401,14 +401,14 @@ async function dispatchGet(
 ): Promise<NotificationPreferenceView | null> {
   const callerSub = identitySub(event.identity);
   if (!callerSub) {
-    throw new Error('getNotificationPreference: caller has no identity (not signed in)');
+    throw new Error('getMyNotificationPreference: caller has no identity (not signed in)');
   }
   const callerIsAdmin = isAdmin(event.identity);
   const requested = event.arguments.userId;
   const target = typeof requested === 'string' && requested.length > 0 ? requested : callerSub;
 
   if (target !== callerSub && !callerIsAdmin) {
-    throw new Error('getNotificationPreference: cross-user read requires admin group');
+    throw new Error('getMyNotificationPreference: cross-user read requires admin group');
   }
 
   let row = await deps.getRow(target);
@@ -444,7 +444,7 @@ export const handler: AppSyncResolverHandler<
         >[0],
         deps,
       );
-    case 'getNotificationPreference':
+    case 'getMyNotificationPreference':
       return dispatchGet(
         event as Parameters<
           AppSyncResolverHandler<GetNotificationPreferenceArgs, NotificationPreferenceView | null>

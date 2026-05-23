@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Comment, createComment, softDeleteComment } from './comment';
+import { Comment, submitComment, softDeleteComment } from './comment';
 
 /**
  * Schema-shape tests for the Comment custom mutations (#32).
@@ -50,11 +50,11 @@ function symbolData<T>(obj: object): T {
 }
 
 const commentModel = Comment as unknown as ModelRuntime;
-const createOp = createComment as unknown as OperationRuntime;
+const submitOp = submitComment as unknown as OperationRuntime;
 const softDeleteOp = softDeleteComment as unknown as OperationRuntime;
 
 describe('Comment model authz (#32)', () => {
-  it("does NOT grant 'create' on the model — createComment is the sole write path", () => {
+  it("does NOT grant 'create' on the model — submitComment is the sole write path", () => {
     const auth = commentModel.data.authorization;
     const authedRule = auth
       .map((a) => symbolData<AuthData>(a as object))
@@ -64,13 +64,13 @@ describe('Comment model authz (#32)', () => {
   });
 });
 
-describe('createComment mutation (#32)', () => {
+describe('submitComment mutation (#32)', () => {
   it('is a GraphQL mutation', () => {
-    expect(createOp.data.typeName).toBe('Mutation');
+    expect(submitOp.data.typeName).toBe('Mutation');
   });
 
   it('takes messageId + body required; parentCommentId optional', () => {
-    const args = createOp.data.arguments;
+    const args = submitOp.data.arguments;
     expect(args.messageId?.data?.fieldType).toBe('ID');
     expect(args.messageId?.data?.required).toBe(true);
     expect(args.body?.data?.fieldType).toBe('String');
@@ -80,19 +80,19 @@ describe('createComment mutation (#32)', () => {
   });
 
   it('returns the created Comment row', () => {
-    const ret = createOp.data.returnType;
+    const ret = submitOp.data.returnType;
     const linkName = ret.data?.link ?? ret.data?.type;
     expect(linkName).toBe('Comment');
   });
 
   it('is authenticated-only', () => {
-    const auth = createOp.data.authorization;
+    const auth = submitOp.data.authorization;
     const strategies = auth.map((a) => symbolData<AuthData>(a as object).strategy);
     expect(strategies).toContain('private');
   });
 
   it('wires the commentMutations Lambda as the handler', () => {
-    const handlers = createOp.data.handlers;
+    const handlers = submitOp.data.handlers;
     expect(handlers).toHaveLength(1);
     const cfg = symbolData<CustomHandlerData>(handlers[0] as object);
     expect(cfg.handler).toBeDefined();
