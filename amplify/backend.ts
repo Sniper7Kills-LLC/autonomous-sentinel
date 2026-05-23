@@ -497,3 +497,34 @@ backend.addOutput({
 (
   backend.linguistic.resources.lambda.node.defaultChild as CfnFunction
 ).reservedConcurrentExecutions = getConcurrencyCap('LINGUISTIC');
+
+// Pre-process Lambda → `recordings/web/*` write grant (#46).
+//
+// The pre-process Lambda transcodes the original upload into the
+// canonical Opus 32 kbps mono playback file. CLAUDE.md → Storage:
+// "every recording has two persistent files: the untouched original
+// + a single web-canonical derivative". The derivative lives at
+// `recordings/web/{recordingId}.opus`; the pre-process Lambda is
+// the only writer.
+//
+// Read access for `recordings/web/*` is wired via `defineStorage`'s
+// access map (guest + authenticated read so CloudFront can sign
+// URLs). Write happens here so the IAM policy stays narrow — only
+// the pre-process execution role can publish into this prefix.
+const mediaBucket = backend.storage.resources.bucket;
+const preprocessLambda = backend.preprocess.resources.lambda as LambdaFunction;
+preprocessLambda.addEnvironment('MEDIA_BUCKET_NAME', mediaBucket.bucketName);
+preprocessLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['s3:PutObject', 's3:DeleteObject', 's3:AbortMultipartUpload'],
+    resources: [`${mediaBucket.bucketArn}/recordings/web/*`],
+  }),
+);
+// Read on `recordings/originals/*` so the Lambda can pull the source
+// upload before transcoding. Same execution-role grant pattern.
+preprocessLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['s3:GetObject'],
+    resources: [`${mediaBucket.bucketArn}/recordings/originals/*`],
+  }),
+);
