@@ -210,6 +210,22 @@ export function stitchTranscripts(chunks: ChunkTranscript[]): StitchedTranscript
   const parts: string[] = [];
   const allWords: WordTimestamp[] = [];
   for (const chunk of chunks) {
+    // Defensive: a chunk row could land here with a missing or
+    // malformed `boundary` (e.g. partial DDB read, schema-drift
+    // during a migration). Skip + log rather than crash so one
+    // bad chunk doesn't blow the stitcher up — the deferred
+    // finalizer reconciles the chunk counter separately.
+    if (
+      !chunk ||
+      !chunk.boundary ||
+      typeof chunk.boundary.startMs !== 'number' ||
+      !Number.isFinite(chunk.boundary.startMs)
+    ) {
+      console.warn('stitchTranscripts: skipping chunk with malformed boundary', {
+        chunk,
+      });
+      continue;
+    }
     const trimmed = typeof chunk.text === 'string' ? chunk.text.trim() : '';
     if (trimmed.length > 0) parts.push(trimmed);
     if (Array.isArray(chunk.words)) {

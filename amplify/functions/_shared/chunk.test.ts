@@ -212,4 +212,30 @@ describe('stitchTranscripts', () => {
   it('returns an empty result on empty / non-array input', () => {
     expect(stitchTranscripts([])).toEqual({ text: '', words: [] });
   });
+
+  it('skips chunks with a missing / malformed boundary instead of throwing', async () => {
+    const { vi } = await import('vitest');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const out = stitchTranscripts([
+      {
+        boundary: { startMs: 0, endMs: 5_000, index: 0 },
+        text: 'A',
+        words: [chunkWord('A', 0, 100)],
+      },
+      // Malformed — `boundary` missing.
+      {
+        text: 'B',
+        words: [chunkWord('B', 0, 100)],
+      } as unknown as Parameters<typeof stitchTranscripts>[0][number],
+      {
+        boundary: { startMs: 10_000, endMs: 15_000, index: 2 },
+        text: 'C',
+        words: [chunkWord('C', 0, 100)],
+      },
+    ]);
+    expect(out.text).toBe('A C');
+    expect(out.words.map((w) => w.word)).toEqual(['A', 'C']);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
 });
