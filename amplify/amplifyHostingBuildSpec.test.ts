@@ -78,11 +78,23 @@ describe('amplify.yml — backend phase (Amplify Gen 2 deploy)', () => {
   it('installs workspace deps from the monorepo root before deploy', () => {
     // The `amplify/` workspace lives one level above `appRoot: web`, so
     // a bare `npm ci` inside `web/` would not install its deps.
-    // Either `--prefix ../` or `cd ..` must appear in the install step.
-    const hasRootInstall = commands.some(
+    // Either `--prefix ../` or `cd ..` must appear in the install step,
+    // AND that install step must run before the deploy — otherwise
+    // `ampx pipeline-deploy` runs without the `amplify/` workspace
+    // installed and the deploy fails partway. Pin both the presence
+    // and the ordering so an accidental reorder is a CI-visible diff.
+    const installIdx = commands.findIndex(
       (c) => c.includes('npm ci') && (c.includes('--prefix ../') || c.includes('cd ..')),
     );
-    expect(hasRootInstall).toBe(true);
+    const deployIdx = commands.findIndex(
+      (c) =>
+        c.includes('ampx pipeline-deploy') &&
+        c.includes('$AWS_BRANCH') &&
+        c.includes('$AWS_APP_ID'),
+    );
+    expect(installIdx).toBeGreaterThanOrEqual(0);
+    expect(deployIdx).toBeGreaterThanOrEqual(0);
+    expect(installIdx).toBeLessThan(deployIdx);
   });
 });
 
