@@ -67,7 +67,7 @@ export const PARSED_EAM_SCHEMA = {
   properties: {
     sender: { type: 'string', description: 'Originating callsign (e.g. SKYKING)' },
     receiver: { type: 'string', description: 'Destination callsign or "ALL STATIONS"' },
-    messageType: {
+    type: {
       type: 'string',
       enum: [
         'BACKEND',
@@ -95,13 +95,13 @@ export const PARSED_EAM_SCHEMA = {
         'Model-reported confidence 0-1. 0.8+ auto-publishes; below flags for community review per CLAUDE.md.',
     },
   },
-  required: ['messageType', 'confidence'],
+  required: ['type', 'confidence'],
 } as const;
 
 export interface ParsedEam {
   sender?: string;
   receiver?: string;
-  messageType: string;
+  type: string;
   body?: string;
   characterCount?: number;
   codewordCount?: number;
@@ -170,14 +170,14 @@ function resolveOpts(opts: FallbackOpts): {
 }
 
 interface RequiredEam {
-  messageType: string;
+  type: string;
   confidence: number;
 }
 
 function isParsedEam(value: unknown): value is RequiredEam {
   if (!value || typeof value !== 'object') return false;
   const v = value as Record<string, unknown>;
-  if (typeof v.messageType !== 'string') return false;
+  if (typeof v.type !== 'string') return false;
   if (typeof v.confidence !== 'number') return false;
   if (v.confidence < 0 || v.confidence > 1) return false;
   return true;
@@ -185,7 +185,7 @@ function isParsedEam(value: unknown): value is RequiredEam {
 
 function extractToolUse(output: ConverseCommandOutput): unknown {
   const content = output.output?.message?.content;
-  if (!content) return null;
+  if (!Array.isArray(content)) return null;
   for (const block of content) {
     if ('toolUse' in block && block.toolUse && block.toolUse.name === PARSED_EAM_TOOL_NAME) {
       return block.toolUse.input ?? null;
@@ -255,7 +255,7 @@ export async function tryBedrockFallback(
           {
             text:
               'The previous response did not call the `parsed_eam` tool with a valid ' +
-              'JSON object matching the schema. Required fields: `messageType` (string ' +
+              'JSON object matching the schema. Required fields: `type` (string ' +
               'from the enum) and `confidence` (number 0-1). Call the tool now.',
           },
         ],

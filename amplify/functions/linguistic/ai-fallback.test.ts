@@ -92,7 +92,7 @@ describe('tryBedrockFallback — happy path', () => {
   it('returns the tool_use payload + default modelId + promptVersion on a valid first response', async () => {
     const { client, calls } = makeStubClient([
       toolUseResponse({
-        messageType: 'SKYKING',
+        type: 'SKYKING',
         confidence: 0.92,
         sender: 'SKYKING',
         receiver: 'ALL STATIONS',
@@ -104,7 +104,7 @@ describe('tryBedrockFallback — happy path', () => {
     expect(result?.modelId).toBe(DEFAULT_FALLBACK_MODEL_ID);
     expect(result?.promptVersion).toBe(1);
     expect(result?.retried).toBe(false);
-    expect(result?.message.messageType).toBe('SKYKING');
+    expect(result?.message.type).toBe('SKYKING');
     expect(result?.message.confidence).toBeCloseTo(0.92);
     expect(calls).toHaveLength(1);
   });
@@ -120,9 +120,7 @@ describe('tryBedrockFallback — happy path', () => {
 describe('tryBedrockFallback — env overrides', () => {
   it('honours LINGUISTIC_FALLBACK_MODEL_ID env var', async () => {
     process.env.LINGUISTIC_FALLBACK_MODEL_ID = 'amazon.nova-lite-v1:0';
-    const { client, calls } = makeStubClient([
-      toolUseResponse({ messageType: 'OTHER', confidence: 0.5 }),
-    ]);
+    const { client, calls } = makeStubClient([toolUseResponse({ type: 'OTHER', confidence: 0.5 })]);
     const result = await tryBedrockFallback('test', { client });
     expect(result?.modelId).toBe('amazon.nova-lite-v1:0');
     expect(calls[0]?.input.modelId).toBe('amazon.nova-lite-v1:0');
@@ -130,22 +128,20 @@ describe('tryBedrockFallback — env overrides', () => {
 
   it('honours LINGUISTIC_FALLBACK_PROMPT_VERSION env var', async () => {
     process.env.LINGUISTIC_FALLBACK_PROMPT_VERSION = '7';
-    const { client } = makeStubClient([toolUseResponse({ messageType: 'OTHER', confidence: 0.5 })]);
+    const { client } = makeStubClient([toolUseResponse({ type: 'OTHER', confidence: 0.5 })]);
     const result = await tryBedrockFallback('test', { client });
     expect(result?.promptVersion).toBe(7);
   });
 
   it('throws if a custom prompt template lacks the {{TRANSCRIPT}} placeholder', async () => {
-    const { client } = makeStubClient([toolUseResponse({ messageType: 'OTHER', confidence: 0.5 })]);
+    const { client } = makeStubClient([toolUseResponse({ type: 'OTHER', confidence: 0.5 })]);
     await expect(
       tryBedrockFallback('test', { client, promptTemplate: 'no placeholder here' }),
     ).rejects.toThrow(/\{\{TRANSCRIPT\}\}/);
   });
 
   it('uses the default prompt template when no override is provided', async () => {
-    const { client, calls } = makeStubClient([
-      toolUseResponse({ messageType: 'OTHER', confidence: 0.5 }),
-    ]);
+    const { client, calls } = makeStubClient([toolUseResponse({ type: 'OTHER', confidence: 0.5 })]);
     await tryBedrockFallback('transcript-body-here', { client });
     const messages = calls[0]?.input.messages;
     const userText = messages?.[0]?.content?.[0];
@@ -159,7 +155,7 @@ describe('tryBedrockFallback — schema-invalid retry', () => {
   it('retries once when the first response is text-only (no tool_use)', async () => {
     const { client, calls } = makeStubClient([
       textOnlyResponse('Sorry I cannot help with that'),
-      toolUseResponse({ messageType: 'OTHER', confidence: 0.6 }),
+      toolUseResponse({ type: 'OTHER', confidence: 0.6 }),
     ]);
     const result = await tryBedrockFallback('test', { client });
     expect(result).not.toBeNull();
@@ -170,8 +166,8 @@ describe('tryBedrockFallback — schema-invalid retry', () => {
   it('retries once when the first response has a malformed tool_use payload', async () => {
     const { client, calls } = makeStubClient([
       // confidence > 1 → fails schema validation
-      toolUseResponse({ messageType: 'OTHER', confidence: 1.5 }),
-      toolUseResponse({ messageType: 'OTHER', confidence: 0.7 }),
+      toolUseResponse({ type: 'OTHER', confidence: 1.5 }),
+      toolUseResponse({ type: 'OTHER', confidence: 0.7 }),
     ]);
     const result = await tryBedrockFallback('test', { client });
     expect(result?.retried).toBe(true);
@@ -218,9 +214,9 @@ describe('tryBedrockFallback — Bedrock errors', () => {
 });
 
 describe('tryBedrockFallback — schema definition', () => {
-  it('pins required fields + messageType enum', () => {
-    expect(PARSED_EAM_SCHEMA.required).toEqual(['messageType', 'confidence']);
-    expect(PARSED_EAM_SCHEMA.properties.messageType.enum).toEqual([
+  it('pins required fields + type enum', () => {
+    expect(PARSED_EAM_SCHEMA.required).toEqual(['type', 'confidence']);
+    expect(PARSED_EAM_SCHEMA.properties.type.enum).toEqual([
       'BACKEND',
       'SKYKING',
       'ALLSTATIONS',
