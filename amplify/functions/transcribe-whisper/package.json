@@ -1,0 +1,10 @@
+{
+  "name": "@autonomous-sentinel/transcribe-whisper",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Whisper container Lambda — in-image handler deps (#53).",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1048.0"
+  }
+}

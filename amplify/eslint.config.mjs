@@ -18,4 +18,17 @@ export default [
       'no-console': 'off',
     },
   },
+  {
+    // Container Lambda handlers ship as `.mjs` (no TS build step
+    // inside the image — same file lives in the container as on
+    // disk). Same Node-env globals; typed lint not applied since
+    // `.mjs` isn't in the TS project.
+    files: ['**/*.mjs'],
+    languageOptions: {
+      globals: { ...globals.node },
+    },
+    rules: {
+      'no-console': 'off',
+    },
+  },
 ];
