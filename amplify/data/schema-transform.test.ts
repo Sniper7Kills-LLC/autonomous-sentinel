@@ -126,7 +126,12 @@ describe('schema.transform() — no duplicate enum declarations (issue #310)', (
   // that drifts back into the same shape.
   it('every enum type is declared exactly once', () => {
     const sdl = schema.transform().schema;
-    const enumNames = [...sdl.matchAll(/enum (\w+) \{/g)].map((m) => m[1]);
+    // Anchor on start-of-line + tolerate flexible whitespace before
+    // the brace so a future SDL formatter change does not silently
+    // false-negative this guard. GraphQL SDL has no quoted enum
+    // literals so this can't false-match a comment / string body
+    // (Amplify Gen 2 strips comments before emitting the model SDL).
+    const enumNames = [...sdl.matchAll(/^enum\s+(\w+)\s*\{/gm)].map((m) => m[1]);
     const counts = new Map<string, number>();
     for (const name of enumNames) {
       counts.set(name, (counts.get(name) ?? 0) + 1);

@@ -58,6 +58,30 @@ describe('RevisionVote model authz (#35)', () => {
   });
 });
 
+describe('RevisionVote.value column shape (#310)', () => {
+  it('references the shared `RevisionVoteValue` enum so the column + castRevisionVote argument stay in lockstep', () => {
+    // Switched from an inline `a.enum(['UP', 'DOWN'])` to
+    // `a.ref('RevisionVoteValue').required()` to fix the duplicate-enum
+    // SchemaValidationError surfaced at synth (the named enum is already
+    // registered on the schema for castRevisionVote's argument). The
+    // column must now be a required ref pointing at that named enum.
+    const value = (
+      RevisionVote as unknown as {
+        data: {
+          fields: Record<
+            string,
+            { data?: { type?: string; link?: string; valueRequired?: boolean } } | undefined
+          >;
+        };
+      }
+    ).data.fields.value;
+    expect(value).toBeDefined();
+    expect(value?.data?.type).toBe('ref');
+    expect(value?.data?.link).toBe('RevisionVoteValue');
+    expect(value?.data?.valueRequired).toBe(true);
+  });
+});
+
 describe('castRevisionVote mutation (#35)', () => {
   it('is a GraphQL mutation', () => {
     expect(castOp.data.typeName).toBe('Mutation');
