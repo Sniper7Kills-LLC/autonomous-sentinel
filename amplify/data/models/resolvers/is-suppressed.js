@@ -14,6 +14,8 @@
  * in `./is-suppressed.test.ts`.
  */
 
+import { util } from '@aws-appsync/utils';
+
 /**
  * @typedef {Object} IsSuppressedArgs
  * @property {string} email
@@ -29,7 +31,7 @@
 export function request(ctx) {
   const { email } = ctx.arguments;
   if (!email || email.trim() === '') {
-    throw new Error('isSuppressed: email argument is required');
+    util.error('isSuppressed: email argument is required');
   }
   return {
     operation: 'GetItem',

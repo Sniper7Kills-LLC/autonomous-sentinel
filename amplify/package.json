@@ -11,7 +11,8 @@
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "validate-resolvers": "tsx scripts/validate-resolvers.ts"
   },
   "dependencies": {
     "@aws-amplify/backend": "^1.4.0",
@@ -30,6 +31,8 @@
     "jose": "^5.10.0"
   },
   "devDependencies": {
+    "@aws-appsync/utils": "^2.1.1",
+    "@aws-sdk/client-appsync": "^3.1053.0",
     "@types/node": "^22.0.0",
     "aws-sdk-client-mock": "^4.1.0",
     "esbuild": "^0.24.0",

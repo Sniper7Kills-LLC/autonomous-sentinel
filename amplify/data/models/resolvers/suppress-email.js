@@ -21,6 +21,8 @@
  * #249.
  */
 
+import { util } from '@aws-appsync/utils';
+
 /**
  * @typedef {'HARD_BOUNCE' | 'SOFT_BOUNCE_REPEATED' | 'COMPLAINT' | 'MANUAL'} SuppressionReason
  *
@@ -45,10 +47,13 @@ export function request(ctx) {
   // over SNS) should never send a blank, and a silent no-op would let
   // bounces accumulate uncounted.
   if (!email || email.trim() === '') {
-    throw new Error('suppressEmail: email argument is required');
+    util.error('suppressEmail: email argument is required');
   }
 
-  const now = new Date().toISOString();
+  // `util.time.nowISO8601()` instead of `new Date().toISOString()` —
+  // APPSYNC_JS rejects NewExpression. Built-in `util` is the
+  // runtime's time/encoding helper module.
+  const now = util.time.nowISO8601();
   /** @type {Record<string, string>} */
   const expressionNames = {
     '#reason': 'reason',
