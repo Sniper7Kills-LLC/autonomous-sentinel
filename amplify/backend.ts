@@ -1,14 +1,16 @@
 import { defineBackend } from '@aws-amplify/backend';
-import { Fn } from 'aws-cdk-lib';
+import { Duration, Fn } from 'aws-cdk-lib';
 import {
   type Function as LambdaFunction,
   FunctionUrlAuthType,
   InvokeMode,
 } from 'aws-cdk-lib/aws-lambda';
+import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { Rule, Schedule } from 'aws-cdk-lib/aws-events';
 import { LambdaFunction as LambdaTarget } from 'aws-cdk-lib/aws-events-targets';
 import { Key } from 'aws-cdk-lib/aws-kms';
+import { Queue } from 'aws-cdk-lib/aws-sqs';
 import { auth, discordIssuerUrl } from './auth/resource';
 import { data } from './data/resource';
 import { storage } from './storage/resource';
@@ -77,13 +79,48 @@ if (!userTable) {
 const legacyClaimWorkerLambda = backend.legacyClaimWorker.resources.lambda as LambdaFunction;
 const postConfirmationLambda = backend.postConfirmation.resources.lambda as LambdaFunction;
 
-postConfirmationLambda.addEnvironment(
-  'LEGACY_CLAIM_WORKER_FUNCTION_NAME',
-  legacyClaimWorkerLambda.functionName,
-);
 legacyClaimWorkerLambda.addEnvironment('USER_TABLE_NAME', userTable.tableName);
 
-legacyClaimWorkerLambda.grantInvoke(postConfirmationLambda);
+// Legacy-claim handoff via SQS (#318). The previous direct
+// `lambda.grantInvoke` + `LEGACY_CLAIM_WORKER_FUNCTION_NAME` env-var
+// from postConfirmation (now in the `auth` stack) into
+// legacyClaimWorker (now in the `data` stack) created the residual
+// auth ↔ data CDK cross-stack edge that closed the nested-stack
+// circular dependency triangle observed at #317. Routing the
+// handoff through a queue in its own neutral sub-stack means
+//   - auth → LegacyClaimQueueStack (SendMessage env + IAM)
+//   - data → LegacyClaimQueueStack (SqsEventSource subscription)
+// Both edges flow into the queue stack; the queue stack has no
+// outgoing edges. No cycle.
+//
+// Visibility timeout = 6× the worker's 30 s execution timeout (180 s)
+// per AWS best practice. The (maxReceiveCount + 1) × timeout
+// fallback also lands above 150 s, so 180 s comfortably covers the
+// worst case: a slow run plus retry attempt without delivering the
+// same message to a parallel invocation. The worker's own
+// idempotency (claim-status conditional check + zero-row fan-out
+// when the FK is already rewritten) catches the rare overlap that
+// slips through anyway. DLQ caps redrive at 5 attempts; failed
+// messages land on `LegacyClaimDeadLetterQueue` for inspection.
+const legacyClaimQueueStack = backend.createStack('LegacyClaimQueueStack');
+const legacyClaimDlq = new Queue(legacyClaimQueueStack, 'LegacyClaimDeadLetterQueue', {
+  retentionPeriod: Duration.days(14),
+});
+const legacyClaimQueue = new Queue(legacyClaimQueueStack, 'LegacyClaimQueue', {
+  visibilityTimeout: Duration.seconds(180),
+  retentionPeriod: Duration.days(4),
+  deadLetterQueue: { queue: legacyClaimDlq, maxReceiveCount: 5 },
+});
+postConfirmationLambda.addEnvironment('LEGACY_CLAIM_QUEUE_URL', legacyClaimQueue.queueUrl);
+legacyClaimQueue.grantSendMessages(postConfirmationLambda);
+// `batchSize: 1` matches the worker's per-record DDB transact +
+// fan-out shape (no batch SDK optimisation today). Omit
+// `reportBatchItemFailures` — that flag only has effect for
+// `batchSize >= 2` where it lets the handler NACK individual
+// records via a return value; with `batchSize: 1` an unhandled
+// throw already fails the single-record batch and SQS redrives it.
+legacyClaimWorkerLambda.addEventSource(new SqsEventSource(legacyClaimQueue, { batchSize: 1 }));
+
 legacyClaimWorkerLambda.addToRolePolicy(
   new PolicyStatement({
     actions: ['dynamodb:TransactWriteItems', 'dynamodb:PutItem', 'dynamodb:DeleteItem'],

@@ -2,13 +2,13 @@ import {
   CognitoIdentityProviderClient,
   AdminAddUserToGroupCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
-import { LambdaClient, InvokeCommand, InvocationType } from '@aws-sdk/client-lambda';
+import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import type { PostConfirmationTriggerHandler } from 'aws-lambda';
 
 const DEFAULT_GROUP = 'member';
 
 const client = new CognitoIdentityProviderClient({});
-const lambdaClient = new LambdaClient({});
+const sqsClient = new SQSClient({});
 
 /**
  * Structural shape of the Amplify Data client surface this handler uses.
@@ -76,17 +76,21 @@ export function __resetDataDeps(): void {
 let cachedClient: PostConfirmDataClient | undefined;
 
 /**
- * Async-invoke the legacyClaimWorker Lambda. `InvocationType: 'Event'`
- * fires and forgets — the SDK call resolves once Lambda enqueues the
- * invocation, typically <50 ms, so the user's sign-up is not blocked
- * on the worker's DDB transact + audit write. The worker handles
- * retries + DLQ on its own end.
+ * Publish a legacy-claim job to SQS for the `legacyClaimWorker`
+ * Lambda to consume (#318). Previously a direct Lambda async-invoke
+ * (`InvocationType: 'Event'`) — the queue handoff replaces the
+ * direct CDK `grantInvoke` + function-name env var that created the
+ * auth → data nested-stack edge of the #317 circular dependency.
  *
- * The target Lambda's function name comes from
- * `process.env.LEGACY_CLAIM_WORKER_FUNCTION_NAME`, wired in
- * `amplify/backend.ts`.
+ * SQS `SendMessage` resolves once the queue accepts the message
+ * (typically < 50 ms), so the user's sign-up is not blocked on the
+ * worker's DDB transact + audit write. The worker reads from the
+ * queue via an event-source mapping; SQS handles retries + DLQ.
  *
- * Test-only `__setLegacyClaimDispatcher` swaps the invoker so unit
+ * The queue URL comes from `process.env.LEGACY_CLAIM_QUEUE_URL`,
+ * wired in `amplify/backend.ts`.
+ *
+ * Test-only `__setLegacyClaimDispatcher` swaps the publisher so unit
  * tests can assert dispatch shape without the SDK.
  */
 export interface LegacyClaimDispatchPayload {
@@ -102,17 +106,16 @@ export function __setLegacyClaimDispatcher(fn: LegacyClaimDispatcher | undefined
 }
 
 async function defaultLegacyClaimDispatcher(payload: LegacyClaimDispatchPayload): Promise<void> {
-  const functionName = process.env.LEGACY_CLAIM_WORKER_FUNCTION_NAME;
-  if (!functionName) {
+  const queueUrl = process.env.LEGACY_CLAIM_QUEUE_URL;
+  if (!queueUrl) {
     throw new Error(
-      'postConfirmation: LEGACY_CLAIM_WORKER_FUNCTION_NAME env var is required to dispatch legacy claim',
+      'postConfirmation: LEGACY_CLAIM_QUEUE_URL env var is required to dispatch legacy claim',
     );
   }
-  await lambdaClient.send(
-    new InvokeCommand({
-      FunctionName: functionName,
-      InvocationType: InvocationType.Event,
-      Payload: Buffer.from(JSON.stringify(payload)),
+  await sqsClient.send(
+    new SendMessageCommand({
+      QueueUrl: queueUrl,
+      MessageBody: JSON.stringify(payload),
     }),
   );
 }
