@@ -35,6 +35,7 @@ import {
 import { notificationPreferenceMutations } from '../functions/notificationPreferenceMutations/resource';
 import { BannedRegionPage } from './models/banned-region-page';
 import { LinguisticConfig } from './models/linguistic-config';
+import { LinguisticRule } from './models/linguistic-rule';
 import {
   EmailSuppression,
   SuppressionReason,
@@ -79,6 +80,7 @@ export const schema = a
     // Reference data
     Callsign,
     LinguisticConfig,
+    LinguisticRule,
     BannedRegionPage,
 
     // Money + accounts

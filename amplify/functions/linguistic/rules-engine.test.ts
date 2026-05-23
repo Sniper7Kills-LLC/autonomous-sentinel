@@ -1,0 +1,231 @@
+import { describe, it, expect, vi } from 'vitest';
+import { LinguisticRulesEngine, type LinguisticRule, type RuleLoader } from './rules-engine';
+
+/**
+ * Behaviour tests for the Linguistic Logic rules engine (#62).
+ *
+ * Drives the engine via an injected loader so DDB is never touched.
+ * The cache TTL + version-bump invalidation + bad-regex isolation
+ * + priority ordering + capture-group mapping are each pinned by a
+ * dedicated test so a regression on any one of them is a CI-visible
+ * diff.
+ */
+
+function makeRule(overrides: Partial<LinguisticRule>): LinguisticRule {
+  return {
+    id: 'rule-default',
+    pattern: '.*',
+    messageType: 'OTHER',
+    captureMap: {},
+    priority: 10,
+    enabled: true,
+    promptVersion: 1,
+    ...overrides,
+  };
+}
+
+function stubLoader(rules: LinguisticRule[]): RuleLoader {
+  return () => Promise.resolve(rules);
+}
+
+describe('LinguisticRulesEngine — basic matching', () => {
+  it('returns null when no rule matches', async () => {
+    const engine = new LinguisticRulesEngine(
+      stubLoader([makeRule({ id: 'sk', pattern: 'SKYKING SKYKING' })]),
+    );
+    expect(await engine.tryMatch('hello world')).toBeNull();
+  });
+
+  it('returns null on empty / non-string transcript without invoking rules', async () => {
+    const loader = vi.fn<RuleLoader>(() => Promise.resolve([]));
+    const engine = new LinguisticRulesEngine(loader);
+    expect(await engine.tryMatch('')).toBeNull();
+    expect(loader).not.toHaveBeenCalled();
+  });
+
+  it('matches the first rule whose pattern fires', async () => {
+    const engine = new LinguisticRulesEngine(
+      stubLoader([
+        makeRule({
+          id: 'skyking-1',
+          pattern: 'SKYKING SKYKING (?<body>[A-Z0-9 ]+)',
+          messageType: 'SKYKING',
+          captureMap: { body: 'body' },
+        }),
+      ]),
+    );
+    const result = await engine.tryMatch('SKYKING SKYKING DELTA OSCAR 12345');
+    expect(result).not.toBeNull();
+    expect(result?.ruleId).toBe('skyking-1');
+    expect(result?.promptVersion).toBe(1);
+    expect(result?.message.messageType).toBe('SKYKING');
+    expect(result?.message.fields.body).toBe('DELTA OSCAR 12345');
+  });
+});
+
+describe('LinguisticRulesEngine — priority + tie-break', () => {
+  it('runs higher-priority rules before lower-priority rules', async () => {
+    const engine = new LinguisticRulesEngine(
+      stubLoader([
+        makeRule({
+          id: 'low',
+          pattern: 'SKYKING.*',
+          messageType: 'OTHER',
+          priority: 5,
+        }),
+        makeRule({
+          id: 'high',
+          pattern: 'SKYKING.*',
+          messageType: 'SKYKING',
+          priority: 50,
+        }),
+      ]),
+    );
+    const result = await engine.tryMatch('SKYKING SKYKING abc');
+    expect(result?.ruleId).toBe('high');
+    expect(result?.message.messageType).toBe('SKYKING');
+  });
+
+  it('ties on priority resolve by id lex order so iteration is deterministic', async () => {
+    const engine = new LinguisticRulesEngine(
+      stubLoader([
+        makeRule({ id: 'zzz', pattern: '.*', messageType: 'Z', priority: 10 }),
+        makeRule({ id: 'aaa', pattern: '.*', messageType: 'A', priority: 10 }),
+      ]),
+    );
+    const result = await engine.tryMatch('anything');
+    expect(result?.ruleId).toBe('aaa');
+    expect(result?.message.messageType).toBe('A');
+  });
+});
+
+describe('LinguisticRulesEngine — disabled rules', () => {
+  it('skips disabled rules at cache-load time', async () => {
+    const engine = new LinguisticRulesEngine(
+      stubLoader([
+        makeRule({ id: 'on', pattern: 'HELLO', messageType: 'GREETING' }),
+        makeRule({ id: 'off', pattern: 'WORLD', messageType: 'PLANET', enabled: false }),
+      ]),
+    );
+    const result = await engine.tryMatch('WORLD');
+    expect(result).toBeNull();
+  });
+});
+
+describe('LinguisticRulesEngine — bad regex isolation', () => {
+  it('skips a rule with an invalid regex pattern without breaking the rest', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const engine = new LinguisticRulesEngine(
+      stubLoader([
+        // Invalid regex — unclosed bracket.
+        makeRule({ id: 'broken', pattern: '(?<bad', messageType: 'OTHER' }),
+        makeRule({ id: 'ok', pattern: 'HELLO', messageType: 'GREETING' }),
+      ]),
+    );
+    const result = await engine.tryMatch('HELLO');
+    expect(result?.ruleId).toBe('ok');
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+});
+
+describe('LinguisticRulesEngine — capture-group mapping', () => {
+  it('maps named groups via captureMap onto Message fields', async () => {
+    const engine = new LinguisticRulesEngine(
+      stubLoader([
+        makeRule({
+          id: 'tuple',
+          pattern: '(?<from>[A-Z]+) DE (?<to>[A-Z]+) (?<bod>.+)',
+          messageType: 'BACKEND',
+          captureMap: { from: 'sender', to: 'receiver', bod: 'body' },
+        }),
+      ]),
+    );
+    const result = await engine.tryMatch('ALPHA DE BRAVO mission control');
+    expect(result?.message.fields).toEqual({
+      sender: 'ALPHA',
+      receiver: 'BRAVO',
+      body: 'mission control',
+    });
+  });
+
+  it('silently ignores capture groups not declared in captureMap', async () => {
+    const engine = new LinguisticRulesEngine(
+      stubLoader([
+        makeRule({
+          id: 'extra',
+          pattern: '(?<a>A)(?<b>B)(?<c>C)',
+          messageType: 'OTHER',
+          captureMap: { a: 'first', b: 'second' }, // `c` not mapped
+        }),
+      ]),
+    );
+    const result = await engine.tryMatch('ABC');
+    expect(result?.message.fields).toEqual({ first: 'A', second: 'B' });
+  });
+
+  it('skips undefined capture-group values (optional groups)', async () => {
+    const engine = new LinguisticRulesEngine(
+      stubLoader([
+        makeRule({
+          id: 'opt',
+          pattern: '(?<x>X)(?<y>Y)?',
+          messageType: 'OTHER',
+          captureMap: { x: 'xx', y: 'yy' },
+        }),
+      ]),
+    );
+    const result = await engine.tryMatch('X');
+    expect(result?.message.fields).toEqual({ xx: 'X' });
+  });
+});
+
+describe('LinguisticRulesEngine — cache TTL', () => {
+  it('serves the cached rules within the TTL window', async () => {
+    let invocations = 0;
+    const loader: RuleLoader = () => {
+      invocations += 1;
+      return Promise.resolve([makeRule({ id: 'a', pattern: 'HI' })]);
+    };
+    const engine = new LinguisticRulesEngine(loader, {
+      ttlMs: 1000,
+      now: () => 0,
+    });
+    await engine.tryMatch('HI');
+    await engine.tryMatch('HI');
+    expect(invocations).toBe(1);
+  });
+
+  it('reloads rules once the TTL window expires', async () => {
+    let invocations = 0;
+    let clock = 0;
+    const loader: RuleLoader = () => {
+      invocations += 1;
+      return Promise.resolve([makeRule({ id: 'a', pattern: 'HI' })]);
+    };
+    const engine = new LinguisticRulesEngine(loader, {
+      ttlMs: 1000,
+      now: () => clock,
+    });
+    await engine.tryMatch('HI');
+    clock = 2000;
+    await engine.tryMatch('HI');
+    expect(invocations).toBe(2);
+  });
+
+  it('invalidate() forces a reload on the next call regardless of TTL', async () => {
+    let invocations = 0;
+    const loader: RuleLoader = () => {
+      invocations += 1;
+      return Promise.resolve([makeRule({ id: 'a', pattern: 'HI' })]);
+    };
+    const engine = new LinguisticRulesEngine(loader, {
+      ttlMs: 60_000,
+      now: () => 0,
+    });
+    await engine.tryMatch('HI');
+    engine.invalidate();
+    await engine.tryMatch('HI');
+    expect(invocations).toBe(2);
+  });
+});
