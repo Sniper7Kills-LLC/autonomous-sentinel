@@ -47,8 +47,16 @@ export const RevisionVote = a
     // would accept an attacker-supplied `voterId` argument and
     // defeat the snapshot invariant.
     allow.authenticated().to(['read']),
-    // Voter = the Cognito sub stored in `voterId` (#259).
-    allow.ownerDefinedIn('voterId').identityClaim('sub').to(['update', 'delete']),
+    // No owner write surface (#312). `castRevisionVote` is the sole
+    // authoritative write path so the resolver can enforce
+    // `voterId = ctx.identity.sub` (#259) AND the `weightAtVoteTime`
+    // if_not_exists snapshot. Re-opening owner-side `update` /
+    // `delete` here would auto-generate `updateRevisionVote` /
+    // `deleteRevisionVote` mutations that bypass both invariants.
+    // Vote retraction is intentionally not supported at v1; when it
+    // is, add a dedicated `retractRevisionVote` resolver with its
+    // own audit + invariant checks rather than re-enabling owner-
+    // write here.
     allow.groups(['moderator', 'admin']).to(['read']),
   ]);
 

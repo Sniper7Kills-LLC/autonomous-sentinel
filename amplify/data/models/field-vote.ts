@@ -80,8 +80,17 @@ export const FieldVote = a
     // accept an attacker-supplied `voterId` argument and defeat that
     // invariant.
     allow.authenticated().to(['read']),
-    // Voter = the Cognito sub stored in `voterId` (#259).
-    allow.ownerDefinedIn('voterId').identityClaim('sub').to(['update', 'delete']),
+    // No owner write surface (#312). `castFieldVote` is the sole
+    // authoritative write path so the resolver can enforce
+    // `voterId = ctx.identity.sub` (#259) AND the `weightAtVoteTime`
+    // if_not_exists snapshot (#33). Re-opening owner-side `update`
+    // / `delete` here would auto-generate `updateFieldVote` /
+    // `deleteFieldVote` mutations that bypass both invariants — a
+    // voter could re-stamp their own weight to game the aggregate
+    // count. Vote retraction is intentionally not supported at v1;
+    // when it is, add a dedicated `retractFieldVote` resolver with
+    // its own audit + invariant checks rather than re-enabling
+    // owner-write here.
     allow.groups(['moderator', 'admin']).to(['read']),
   ]);
 

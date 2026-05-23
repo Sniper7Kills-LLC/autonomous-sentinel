@@ -160,12 +160,22 @@ describe('FieldVote authorization (review-fix: castFieldVote is sole write path)
     expect(hasRead).toBe(true);
   });
 
-  it('owner rule (voterId) still owns update + delete', () => {
-    const owner = authzRules(FieldVote).find((r) => r.strategy === 'owner');
-    expect(owner).toBeDefined();
-    expect(owner?.groupOrOwnerField).toBe('voterId');
-    expect(owner?.identityClaim).toBe('sub');
-    expect(owner?.operations).toEqual(expect.arrayContaining(['update', 'delete']));
+  it('does NOT grant any owner-side write op (#312 — castFieldVote is the only write path)', () => {
+    // Owner-side `update` / `delete` would expose the auto-generated
+    // `updateFieldVote` / `deleteFieldVote` mutations. A voter could
+    // then bypass `castFieldVote`'s `weightAtVoteTime` if_not_exists
+    // snapshot (#33) by directly UpdateItem-ing their own row to
+    // re-stamp the weight, and the cast-resolver's `voterId-from-
+    // ctx.identity.sub` invariant (#259) would not protect against
+    // a self-targeted update (the row's owner sub already matches
+    // the caller's). Drop owner-write entirely so the cast resolver
+    // is the sole authoritative write surface.
+    const writeOps = new Set(['create', 'update', 'delete']);
+    const owners = authzRules(FieldVote).filter((r) => r.strategy === 'owner');
+    for (const owner of owners) {
+      const hasWrite = (owner.operations ?? []).some((op) => writeOps.has(op));
+      expect(hasWrite).toBe(false);
+    }
   });
 });
 
