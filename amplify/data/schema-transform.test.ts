@@ -131,7 +131,9 @@ describe('schema.transform() — no duplicate enum declarations (issue #310)', (
     // false-negative this guard. GraphQL SDL has no quoted enum
     // literals so this can't false-match a comment / string body
     // (Amplify Gen 2 strips comments before emitting the model SDL).
-    const enumNames = [...sdl.matchAll(/^enum\s+(\w+)\s*\{/gm)].map((m) => m[1]);
+    const enumNames = [...sdl.matchAll(/^enum\s+(\w+)\s*\{/gm)]
+      .map((m) => m[1])
+      .filter((n): n is string => n !== undefined);
     const counts = new Map<string, number>();
     for (const name of enumNames) {
       counts.set(name, (counts.get(name) ?? 0) + 1);
