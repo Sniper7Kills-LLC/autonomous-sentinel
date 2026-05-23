@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Token } from 'aws-cdk-lib';
+import { App, Stack, Token } from 'aws-cdk-lib';
 import { auth, authConfig, discordIssuerUrl } from './resource';
 import { postConfirmation } from '../functions/postConfirmation/resource';
 
@@ -105,6 +105,54 @@ describe('auth resource', () => {
       expect(discordIssuerUrl.url).toBe('https://example.invalid/issuer');
     } finally {
       delete discordIssuerUrl.url;
+    }
+  });
+
+  it('issuerUrl Lazy survives an early synth pass with the holder unset, then reflects the post-wiring URL on a later resolution (#310 bug 2)', () => {
+    // Regression test for the #310 bug 2 resolve-order bug:
+    //
+    // `defineBackend()` runs an internal token-resolution pass *before*
+    // returning, which fires the `issuerUrl` Lazy producer while the
+    // holder is still empty (`backend.ts` only mutates it after
+    // defineBackend returns — see the wiring comment in backend.ts).
+    // The old `Lazy.string({produce})` callback threw in that early
+    // pass with the "discordIssuerUrl.url was unset" error and blocked
+    // every `ampx sandbox` deploy attempt.
+    //
+    // The contract now: the producer must (a) NOT throw when the
+    // holder is empty, returning a safe placeholder so the early
+    // resolution pass survives; (b) reflect the real holder value on
+    // any subsequent resolution — i.e. it must be uncached, so the
+    // final CFN template carries the real bridge function URL once
+    // backend.ts has populated the holder.
+    const issuerToken = authConfig.loginWith.externalProviders.oidc[0]?.issuerUrl;
+    if (!issuerToken) throw new Error('expected discord oidc entry on authConfig');
+    expect(Token.isUnresolved(issuerToken)).toBe(true);
+
+    const app = new App();
+    const stack = new Stack(app, 'TestStack');
+
+    const prev = discordIssuerUrl.url;
+    try {
+      // Phase 1: holder unset — the early defineBackend resolution pass.
+      // The producer must not throw and must return a string.
+      delete discordIssuerUrl.url;
+      const resolvedEmpty = stack.resolve(issuerToken) as unknown;
+      expect(typeof resolvedEmpty).toBe('string');
+      expect((resolvedEmpty as string).length).toBeGreaterThan(0);
+
+      // Phase 2: holder populated — the post-defineBackend mutation in
+      // backend.ts. A subsequent resolution must see the real URL.
+      // Equivalent of CDK's final synth pass.
+      discordIssuerUrl.url = 'https://example.invalid/issuer';
+      const resolvedReal = stack.resolve(issuerToken) as unknown;
+      expect(resolvedReal).toBe('https://example.invalid/issuer');
+    } finally {
+      if (prev === undefined) {
+        delete discordIssuerUrl.url;
+      } else {
+        discordIssuerUrl.url = prev;
+      }
     }
   });
 
