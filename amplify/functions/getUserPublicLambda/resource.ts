@@ -17,4 +17,8 @@ export const getUserPublicLambda = defineFunction({
   entry: './handler.ts',
   timeoutSeconds: 10,
   memoryMB: 256,
+  // AppSync data resolver + DDB GetItem on User — grouped with `data`
+  // to break the function ↔ auth ↔ data nested-stack circular
+  // dependency (#317).
+  resourceGroupName: 'data',
 });

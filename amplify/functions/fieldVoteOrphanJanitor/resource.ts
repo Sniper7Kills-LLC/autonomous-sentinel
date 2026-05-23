@@ -15,4 +15,8 @@ export const fieldVoteOrphanJanitor = defineFunction({
   entry: './handler.ts',
   timeoutSeconds: 120,
   memoryMB: 256,
+  // DDB Scan + BatchWriteItem on FieldVote, BatchGetItem on Message —
+  // grouped with `data` to break the function ↔ auth ↔ data
+  // nested-stack circular dependency (#317).
+  resourceGroupName: 'data',
 });

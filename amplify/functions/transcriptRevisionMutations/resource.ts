@@ -16,4 +16,8 @@ export const transcriptRevisionMutations = defineFunction({
   entry: './handler.ts',
   timeoutSeconds: 20,
   memoryMB: 256,
+  // AppSync data resolver + DDB consumer (TranscriptRevision +
+  // Recording + AuditLog) — grouped with `data` to break the
+  // function ↔ auth ↔ data nested-stack circular dependency (#317).
+  resourceGroupName: 'data',
 });

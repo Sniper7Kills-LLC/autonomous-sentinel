@@ -25,4 +25,11 @@ export const legacyClaimWorker = defineFunction({
   entry: './handler.ts',
   timeoutSeconds: 30,
   memoryMB: 256,
+  // DDB TransactWriteItems on User + 11 FK fan-out tables — grouped
+  // with `data` (the bulk of its IAM grants land on data tables)
+  // to break the function ↔ auth ↔ data nested-stack circular
+  // dependency (#317). Invoked async from postConfirmation (auth
+  // stack) via lambda:InvokeFunction, which crosses the auth → data
+  // boundary cleanly.
+  resourceGroupName: 'data',
 });

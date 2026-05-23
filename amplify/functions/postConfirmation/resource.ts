@@ -19,4 +19,11 @@ export const postConfirmation = defineFunction({
   entry: './handler.ts',
   timeoutSeconds: 10,
   memoryMB: 256,
+  // Cognito post-confirm trigger — grouped with `auth` so the User
+  // Pool reference is auth-internal. The handoff to legacyClaimWorker
+  // (in `data`) is decoupled via an SQS queue (wired in backend.ts)
+  // so there is no IAM / env-var reference from the auth stack into
+  // the data stack — that direct grantInvoke was the source of the
+  // auth ↔ data leg of the nested-stack circular dependency (#317).
+  resourceGroupName: 'auth',
 });

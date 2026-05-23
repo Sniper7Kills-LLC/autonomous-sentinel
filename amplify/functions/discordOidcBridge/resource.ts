@@ -37,4 +37,8 @@ export const discordOidcBridge = defineFunction({
     DISCORD_BRIDGE_PRIVATE_KEY: secret('DISCORD_BRIDGE_PRIVATE_KEY'),
     DISCORD_BRIDGE_PUBLIC_KEY: secret('DISCORD_BRIDGE_PUBLIC_KEY'),
   },
+  // Cognito OIDC IdP consumer (issuer-URL holder set on the auth
+  // stack) — grouped with `auth` to break the function ↔ auth ↔ data
+  // nested-stack circular dependency (#317).
+  resourceGroupName: 'auth',
 });

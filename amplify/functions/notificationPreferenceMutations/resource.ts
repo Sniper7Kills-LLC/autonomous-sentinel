@@ -27,4 +27,11 @@ export const notificationPreferenceMutations = defineFunction({
   entry: './handler.ts',
   timeoutSeconds: 10,
   memoryMB: 256,
+  // AppSync data resolver + DDB GetItem/UpdateItem on
+  // NotificationPreference + KMS Encrypt/Decrypt — grouped with
+  // `data` to break the function ↔ auth ↔ data nested-stack
+  // circular dependency (#317). KMS key lives in its own
+  // NotificationPrefKmsStack and crosses the data → KMS boundary
+  // cleanly.
+  resourceGroupName: 'data',
 });

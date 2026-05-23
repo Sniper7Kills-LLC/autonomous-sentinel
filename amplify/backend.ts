@@ -333,7 +333,14 @@ legacyClaimSweeperLambda.addToRolePolicy(
 // so any incidental write traffic the sweep generates lands when the
 // rest of the pipeline is idle. Switch to hourly only if backlog
 // monitoring shows the daily cadence is leaving claims unfinished.
-new Rule(backend.createStack('LegacyClaimSweeperSchedule'), 'DailyReplay', {
+//
+// The Rule lives in the sweeper Lambda's enclosing stack (the `data`
+// stack after the #317 resourceGroupName moves) rather than a
+// dedicated `backend.createStack(...)` sub-stack — keeping the
+// schedule co-located with the Lambda + the DDB tables it sweeps
+// removes a cross-stack reference that contributed to the original
+// nested-stack circular dependency.
+new Rule(legacyClaimSweeperLambda.stack, 'LegacyClaimSweeperDailyReplay', {
   description:
     'Daily replay of legacy-claim fan-out for any User row whose post-confirm worker did not finish (#274).',
   schedule: Schedule.cron({ minute: '0', hour: '3' }),
@@ -379,7 +386,11 @@ fieldVoteOrphanJanitorLambda.addToRolePolicy(
   }),
 );
 
-new Rule(backend.createStack('FieldVoteOrphanJanitorSchedule'), 'DailyOrphanSweep', {
+// As with the LegacyClaim sweeper above, the Rule lives in the
+// janitor Lambda's enclosing stack (the `data` stack after the
+// #317 resourceGroupName move) rather than a dedicated
+// `backend.createStack(...)` sub-stack.
+new Rule(fieldVoteOrphanJanitorLambda.stack, 'FieldVoteOrphanJanitorDailySweep', {
   description: 'Daily cleanup of FieldVote rows whose messageId no longer resolves (#270).',
   schedule: Schedule.cron({ minute: '0', hour: '4' }),
   targets: [new LambdaTarget(fieldVoteOrphanJanitorLambda)],
