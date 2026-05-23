@@ -173,7 +173,13 @@ export function silenceTrim(opts: SilenceTrimOpts): Promise<SilenceTrimResult> {
 
   return new Promise<SilenceTrimResult>((resolve, reject) => {
     let child;
-    const spawnOpts: SpawnOptions = { stdio: ['ignore', 'pipe', 'pipe'] };
+    // `stdin: 'ignore'` — handler feeds via `-i path`, no stdin.
+    // `stdout: 'ignore'` — `-loglevel error` keeps stdout silent;
+    //   leaving it as a pipe with no consumer would let a future
+    //   ffmpeg progress write fill the pipe buffer and deadlock.
+    // `stderr: 'pipe'` — captured by the rolling tail below for
+    //   failure context.
+    const spawnOpts: SpawnOptions = { stdio: ['ignore', 'ignore', 'pipe'] };
     try {
       child = spawnFn(ffmpegBinary, args, spawnOpts);
     } catch (err) {
@@ -187,17 +193,26 @@ export function silenceTrim(opts: SilenceTrimOpts): Promise<SilenceTrimResult> {
       return;
     }
 
-    let stderrTail = '';
+    // Capture stderr at the byte level + decode once at the end
+    // so a multi-byte UTF-8 char straddling the rolling-byte
+    // boundary doesn't surface as `` in the error message.
+    let stderrTailBuf = Buffer.alloc(0);
     const stderr = child.stderr;
     if (stderr) {
       stderr.on('data', (chunk: Buffer | string) => {
-        const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
-        stderrTail = (stderrTail + text).slice(-DEFAULT_STDERR_CAPTURE_BYTES);
+        const buf = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk;
+        const combined = Buffer.concat([stderrTailBuf, buf]);
+        stderrTailBuf =
+          combined.byteLength > DEFAULT_STDERR_CAPTURE_BYTES
+            ? combined.subarray(combined.byteLength - DEFAULT_STDERR_CAPTURE_BYTES)
+            : combined;
       });
     }
 
+    const decodeTail = (): string => stderrTailBuf.toString('utf8');
+
     child.once('error', (err: Error) => {
-      reject(new SilenceTrimError(`silenceTrim: spawn error: ${err.message}`, null, stderrTail));
+      reject(new SilenceTrimError(`silenceTrim: spawn error: ${err.message}`, null, decodeTail()));
     });
 
     child.once('close', (code: number | null) => {
@@ -207,7 +222,7 @@ export function silenceTrim(opts: SilenceTrimOpts): Promise<SilenceTrimResult> {
           outputPath: opts.outputPath,
           thresholdDb,
           minSilenceSec,
-          stderrTail,
+          stderrTail: decodeTail(),
         });
         return;
       }
@@ -215,7 +230,7 @@ export function silenceTrim(opts: SilenceTrimOpts): Promise<SilenceTrimResult> {
         new SilenceTrimError(
           `silenceTrim: ffmpeg exited with code ${code ?? 'null'}`,
           code,
-          stderrTail,
+          decodeTail(),
         ),
       );
     });

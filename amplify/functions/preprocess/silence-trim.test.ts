@@ -246,6 +246,30 @@ describe('silenceTrim — failure modes', () => {
   });
 });
 
+describe('silenceTrim — stderr UTF-8 boundary safety', () => {
+  it('does not split a multi-byte UTF-8 char across the rolling-byte boundary', async () => {
+    const fakeProc = makeFakeProc();
+    const spawnFn = vi.fn(() => {
+      queueMicrotask(() => {
+        // 4090 bytes of ASCII filler, then a 4-byte emoji ("🚀"
+        // = F0 9F 9A 80) so the previous tail (4090) + 4 emoji
+        // bytes = 4094 bytes total. Well within the 4 KB
+        // window — emoji should round-trip cleanly.
+        fakeProc.stderr.emit('data', Buffer.from('A'.repeat(4090)));
+        fakeProc.stderr.emit('data', Buffer.from('🚀', 'utf8'));
+        fakeProc.emit('close', 0);
+      });
+      return fakeProc;
+    });
+    const result = await silenceTrim({
+      inputPath: '/in.wav',
+      outputPath: '/out.wav',
+      spawnFn: spawnFn as unknown as typeof SpawnFn,
+    });
+    expect(result.stderrTail.endsWith('🚀')).toBe(true);
+  });
+});
+
 describe('silenceTrim — stderr tail truncation', () => {
   it('caps captured stderr at the configured byte budget', async () => {
     const fakeProc = makeFakeProc();
