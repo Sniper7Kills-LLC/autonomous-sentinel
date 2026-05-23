@@ -33,9 +33,7 @@ function envNumber(name: string, fallback: number): number {
   if (!raw) return fallback;
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) {
-    throw new Error(
-      `Invalid value for ${name}: '${raw}'. Expected a positive number.`,
-    );
+    throw new Error(`Invalid value for ${name}: '${raw}'. Expected a positive number.`);
   }
   return n;
 }
@@ -108,9 +106,15 @@ export function attachBudgetAlarms(stack: Stack, config: BudgetConfig): CfnBudge
         subscribers,
       },
       {
+        // `GREATER_THAN` at 100% — the AWS Budgets API only accepts
+        // `EQUAL_TO` / `GREATER_THAN` / `LESS_THAN` (#320). `EQUAL_TO`
+        // only fires when cost is precisely at the cap, which would
+        // miss every subsequent breach in the same billing cycle;
+        // `GREATER_THAN 100` fires whenever the cap is exceeded, which
+        // is the alert we actually want.
         notification: {
           notificationType: 'ACTUAL',
-          comparisonOperator: 'GREATER_THAN_OR_EQUAL_TO',
+          comparisonOperator: 'GREATER_THAN',
           threshold: 100,
           thresholdType: 'PERCENTAGE',
         },

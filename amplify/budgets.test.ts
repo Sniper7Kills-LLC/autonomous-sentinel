@@ -69,9 +69,7 @@ describe('budget alarms', () => {
     synth().hasResourceProperties('AWS::Budgets::Budget', {
       NotificationsWithSubscribers: Match.arrayWith([
         Match.objectLike({
-          Subscribers: [
-            { SubscriptionType: 'EMAIL', Address: 'sniper7kills@gmail.com' },
-          ],
+          Subscribers: [{ SubscriptionType: 'EMAIL', Address: 'sniper7kills@gmail.com' }],
         }),
       ]),
     });
@@ -113,9 +111,7 @@ describe('budget alarms', () => {
   });
 
   it('rejects invalid threshold values', () => {
-    expect(() => synth({ AS_BUDGET_HARD_USD: 'not-a-number' })).toThrow(
-      /AS_BUDGET_HARD_USD/,
-    );
+    expect(() => synth({ AS_BUDGET_HARD_USD: 'not-a-number' })).toThrow(/AS_BUDGET_HARD_USD/);
   });
 
   it('rejects soft >= loud', () => {
@@ -146,5 +142,37 @@ describe('budget alarms', () => {
         AS_BUDGET_HARD_USD: '200',
       }),
     ).toThrow(/soft < loud < hard/);
+  });
+
+  it('uses only AWS-Budgets-valid comparisonOperator enum values on every notification (#320)', () => {
+    // The AWS::Budgets::Budget API only accepts `EQUAL_TO`,
+    // `GREATER_THAN`, and `LESS_THAN` for `comparisonOperator`. CDK
+    // typings on `CfnBudget` are `string`, so synth + typecheck
+    // happily pass an invalid enum value like
+    // `GREATER_THAN_OR_EQUAL_TO`. The bug surfaces only at deploy
+    // time when CFN rejects the resource. Lock the enum here so a
+    // future drift becomes a CI-visible diff rather than a sandbox-
+    // deploy surprise.
+    const VALID_OPERATORS = new Set(['EQUAL_TO', 'GREATER_THAN', 'LESS_THAN']);
+    const t = synth();
+    const budgets = t.findResources('AWS::Budgets::Budget');
+    const budgetIds = Object.keys(budgets);
+    expect(budgetIds.length).toBeGreaterThan(0);
+    for (const id of budgetIds) {
+      const props = budgets[id]?.Properties as
+        | {
+            NotificationsWithSubscribers?: Array<{
+              Notification?: { ComparisonOperator?: string };
+            }>;
+          }
+        | undefined;
+      const notifications = props?.NotificationsWithSubscribers ?? [];
+      expect(notifications.length).toBeGreaterThan(0);
+      for (const n of notifications) {
+        const op = n?.Notification?.ComparisonOperator;
+        expect(op).toBeDefined();
+        expect(VALID_OPERATORS.has(op as string)).toBe(true);
+      }
+    }
   });
 });
