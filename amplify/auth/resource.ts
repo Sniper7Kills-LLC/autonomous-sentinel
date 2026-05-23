@@ -33,11 +33,24 @@ const logoutUrls = ['http://localhost:3000/', 'https://beta.eam.watch/'];
 /**
  * Mutable holder for the Discord OIDC bridge issuer URL. `backend.ts` sets
  * `discordIssuerUrl.url = bridgeFunctionUrl.url` after constructing the bridge
- * function URL; the `Lazy.string` below reads it at CDK synth time.
+ * function URL; the `Lazy.uncachedString` below re-reads it on every token
+ * resolution so the final CFN synth picks up the real URL.
  *
  * Exported so tests can verify the wiring + so `backend.ts` can assign it.
  */
 export const discordIssuerUrl: { url?: string } = {};
+
+/**
+ * Placeholder issuer URL surfaced when the holder is empty during
+ * `defineBackend()`'s internal token-resolution pass (which runs
+ * before `backend.ts` has wired the bridge function URL). The
+ * resolver is uncached, so this placeholder is replaced by the real
+ * URL on the final synth pass once `backend.ts` populates the holder.
+ *
+ * Exported so tests can pin the contract (a non-empty string returned
+ * when the holder is unset, never a throw).
+ */
+export const DISCORD_ISSUER_URL_PLACEHOLDER = 'https://discord-bridge-unwired.invalid/';
 
 export const authConfig = {
   loginWith: {
@@ -56,21 +69,28 @@ export const authConfig = {
           name: 'Discord',
           clientId: secret('DISCORD_CLIENT_ID'),
           clientSecret: secret('DISCORD_CLIENT_SECRET'),
-          issuerUrl: Lazy.string({
+          issuerUrl: Lazy.uncachedString({
             produce: () => {
-              // Fail loud at synth if `backend.ts` did not populate the holder
-              // before the IdP construct was resolved. Silently emitting ''
-              // would land us with a Cognito provider whose stored
-              // `oidc_issuer` is the empty string, which fails non-obviously
-              // at sign-in rather than at deploy.
+              // `defineBackend()` runs an internal token-resolution pass
+              // before returning the backend object — earlier than the
+              // mutation in `backend.ts` that populates the holder. The
+              // old `Lazy.string({produce})` threw here in that early
+              // pass and blocked every `ampx sandbox` deploy (#310).
+              //
+              // Soft-default to a syntactically valid placeholder when
+              // the holder is unset so the early resolution pass
+              // survives. `Lazy.uncachedString` re-invokes `produce`
+              // on every token resolution, so once `backend.ts` writes
+              // the real URL into the holder, the final synth pass
+              // emits the real value into the CFN template.
+              //
+              // The placeholder uses the reserved `.invalid` TLD so a
+              // misconfiguration that ever leaks it past synth (e.g. a
+              // future CDK pass that snapshots produce results before
+              // backend.ts runs) fails closed at sign-in instead of
+              // silently pointing Cognito at a real host.
               const url = discordIssuerUrl.url;
-              if (!url) {
-                throw new Error(
-                  'discordIssuerUrl.url was unset when the Discord OIDC IdP ' +
-                    'was resolved. backend.ts must assign it before synth.',
-                );
-              }
-              return url;
+              return url ?? DISCORD_ISSUER_URL_PLACEHOLDER;
             },
           }),
           attributeRequestMethod: 'GET' as const,
@@ -94,13 +114,9 @@ export const authConfig = {
   triggers: {
     postConfirmation,
   },
-  access: (allow: AuthAccessAllow) => [
-    allow.resource(postConfirmation).to(['addUserToGroup']),
-  ],
+  access: (allow: AuthAccessAllow) => [allow.resource(postConfirmation).to(['addUserToGroup'])],
 };
 
-type AuthAccessAllow = Parameters<
-  NonNullable<Parameters<typeof defineAuth>[0]['access']>
->[0];
+type AuthAccessAllow = Parameters<NonNullable<Parameters<typeof defineAuth>[0]['access']>>[0];
 
 export const auth = defineAuth(authConfig);
