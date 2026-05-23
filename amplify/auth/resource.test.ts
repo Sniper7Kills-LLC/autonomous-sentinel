@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { App, Stack, Token } from 'aws-cdk-lib';
-import { auth, authConfig, discordIssuerUrl } from './resource';
+import { auth, authConfig, discordIssuerUrl, DISCORD_ISSUER_URL_PLACEHOLDER } from './resource';
 import { postConfirmation } from '../functions/postConfirmation/resource';
 
 describe('auth resource', () => {
@@ -135,11 +135,13 @@ describe('auth resource', () => {
     const prev = discordIssuerUrl.url;
     try {
       // Phase 1: holder unset — the early defineBackend resolution pass.
-      // The producer must not throw and must return a string.
+      // The producer must not throw and must return the exact exported
+      // placeholder so the .invalid-TLD fail-closed contract documented
+      // in resource.ts cannot drift to a real-host value silently.
       delete discordIssuerUrl.url;
       const resolvedEmpty = stack.resolve(issuerToken) as unknown;
-      expect(typeof resolvedEmpty).toBe('string');
-      expect((resolvedEmpty as string).length).toBeGreaterThan(0);
+      expect(resolvedEmpty).toBe(DISCORD_ISSUER_URL_PLACEHOLDER);
+      expect(DISCORD_ISSUER_URL_PLACEHOLDER).toMatch(/\.invalid\/?$/);
 
       // Phase 2: holder populated — the post-defineBackend mutation in
       // backend.ts. A subsequent resolution must see the real URL.
