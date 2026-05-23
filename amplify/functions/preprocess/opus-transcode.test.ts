@@ -192,6 +192,19 @@ describe('webCanonicalKey + WEB_CANONICAL_S3_METADATA', () => {
     expect(() => webCanonicalKey('')).toThrow(/recordingId required/);
   });
 
+  it('rejects recordingId containing path-traversal / control characters', () => {
+    expect(() => webCanonicalKey('../etc/passwd')).toThrow(/must match/);
+    expect(() => webCanonicalKey('rec/sub')).toThrow(/must match/);
+    expect(() => webCanonicalKey('rec\nabc')).toThrow(/must match/);
+    expect(() => webCanonicalKey('rec abc')).toThrow(/must match/);
+  });
+
+  it('accepts a real UUID-shaped recordingId', () => {
+    expect(webCanonicalKey('550e8400-e29b-41d4-a716-446655440000')).toBe(
+      'recordings/web/550e8400-e29b-41d4-a716-446655440000.opus',
+    );
+  });
+
   it('pins the audio/ogg + immutable cache-control metadata for CloudFront', () => {
     expect(WEB_CANONICAL_S3_METADATA.contentType).toBe('audio/ogg; codecs=opus');
     expect(WEB_CANONICAL_S3_METADATA.cacheControl).toBe('public, max-age=31536000, immutable');

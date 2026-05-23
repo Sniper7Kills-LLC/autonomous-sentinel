@@ -182,9 +182,20 @@ export const WEB_CANONICAL_S3_METADATA = {
   cacheControl: 'public, max-age=31536000, immutable',
 } as const;
 
+// Recording.id is a UUID per CLAUDE.md → Domain model. Lock the
+// shape down to letters / digits / `-` / `_` so a malformed
+// caller can't poison the S3 key namespace with `../`, control
+// chars, or arbitrary path segments. S3 keys are opaque strings
+// (no directory collapse) so the impact would be cosmetic, but
+// the defence-in-depth cost is one regex.
+const RECORDING_ID_RE = /^[A-Za-z0-9_-]+$/;
+
 export function webCanonicalKey(recordingId: string): string {
   if (typeof recordingId !== 'string' || recordingId.length === 0) {
     throw new Error('webCanonicalKey: recordingId required');
+  }
+  if (!RECORDING_ID_RE.test(recordingId)) {
+    throw new Error('webCanonicalKey: recordingId must match /^[A-Za-z0-9_-]+$/');
   }
   return `recordings/web/${recordingId}.opus`;
 }
