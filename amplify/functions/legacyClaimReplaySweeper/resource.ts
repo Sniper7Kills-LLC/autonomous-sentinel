@@ -14,4 +14,8 @@ export const legacyClaimReplaySweeper = defineFunction({
   entry: './handler.ts',
   timeoutSeconds: 60,
   memoryMB: 256,
+  // Daily DDB Query / TransactWriteItems across User + 11 FK tables +
+  // AuditLog — grouped with `data` to break the function ↔ auth ↔
+  // data nested-stack circular dependency (#317).
+  resourceGroupName: 'data',
 });

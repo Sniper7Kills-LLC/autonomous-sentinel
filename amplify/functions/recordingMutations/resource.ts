@@ -16,4 +16,8 @@ export const recordingMutations = defineFunction({
   entry: './handler.ts',
   timeoutSeconds: 15,
   memoryMB: 256,
+  // AppSync data resolver + DDB consumer (Recording + AuditLog) —
+  // grouped with `data` to break the function ↔ auth ↔ data
+  // nested-stack circular dependency (#317).
+  resourceGroupName: 'data',
 });

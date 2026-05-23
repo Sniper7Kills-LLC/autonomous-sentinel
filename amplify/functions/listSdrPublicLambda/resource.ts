@@ -20,4 +20,8 @@ export const listSdrPublicLambda = defineFunction({
   entry: './handler.ts',
   timeoutSeconds: 10,
   memoryMB: 256,
+  // AppSync data resolver + DDB Scan on Sdr — grouped with `data` to
+  // break the function ↔ auth ↔ data nested-stack circular
+  // dependency (#317).
+  resourceGroupName: 'data',
 });
