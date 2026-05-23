@@ -24,6 +24,15 @@
 #   curl -X POST 'http://localhost:9000/2015-03-31/functions/function/invocations' \
 #     -d '{"Records":[{"body":"..."}]}'
 
+# NOTE — drift check.
+# Before touching this image, run:
+#   gh api repos/ggml-org/whisper.cpp/releases \
+#     | grep -oE '"tag_name":"[^"]*"' | head -5
+# Compare against the `ARG WHISPER_CPP_VERSION` below. If the
+# pinned tag is more than 2 minor versions behind latest stable,
+# propose a bump in the PR description. v1.7.x ships the CLI as
+# `bin/main`; v1.8.x+ ships it as `bin/whisper-cli` (the `COPY
+# --from=builder` source path below must match the tag).
 ARG WHISPER_CPP_VERSION=v1.8.4
 
 # ----- stage 1: build whisper.cpp -----------------------------------
