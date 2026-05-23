@@ -24,6 +24,17 @@ import { vi } from 'vitest';
  */
 vi.mock('@aws-appsync/utils', () => ({
   util: {
+    // **Real APPSYNC_JS behaviour caveat**: the deployed runtime's
+    // `util.error(...)` aborts the resolver and surfaces the message
+    // to the GraphQL response without propagating to JS-level
+    // try/catch blocks the way a thrown Error does. We mock with a
+    // throw so existing `expect(...).toThrow(/msg/)` test assertions
+    // keep working — match the prior `throw new Error(...)` shape
+    // that the resolvers were rewritten away from. **Do not wrap
+    // `util.error(...)` in a try/catch inside any resolver** —
+    // tests would mask a real-runtime behavior difference where the
+    // catch never fires in production. The `validate-resolvers.ts`
+    // script also walks for this drift via `appsync:EvaluateCode`.
     error: (message: string, _type?: string, _data?: unknown, _errorInfo?: unknown): never => {
       const err = new Error(message);
       throw err;

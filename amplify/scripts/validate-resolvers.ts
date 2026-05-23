@@ -34,11 +34,21 @@ const __dirname = dirname(__filename);
 const RESOLVERS_DIR = resolve(__dirname, '..', 'data', 'models', 'resolvers');
 
 // Minimal context payload the request / response evaluators accept.
-// We bias toward a "satisfies every resolver's validation" shape so a
-// resolver's own `util.error()` firing is not mistaken for a runtime
-// rejection of the code itself. Anything missing here surfaces as a
-// runtime `util.error(...)` message — distinguishable from a parse
-// error by `isParseError()` below.
+// We bias toward a "satisfies every current resolver's validation"
+// shape so a resolver's own `util.error()` firing is not mistaken for
+// a runtime rejection of the code itself. Anything missing here
+// surfaces as a runtime `util.error(...)` message — distinguishable
+// from a parse error by `isParseError()` below.
+//
+// **Maintenance protocol**: when a new resolver lands that needs an
+// argument not in this stub, add the field here so the validator
+// keeps reporting "parse vs runtime" cleanly. Forgetting to add it
+// means the validator will mark the new resolver as "ok" (because
+// the missing-field check fires as a runtime `util.error`), which
+// is still the correct outcome for "the code itself is valid" but
+// loses the signal that the resolver ran its full happy path. Keep
+// this list a strict superset of every resolver's known required
+// args.
 const REQUEST_CONTEXT = JSON.stringify({
   arguments: {
     email: 'voter@example.com',
@@ -59,17 +69,20 @@ const RESPONSE_CONTEXT = JSON.stringify({
 // runtime rejecting unsupported syntax / globals) AND from the
 // resolver's own `util.error()` runtime calls. Only the former is a
 // drift we need to catch here — `util.error(...)` firing is the
-// resolver doing its job. Parser errors carry one of these codes; a
-// raw runtime error does not.
-const PARSE_ERROR_PATTERNS = [
-  /UNSUPPORTED_SYNTAX_TYPE/i,
-  /INVALID_FUNCTION_INVOCATION/i,
-  /Unsupported Syntax/i,
-  /Invalid function/i,
-];
+// resolver doing its job against the stub context.
+//
+// Discriminator: every AppSync parser error embeds a bracketed code
+// marker in the message, e.g.
+//   `[code: UNSUPPORTED_SYNTAX_TYPE] [start: line:71 ...] [end: ...]`
+// Runtime `util.error(msg)` calls return the raw string passed by
+// the resolver author with no `[code: ...]` prefix. Substring-match
+// for `[code:` is therefore future-proof against new AppSync parse-
+// error codes (UNSUPPORTED_OPERATOR, INVALID_TOKEN, …) the way an
+// enumerated regex list would not be.
+const PARSE_CODE_MARKER = /\[code:\s*[A-Z_]+\]/;
 
 function isParseError(message: string): boolean {
-  return PARSE_ERROR_PATTERNS.some((re) => re.test(message));
+  return PARSE_CODE_MARKER.test(message);
 }
 
 interface FunctionCheck {

@@ -115,6 +115,8 @@ export function request(ctx) {
     ':field': { S: field },
     ':voterId': { S: voterId },
     ':value': { S: value },
+    // Template literal instead of `String(liveWeight)` — APPSYNC_JS
+    // rejects calls to the `String` global constructor (#323).
     ':weightAtVoteTime': { N: `${liveWeight}` },
     ':now': { S: now },
   };
