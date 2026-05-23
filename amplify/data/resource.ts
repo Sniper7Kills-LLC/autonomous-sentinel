@@ -12,7 +12,7 @@ import { Recording, softDeleteRecording, submitRecording } from './models/record
 import { Sdr, listSdrPublic } from './models/sdr';
 import { listSdrPublicLambda } from '../functions/listSdrPublicLambda/resource';
 import { Transmitter } from './models/transmitter';
-import { Comment, createComment, softDeleteComment } from './models/comment';
+import { Comment, submitComment, softDeleteComment } from './models/comment';
 import { FieldVote, FieldVoteField, castFieldVote } from './models/field-vote';
 import {
   TranscriptRevision,
@@ -29,7 +29,7 @@ import { Donation } from './models/donation';
 import {
   NotificationPreference,
   NotificationPreferenceView,
-  getNotificationPreference,
+  getMyNotificationPreference,
   setNotificationPreference,
 } from './models/notification-preference';
 import { notificationPreferenceMutations } from '../functions/notificationPreferenceMutations/resource';
@@ -119,8 +119,10 @@ export const schema = a
     // Recording authenticated upload + contentHash uniqueness — issue #284
     submitRecording,
 
-    // Comment create + soft-delete — issue #32
-    createComment,
+    // Comment submit + soft-delete — issue #32 + #314 (verb rename
+    // from `createComment` so it does not collide with the auto-
+    // generated `createComment` field emitted by the @model directive).
+    submitComment,
     softDeleteComment,
 
     // AuditLog public-filtered read — issue #38
@@ -134,7 +136,7 @@ export const schema = a
     listSdrPublic,
 
     // NotificationPreference KMS-encrypted webhook URL + lazy-create — issue #288
-    getNotificationPreference,
+    getMyNotificationPreference,
     setNotificationPreference,
   })
   .authorization((allow) => [

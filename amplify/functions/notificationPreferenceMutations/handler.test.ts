@@ -78,7 +78,7 @@ function getEvent(
       selectionSetList: [],
       selectionSetGraphQL: '',
       parentTypeName: 'Query',
-      fieldName: 'getNotificationPreference',
+      fieldName: 'getMyNotificationPreference',
       variables: {},
     },
     prev: null,
@@ -261,7 +261,7 @@ describe('setNotificationPreference', () => {
   });
 });
 
-describe('getNotificationPreference', () => {
+describe('getMyNotificationPreference', () => {
   beforeEach(() => __resetDeps());
 
   it('owner sees decrypted plaintext discordWebhookUrl', async () => {
@@ -359,7 +359,7 @@ describe('getNotificationPreference', () => {
   });
 
   it('on lazy-create race, returns the other writer row instead of overwriting with defaults', async () => {
-    // Simulates: caller A starts getNotificationPreference for sub=racer
+    // Simulates: caller A starts getMyNotificationPreference for sub=racer
     // (getRow returns null); meanwhile caller B's setNotificationPreference
     // landed with emailEnabled=true. A's conditional create finds the row
     // already present and returns B's row — not the defaults that would

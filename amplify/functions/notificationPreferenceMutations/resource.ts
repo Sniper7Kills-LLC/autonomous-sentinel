@@ -2,14 +2,14 @@ import { defineFunction } from '@aws-amplify/backend';
 
 /**
  * `notificationPreferenceMutations` — Lambda-backed AppSync resolver
- * for `setNotificationPreference` mutation + `getNotificationPreference`
+ * for `setNotificationPreference` mutation + `getMyNotificationPreference`
  * query (issue #288).
  *
  * Dispatches on `event.info.fieldName`:
  *   - `setNotificationPreference` — caller upserts their own row. The
  *     `discordWebhookUrl` plaintext input is run through `KMS.Encrypt`
  *     and stored as a base64 ciphertext in `discordWebhookUrlEnc`.
- *   - `getNotificationPreference` — returns the row for the caller's
+ *   - `getMyNotificationPreference` — returns the row for the caller's
  *     own sub (or the requested userId when the caller is admin),
  *     lazy-creating a default row on first access by the owner.
  *     `discordWebhookUrl` in the response is the decrypted plaintext

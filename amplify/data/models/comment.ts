@@ -12,8 +12,12 @@ import { commentMutations } from '../../functions/commentMutations/resource';
  * by the soft-delete custom mutation.
  *
  * Custom mutations land below:
- *   - `createComment` — server-side depth clamp + flatten + authorId
- *     forced from `ctx.identity.sub`.
+ *   - `submitComment` — server-side depth clamp + flatten + authorId
+ *     forced from `ctx.identity.sub`. Named with a distinct verb (not
+ *     `createComment`) because Amplify Gen 2's transformer auto-emits
+ *     `create<Model>` for every `@model`, and a custom mutation with
+ *     the same field name would collide with the auto-emitted one at
+ *     synth (#314).
  *   - `softDeleteComment` — author / mod / admin → sets deletedAt
  *     + rewrites body to `[removed]` + emits COMMENT_DELETE audit.
  *
@@ -50,11 +54,13 @@ export const Comment = a
   ])
   .authorization((allow) => [
     allow.guest().to(['read']),
-    // No `create` on the model — `createComment` is the sole write
+    // No `create` on the model — `submitComment` is the sole write
     // path so the server can enforce depth-clamp + flatten + the
     // authorId-from-ctx.identity.sub guard. Leaving the auto-
     // generated `createComment` mutation live would accept a
-    // client-supplied authorId + depth and defeat both invariants.
+    // client-supplied authorId + depth and defeat both invariants
+    // (and would also have collided with a custom `createComment`
+    // at synth — see #314 / the verb-rename rationale at the top).
     allow.authenticated().to(['read']),
     // Owner = the Cognito sub stored in `authorId` (#259). Kept for
     // direct edit / delete paths if we ever expose them; the soft-
@@ -65,7 +71,14 @@ export const Comment = a
   ]);
 
 /**
- * `createComment` — depth-clamped + flatten Comment create (#32).
+ * `submitComment` — depth-clamped + flatten Comment create (#32).
+ *
+ * Named with the `submit` verb (not `create`) to avoid colliding
+ * with the auto-generated `createComment` mutation that the Amplify
+ * Gen 2 transformer emits for every `@model` row regardless of
+ * authz grants (#314 — dropping `create` from the model authz only
+ * gates access, it does NOT prevent the auto-emitted field from
+ * existing on `type Mutation`).
  *
  * Server-side guarantees the client can't forge:
  *   - `authorId = ctx.identity.sub`.
@@ -74,7 +87,7 @@ export const Comment = a
  *
  * Returns the created Comment row.
  */
-export const createComment = a
+export const submitComment = a
   .mutation()
   .arguments({
     messageId: a.id().required(),

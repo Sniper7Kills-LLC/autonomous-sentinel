@@ -12,7 +12,7 @@ import { notificationPreferenceMutations } from '../../functions/notificationPre
  *
  * Encryption-at-rest for the Discord webhook URL (#288): the storage
  * column is `discordWebhookUrlEnc` — base64-encoded KMS ciphertext.
- * Read + write only through `getNotificationPreference` /
+ * Read + write only through `getMyNotificationPreference` /
  * `setNotificationPreference`, which decrypt / encrypt at the Lambda
  * boundary. Direct model reads on this column return the raw
  * ciphertext (no useful information without the KMS grant), which is
@@ -33,7 +33,7 @@ export const NotificationPreference = a
     /**
      * KMS-encrypted Discord webhook URL (base64 ciphertext). Never
      * write or read this column directly — use the
-     * `setNotificationPreference` mutation / `getNotificationPreference`
+     * `setNotificationPreference` mutation / `getMyNotificationPreference`
      * query, which handle the KMS round-trip and the owner / admin
      * decrypt gate.
      */
@@ -50,7 +50,7 @@ export const NotificationPreference = a
   ]);
 
 /**
- * Response shape for the custom `getNotificationPreference` /
+ * Response shape for the custom `getMyNotificationPreference` /
  * `setNotificationPreference` resolvers (#288). Mirrors the storage
  * model but exposes the **decrypted plaintext** Discord webhook URL
  * as `discordWebhookUrl` — and only when the caller is the owner OR
@@ -68,17 +68,24 @@ export const NotificationPreferenceView = a.customType({
 });
 
 /**
- * `getNotificationPreference` (#288) — returns the caller's own row,
+ * `getMyNotificationPreference` (#288) — returns the caller's own row,
  * lazy-creating a default row on first access. Admin callers may pass
  * a `userId` to read another user's row (no auto-provision on
  * admin-side reads — returns null when missing). Non-admin callers
  * passing a `userId` that does not match their identity sub are
  * rejected.
  *
+ * Named with the `getMy` qualifier (not `getNotificationPreference`)
+ * to avoid colliding with the auto-generated `getNotificationPreference`
+ * query that the Amplify Gen 2 transformer emits for every `@model`
+ * row (#314 — same root cause as the `submitComment` rename: dropping
+ * the op from the model authz only gates access, it does NOT prevent
+ * the auto-emitted field from existing on `type Query`).
+ *
  * Lambda-backed so the KMS Encrypt / Decrypt + DDB SDK calls stay
  * out of the AppSync resolver runtime.
  */
-export const getNotificationPreference = a
+export const getMyNotificationPreference = a
   .query()
   .arguments({ userId: a.id() })
   .returns(a.ref('NotificationPreferenceView'))

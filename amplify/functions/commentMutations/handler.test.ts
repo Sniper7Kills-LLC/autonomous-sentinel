@@ -12,7 +12,7 @@ import {
  * Lambda-resolver tests for Comment custom mutations (#32).
  *
  * Two mutations:
- *   - `createComment` — server-side depth clamp + flatten. Depth is
+ *   - `submitComment` — server-side depth clamp + flatten. Depth is
  *     `min(parent.depth + 1, 3)`; if the caller targets a depth-3
  *     comment, the new comment's `parentCommentId` is rewritten to
  *     the deepest legal ancestor (depth-2) so the thread keeps the
@@ -27,7 +27,7 @@ function makeEvent(
     fieldName?: string;
   } = {},
 ): AppSyncResolverEvent<Record<string, unknown>> {
-  const { fieldName = 'createComment', ...rest } = overrides;
+  const { fieldName = 'submitComment', ...rest } = overrides;
   const base: AppSyncResolverEvent<Record<string, unknown>> = {
     arguments: {},
     identity: {
@@ -110,7 +110,7 @@ describe('commentMutations — dispatch', () => {
   });
 });
 
-describe('commentMutations — createComment', () => {
+describe('commentMutations — submitComment', () => {
   beforeEach(() => __resetDeps());
 
   it('rejects when caller has no identity sub', async () => {
