@@ -108,8 +108,8 @@ export function attachBudgetAlarms(stack: Stack, config: BudgetConfig): CfnBudge
       {
         // `GREATER_THAN` at 100% — the AWS Budgets API only accepts
         // `EQUAL_TO` / `GREATER_THAN` / `LESS_THAN` (#320). `EQUAL_TO`
-        // only fires the one minute cost is precisely at the cap, which
-        // would miss every subsequent breach in the same billing cycle;
+        // only fires when cost is precisely at the cap, which would
+        // miss every subsequent breach in the same billing cycle;
         // `GREATER_THAN 100` fires whenever the cap is exceeded, which
         // is the alert we actually want.
         notification: {
