@@ -34,6 +34,8 @@ import { fieldVoteOrphanJanitor } from './functions/fieldVoteOrphanJanitor/resou
 import { attachBudgetAlarms, readBudgetConfig } from './budgets';
 import { attachStorageLifecycle, readStorageLifecycleConfig } from './storage-lifecycle';
 import { attachPipelineQueues } from './pipeline-queues';
+import { getConcurrencyCap } from './lambda-concurrency';
+import type { CfnFunction } from 'aws-cdk-lib/aws-lambda';
 
 const backend = defineBackend({
   auth,
@@ -478,3 +480,20 @@ backend.addOutput({
     linguisticDlqUrl: pipelineQueues.linguistic.dlq.queueUrl,
   },
 });
+
+// Per-Lambda reserved-concurrency caps (#68). Bounds the worst-
+// case AWS spend from a runaway pipeline stage. Caps are env-
+// tunable via `CONCURRENCY_<KEY>` (see `lambda-concurrency.ts`).
+// RESERVED only, never provisioned, per CLAUDE.md → Whisper
+// container Lambda ("tolerate cold start, no provisioned
+// concurrency"). Backends that haven't shipped yet (#54-#57,
+// #66 reprocess driver) will wire their own cap in their PR.
+(
+  backend.preprocess.resources.lambda.node.defaultChild as CfnFunction
+).reservedConcurrentExecutions = getConcurrencyCap('PREPROCESS');
+(
+  backend.transcribe.resources.lambda.node.defaultChild as CfnFunction
+).reservedConcurrentExecutions = getConcurrencyCap('TRANSCRIBE_DISPATCH');
+(
+  backend.linguistic.resources.lambda.node.defaultChild as CfnFunction
+).reservedConcurrentExecutions = getConcurrencyCap('LINGUISTIC');
