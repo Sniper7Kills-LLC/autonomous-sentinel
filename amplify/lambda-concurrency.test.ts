@@ -106,6 +106,21 @@ describe('getConcurrencyCap', () => {
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
+
+  it('rejects hex / mixed strings (admin tuning must be unambiguous decimal)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    expect(getConcurrencyCap('LINGUISTIC', { env: { CONCURRENCY_LINGUISTIC: '0xFF' } })).toBe(
+      DEFAULT_CONCURRENCY.LINGUISTIC,
+    );
+    expect(getConcurrencyCap('LINGUISTIC', { env: { CONCURRENCY_LINGUISTIC: '10abc' } })).toBe(
+      DEFAULT_CONCURRENCY.LINGUISTIC,
+    );
+    expect(getConcurrencyCap('LINGUISTIC', { env: { CONCURRENCY_LINGUISTIC: ' 10' } })).toBe(
+      DEFAULT_CONCURRENCY.LINGUISTIC,
+    );
+    expect(warn).toHaveBeenCalledTimes(3);
+    warn.mockRestore();
+  });
 });
 
 describe('readConcurrencyConfig', () => {

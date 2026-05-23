@@ -85,9 +85,21 @@ export function getConcurrencyCap(key: ConcurrencyKey, opts: ConcurrencyOpts = {
   const raw = env[`CONCURRENCY_${key}`];
   const fallback = DEFAULT_CONCURRENCY[key];
   if (raw === undefined || raw === null || raw === '') return fallback;
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed <= 0 || parsed > MAX_RESERVED_CONCURRENCY) {
+  // Strict decimal-only check before parseInt — `Number('0xFF')`
+  // and `parseInt('10abc', 10)` are both too lenient and could
+  // mask a typo'd env var (`0xFF`, `10abc`) as a valid cap.
+  // Admin tuning ought to be unambiguous decimal.
+  if (!/^[1-9]\d{0,3}$/.test(raw)) {
     console.warn('lambda-concurrency: ignoring invalid CONCURRENCY_* env var', {
+      key,
+      raw,
+      fallback,
+    });
+    return fallback;
+  }
+  const parsed = parseInt(raw, 10);
+  if (parsed <= 0 || parsed > MAX_RESERVED_CONCURRENCY) {
+    console.warn('lambda-concurrency: ignoring out-of-range CONCURRENCY_* env var', {
       key,
       raw,
       fallback,
