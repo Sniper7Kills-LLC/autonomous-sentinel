@@ -51,8 +51,11 @@ RUN bash ./models/download-ggml-model.sh medium.en
 FROM public.ecr.aws/lambda/nodejs:22
 
 # Whisper binary + model in /opt so we don't pollute the Lambda
-# task-root.
-COPY --from=builder /build/build/bin/whisper-cli /opt/whisper
+# task-root. whisper.cpp v1.7.2 builds the CLI as
+# `bin/main` (the rename to `whisper-cli` happened post-v1.7.2 on
+# the main branch); bump WHISPER_CPP_VERSION and update this path
+# together when adopting a release that ships the new name.
+COPY --from=builder /build/build/bin/main /opt/whisper
 COPY --from=builder /build/models/ggml-medium.en.bin /opt/models/medium.en.bin
 RUN chmod +x /opt/whisper
 
