@@ -127,7 +127,11 @@ interface TranscribeItem {
 
 interface AmazonTranscribePayload {
   results?: {
-    items?: TranscribeItem[];
+    // `unknown[]` because the normaliser performs its own runtime
+    // narrowing on each item and callers (e.g. #56 result-parser)
+    // hand it raw JSON whose item-array element type is open by
+    // contract.
+    items?: unknown[];
   };
 }
 
@@ -145,7 +149,9 @@ export function normalizeAmazonTranscribe(
   const items = payload?.results?.items;
   if (!Array.isArray(items)) return [];
   const out: WordTimestamp[] = [];
-  for (const item of items) {
+  for (const raw of items) {
+    if (!raw || typeof raw !== 'object') continue;
+    const item = raw as TranscribeItem;
     if (item.type === 'punctuation') continue;
     const startStr = item.start_time;
     const endStr = item.end_time;
