@@ -187,6 +187,14 @@ export async function denoise(opts: DenoiseOpts): Promise<DenoiseResult> {
   if (typeof opts.outputPath !== 'string' || opts.outputPath.length === 0) {
     throw new Error('denoise: outputPath required');
   }
+  if (opts.inputPath === opts.outputPath) {
+    // copyFile of a file onto itself truncates it on most
+    // filesystems (POSIX leaves it undefined); ffmpeg `-y -i x
+    // -af ... x` would re-read the stream it just overwrote.
+    // Either way the input is lost. Reject loudly so the
+    // deferred handler picks a distinct pipeline-temp/ path.
+    throw new Error('denoise: inputPath and outputPath must differ');
+  }
   const mode = opts.mode ?? DEFAULT_NOISE_REDUCTION_MODE;
 
   if (mode === 'off') {

@@ -112,6 +112,12 @@ describe('denoise — input validation', () => {
   it('throws on missing outputPath', async () => {
     await expect(denoise({ inputPath: '/in', outputPath: '' })).rejects.toThrow(/outputPath/);
   });
+
+  it('throws when inputPath === outputPath (would clobber input)', async () => {
+    await expect(denoise({ inputPath: '/same.wav', outputPath: '/same.wav' })).rejects.toThrow(
+      /must differ/,
+    );
+  });
 });
 
 describe('denoise — mode=off', () => {
