@@ -35,7 +35,11 @@ import { attachBudgetAlarms, readBudgetConfig } from './budgets';
 import { attachStorageLifecycle, readStorageLifecycleConfig } from './storage-lifecycle';
 import { attachPipelineQueues } from './pipeline-queues';
 import { getConcurrencyCap } from './lambda-concurrency';
-import type { CfnFunction } from 'aws-cdk-lib/aws-lambda';
+import { type CfnFunction, DockerImageCode, DockerImageFunction } from 'aws-cdk-lib/aws-lambda';
+import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
+import { Size } from 'aws-cdk-lib';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
 const backend = defineBackend({
   auth,
@@ -528,3 +532,64 @@ preprocessLambda.addToRolePolicy(
     resources: [`${mediaBucket.bucketArn}/recordings/originals/*`],
   }),
 );
+
+// Whisper container Lambda — self-hosted transcribe backend (#54).
+//
+// Container image declared by `amplify/functions/transcribe-whisper/
+// Dockerfile` from #53. `DockerImageCode.fromImageAsset` lets
+// cdk-assets build + push the image at synth time via the binary
+// pointed at by `CDK_DOCKER` (set to `podman` in this project per
+// the owner's setup — see #341 native-deps decision).
+//
+// Resource sizing per #54 spec + CLAUDE.md → Stack table:
+//   - memorySize 3008 MB: medium model (~1.5 GB) + ffmpeg-decoded
+//     audio + Node heap. Lambda gets ~2 vCPU at this memory tier.
+//   - timeout 15 min: chunker (#59) keeps inputs ≤ 5 min, so a
+//     single invoke fits comfortably; headroom covers cold-start +
+//     retries.
+//   - ephemeralStorage 2048 MB: /tmp holds the Opus download +
+//     whisper.cpp JSON output during processing.
+//   - RESERVED concurrency only, never provisioned, per CLAUDE.md
+//     ("tolerate cold start, no provisioned concurrency"). Cap
+//     env-tunable via `CONCURRENCY_TRANSCRIBE_WHISPER_LOCAL`.
+//
+// IAM:
+//   - S3 GetObject on `recordings/web/*` — download canonical Opus.
+//   - S3 PutObject on `pipeline-temp/*` — stage whisper.json for
+//     the deferred finalizer Lambda to ingest into the Recording
+//     row.
+//
+// SQS:
+//   - Subscribes to the transcribe queue from #67 with batchSize=1.
+//     One Recording per invoke. The selector dispatcher (#58)
+//     fronts this once the other three backends ship — for v1
+//     this Lambda is the only consumer.
+const transcribeWhisperStack = backend.createStack('TranscribeWhisperStack');
+const backendDir = dirname(fileURLToPath(import.meta.url));
+const whisperFn = new DockerImageFunction(transcribeWhisperStack, 'TranscribeWhisperFn', {
+  code: DockerImageCode.fromImageAsset(join(backendDir, 'functions/transcribe-whisper'), {
+    platform: Platform.LINUX_AMD64,
+  }),
+  memorySize: 3008,
+  timeout: Duration.minutes(15),
+  ephemeralStorageSize: Size.mebibytes(2048),
+  environment: {
+    RECORDINGS_BUCKET: mediaBucket.bucketName,
+    PIPELINE_TEMP_PREFIX: 'pipeline-temp',
+    WHISPER_LANGUAGE: 'en',
+  },
+  reservedConcurrentExecutions: getConcurrencyCap('TRANSCRIBE_WHISPER_LOCAL'),
+});
+whisperFn.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['s3:GetObject'],
+    resources: [`${mediaBucket.bucketArn}/recordings/web/*`],
+  }),
+);
+whisperFn.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['s3:PutObject', 's3:DeleteObject', 's3:AbortMultipartUpload'],
+    resources: [`${mediaBucket.bucketArn}/pipeline-temp/*`],
+  }),
+);
+whisperFn.addEventSource(new SqsEventSource(pipelineQueues.transcribe.main, { batchSize: 1 }));
