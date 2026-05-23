@@ -1,4 +1,4 @@
-import type { Handler } from 'aws-lambda';
+import type { SQSEvent, SQSHandler } from 'aws-lambda';
 import { TransactWriteItemsCommand, type TransactWriteItem } from '@aws-sdk/client-dynamodb';
 import { marshall } from '@aws-sdk/util-dynamodb';
 import { randomUUID } from 'node:crypto';
@@ -168,7 +168,18 @@ async function resolveDeps(): Promise<WorkerDeps> {
   };
 }
 
-export const handler: Handler<LegacyClaimWorkerEvent, void> = async (event) => {
+/**
+ * Process a single legacy-claim event (one User-row PK rewrite + FK
+ * fan-out). Extracted from the SQS `handler` so tests can drive the
+ * claim path directly without wrapping in an `SQSEvent`, and so the
+ * replay sweeper / future re-invokers can call the same code path.
+ *
+ * Throws on validation failure (missing fields) and on any
+ * downstream DDB / audit error. The SQS handler converts that into
+ * a record-level failure so SQS retries + DLQs the offending
+ * message; the user's sign-up is already long gone by this point.
+ */
+export async function processClaim(event: LegacyClaimWorkerEvent): Promise<void> {
   if (!event.realSub) {
     throw new Error('legacyClaimWorker: realSub is required');
   }
@@ -233,4 +244,25 @@ export const handler: Handler<LegacyClaimWorkerEvent, void> = async (event) => {
     claimId,
     summary,
   });
+}
+
+/**
+ * SQS event source handler (#318). Each record carries a JSON-
+ * encoded `LegacyClaimWorkerEvent` in `body`; route each through
+ * `processClaim`. Errors rethrown so SQS retries + DLQs the
+ * specific failing message rather than masking with a silent
+ * swallow.
+ *
+ * SQS event source mappings deliver messages in batches; iterating
+ * sequentially keeps the per-record DDB transact + fan-out work
+ * serialised on the lambda's single execution. Batching at the SDK
+ * level (e.g. via `partialBatchResponse`) is a future optimisation
+ * if claim volume grows; v1 traffic is bounded by sign-up rate, so
+ * serial is fine.
+ */
+export const handler: SQSHandler = async (event: SQSEvent) => {
+  for (const record of event.Records) {
+    const payload = JSON.parse(record.body) as LegacyClaimWorkerEvent;
+    await processClaim(payload);
+  }
 };

@@ -1,12 +1,36 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { Context } from 'aws-lambda';
+import type { Context, SQSEvent, SQSRecord } from 'aws-lambda';
 import {
   handler,
+  processClaim,
   __setDeps,
   __resetDeps,
   type LegacyClaimWorkerEvent,
   type WorkerDeps,
 } from './handler';
+
+function sqsEventFrom(...payloads: LegacyClaimWorkerEvent[]): SQSEvent {
+  return {
+    Records: payloads.map(
+      (p, idx): SQSRecord => ({
+        messageId: `msg-${idx}`,
+        receiptHandle: `handle-${idx}`,
+        body: JSON.stringify(p),
+        attributes: {
+          ApproximateReceiveCount: '1',
+          SentTimestamp: '0',
+          SenderId: 'AROA-test',
+          ApproximateFirstReceiveTimestamp: '0',
+        },
+        messageAttributes: {},
+        md5OfBody: '',
+        eventSource: 'aws:sqs',
+        eventSourceARN: 'arn:aws:sqs:us-east-1:123:legacy-claim-q',
+        awsRegion: 'us-east-1',
+      }),
+    ),
+  };
+}
 
 /**
  * Tests for `legacyClaimWorker` (sub-A of #16, #272).
@@ -113,7 +137,7 @@ describe('legacyClaimWorker', () => {
     });
     __setDeps(deps);
 
-    await handler(baseEvent, {} as Context, () => undefined);
+    await processClaim(baseEvent);
 
     expect(deps.listSpy).toHaveBeenCalledWith({ email: 'reclaim@example.com' });
     expect(deps.transactSpy).toHaveBeenCalledOnce();
@@ -127,7 +151,7 @@ describe('legacyClaimWorker', () => {
     const deps = makeStubDeps({ rowsByEmail: [] });
     __setDeps(deps);
 
-    await handler(baseEvent, {} as Context, () => undefined);
+    await processClaim(baseEvent);
 
     expect(deps.listSpy).toHaveBeenCalledOnce();
     expect(deps.transactSpy).not.toHaveBeenCalled();
@@ -146,7 +170,7 @@ describe('legacyClaimWorker', () => {
     });
     __setDeps(deps);
 
-    await handler(baseEvent, {} as Context, () => undefined);
+    await processClaim(baseEvent);
     expect(deps.transactSpy).not.toHaveBeenCalled();
     expect(deps.auditSpy).not.toHaveBeenCalled();
   });
@@ -166,21 +190,101 @@ describe('legacyClaimWorker', () => {
     });
     __setDeps(deps);
 
-    await expect(handler(baseEvent, {} as Context, () => undefined)).rejects.toThrow(
-      /TransactionCanceledException/,
-    );
+    await expect(processClaim(baseEvent)).rejects.toThrow(/TransactionCanceledException/);
     expect(deps.auditSpy).not.toHaveBeenCalled();
   });
 
   it('rejects an event missing realSub or email — caller bug, fail loudly', async () => {
     __setDeps(makeStubDeps());
 
-    await expect(
-      handler({ realSub: '', email: 'x' }, {} as Context, () => undefined),
-    ).rejects.toThrow(/realSub/);
+    await expect(processClaim({ realSub: '', email: 'x' })).rejects.toThrow(/realSub/);
+    await expect(processClaim({ realSub: 'x', email: '' })).rejects.toThrow(/email/);
+  });
+});
 
-    await expect(
-      handler({ realSub: 'x', email: '' }, {} as Context, () => undefined),
-    ).rejects.toThrow(/email/);
+describe('legacyClaimWorker — SQS handler (#318)', () => {
+  beforeEach(() => {
+    __resetDeps();
+  });
+
+  it('iterates SQSEvent records and invokes processClaim once per record body', async () => {
+    // After #318 the worker is wired as an SqsEventSource consumer
+    // (previously: direct Lambda async-invoke from postConfirmation).
+    // The SDK delivers SQSEvent with `Records[]`; the handler must
+    // JSON.parse each record's `body` and route it through the same
+    // claim-processing path the legacy direct-invoke event shape
+    // exercised.
+    const deps = makeStubDeps({
+      rowsByEmail: [
+        {
+          cognitoSub: 'legacy:42',
+          email: null,
+          legacyEmail: 'reclaim-a@example.com',
+          legacyUserId: 42,
+          claimStatus: 'PENDING_CLAIM',
+        },
+      ],
+    });
+    __setDeps(deps);
+
+    const event = sqsEventFrom(
+      { realSub: 'cog-real-1', email: 'reclaim-a@example.com' },
+      { realSub: 'cog-real-2', email: 'reclaim-b@example.com' },
+    );
+    await handler(event, {} as Context, () => undefined);
+
+    // listUserByEmail fires once per record (two records).
+    expect(deps.listSpy).toHaveBeenCalledTimes(2);
+    expect(deps.listSpy).toHaveBeenNthCalledWith(1, { email: 'reclaim-a@example.com' });
+    expect(deps.listSpy).toHaveBeenNthCalledWith(2, { email: 'reclaim-b@example.com' });
+  });
+
+  it('rethrows so Lambda + DLQ take over when a record fails processing (no silent swallow)', async () => {
+    // SQS event-source mappings retry + dead-letter on thrown errors.
+    // Swallowing would lose the message; rethrow is the right default.
+    const deps = makeStubDeps({
+      rowsByEmail: [
+        {
+          cognitoSub: 'legacy:7',
+          email: null,
+          legacyEmail: 'reclaim@example.com',
+          legacyUserId: 7,
+          claimStatus: 'PENDING_CLAIM',
+        },
+      ],
+      transactErr: new Error('TransactionCanceledException'),
+    });
+    __setDeps(deps);
+
+    const event = sqsEventFrom(baseEvent);
+    await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(
+      /TransactionCanceledException/,
+    );
+  });
+
+  it('rejects a malformed record body — caller bug, fail loud', async () => {
+    __setDeps(makeStubDeps());
+
+    const event: SQSEvent = {
+      Records: [
+        {
+          messageId: 'bad-1',
+          receiptHandle: 'h',
+          body: 'not-json{{',
+          attributes: {
+            ApproximateReceiveCount: '1',
+            SentTimestamp: '0',
+            SenderId: 'x',
+            ApproximateFirstReceiveTimestamp: '0',
+          },
+          messageAttributes: {},
+          md5OfBody: '',
+          eventSource: 'aws:sqs',
+          eventSourceARN: 'arn:aws:sqs:us-east-1:123:q',
+          awsRegion: 'us-east-1',
+        },
+      ],
+    };
+    await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow();
   });
 });
