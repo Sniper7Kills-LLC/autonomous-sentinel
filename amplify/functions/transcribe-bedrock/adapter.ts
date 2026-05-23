@@ -41,12 +41,14 @@ export class BedrockMultimodalNotSupported extends Error {
 
 export class BedrockAdapterError extends Error {
   readonly modelId: string;
-  override readonly cause?: unknown;
   constructor(modelId: string, message: string, cause?: unknown) {
-    super(message);
+    // Native Error.cause via the options bag (Node 22 / ES2022)
+    // survives `Error.captureStackTrace` on every engine —
+    // assigning after `super()` is the path that historically
+    // got clobbered.
+    super(message, cause !== undefined ? { cause } : undefined);
     this.name = 'BedrockAdapterError';
     this.modelId = modelId;
-    this.cause = cause;
   }
 }
 
@@ -126,6 +128,17 @@ export class ClaudeAudioAdapter implements BedrockAudioAdapter {
   constructor(deps: ClaudeAdapterDeps) {
     this.modelId = deps.modelId;
     this.client = deps.client ?? new BedrockRuntimeClient({});
+    // Loud cold-start marker so admins searching CloudWatch see
+    // they've enabled the pre-GA placeholder path — the base64-
+    // in-text request shape is not the official audio content
+    // block AWS will ship, so transcript quality will be poor
+    // until the TODO below is resolved.
+    console.warn(
+      'ClaudeAudioAdapter: running PRE-GA placeholder request shape (#57). ' +
+        'Swap to the official Bedrock audio content block before relying on ' +
+        'transcript quality.',
+      { modelId: this.modelId },
+    );
   }
 
   async transcribe(req: BedrockAudioRequest): Promise<BedrockAudioResponse> {
