@@ -32,6 +32,7 @@ import { legacyClaimWorker } from './functions/legacyClaimWorker/resource';
 import { legacyClaimReplaySweeper } from './functions/legacyClaimReplaySweeper/resource';
 import { fieldVoteOrphanJanitor } from './functions/fieldVoteOrphanJanitor/resource';
 import { attachBudgetAlarms, readBudgetConfig } from './budgets';
+import { attachStorageLifecycle, readStorageLifecycleConfig } from './storage-lifecycle';
 
 const backend = defineBackend({
   auth,
@@ -444,3 +445,12 @@ new Rule(fieldVoteOrphanJanitorLambda.stack, 'FieldVoteOrphanJanitorDailySweep',
 // Cost-discipline budget alarms (#7). Lives in its own nested stack so it can
 // be removed or replaced without touching the data / function stacks.
 attachBudgetAlarms(backend.createStack('BudgetsStack'), readBudgetConfig());
+
+// S3 lifecycle + versioning + CORS + encryption configuration on
+// the media bucket (#44, #45, #47, #48). Applied via L1 escape-hatch
+// on the bucket `defineStorage()` creates — surfaces those knobs
+// without forcing us to abandon `defineStorage` for a raw `Bucket`
+// construct. Default CORS origin set covers localhost + beta.eam.
+// watch; production cutover sets `AS_STORAGE_CORS_ORIGINS` to
+// include `https://eam.watch` without a code change.
+attachStorageLifecycle(backend.storage.resources.bucket, readStorageLifecycleConfig());
