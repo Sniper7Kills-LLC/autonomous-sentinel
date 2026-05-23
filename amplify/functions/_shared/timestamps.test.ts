@@ -95,6 +95,23 @@ describe('normalizeWhisperCpp', () => {
     expect(out[0]).toEqual({ word: 'X', startMs: 0, endMs: 500 });
     expect(out[0]).not.toHaveProperty('confidence');
   });
+
+  it('drops out-of-range confidence (defensive against corrupt backend output)', () => {
+    const out = normalizeWhisperCpp({
+      transcription: [
+        {
+          tokens: [
+            { text: 'A', t0: 0, t1: 50, p: -0.1 },
+            { text: 'B', t0: 60, t1: 110, p: 1.5 },
+            { text: 'C', t0: 120, t1: 170, p: 0.5 },
+          ],
+        },
+      ],
+    });
+    expect(out[0]).not.toHaveProperty('confidence');
+    expect(out[1]).not.toHaveProperty('confidence');
+    expect(out[2]?.confidence).toBe(0.5);
+  });
 });
 
 describe('normalizeAmazonTranscribe', () => {
@@ -175,6 +192,29 @@ describe('normalizeAmazonTranscribe', () => {
       },
     });
     expect(out[0]).not.toHaveProperty('confidence');
+  });
+
+  it('drops out-of-range confidence values', () => {
+    const out = normalizeAmazonTranscribe({
+      results: {
+        items: [
+          {
+            type: 'pronunciation',
+            start_time: '0.0',
+            end_time: '0.5',
+            alternatives: [{ content: 'X', confidence: '1.5' }],
+          },
+          {
+            type: 'pronunciation',
+            start_time: '0.6',
+            end_time: '1.0',
+            alternatives: [{ content: 'Y', confidence: '0.95' }],
+          },
+        ],
+      },
+    });
+    expect(out[0]).not.toHaveProperty('confidence');
+    expect(out[1]?.confidence).toBe(0.95);
   });
 });
 

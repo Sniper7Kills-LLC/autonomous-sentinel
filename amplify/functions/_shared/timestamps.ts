@@ -104,7 +104,7 @@ export function normalizeWhisperCpp(
         startMs: Math.round(t.t0 * 10),
         endMs: Math.round(t.t1 * 10),
       };
-      if (typeof t.p === 'number' && Number.isFinite(t.p)) entry.confidence = t.p;
+      if (isValidConfidence(t.p)) entry.confidence = t.p;
       out.push(entry);
     }
   }
@@ -162,7 +162,7 @@ export function normalizeAmazonTranscribe(
     };
     if (typeof alt.confidence === 'string') {
       const c = Number(alt.confidence);
-      if (Number.isFinite(c)) entry.confidence = c;
+      if (isValidConfidence(c)) entry.confidence = c;
     }
     out.push(entry);
   }
@@ -211,6 +211,13 @@ export function stitchChunks(chunks: WordChunk[]): WordTimestamp[] {
 }
 
 /* ----- internals -------------------------------------------------- */
+
+function isValidConfidence(value: unknown): value is number {
+  if (typeof value !== 'number') return false;
+  if (!Number.isFinite(value)) return false;
+  if (value < 0 || value > 1) return false;
+  return true;
+}
 
 function isFiniteSecondsRange(start: unknown, end: unknown): boolean {
   if (typeof start !== 'number' || typeof end !== 'number') return false;
