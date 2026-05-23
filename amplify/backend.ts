@@ -181,11 +181,19 @@ if (!notificationPreferenceTable) {
   throw new Error('backend: NotificationPreference table not found on data resources');
 }
 const notificationPrefKmsStack = backend.createStack('NotificationPrefKmsStack');
+// No explicit `alias` on the Key — KMS aliases are account-globally
+// unique, NOT stack-scoped, so a hardcoded alias collides whenever
+// two stacks (e.g. local sandbox + Amplify Hosting branch) deploy
+// this same template into the same account (#328 — same class as
+// #326's Budgets-name collision). The notificationPreferenceMutations
+// Lambda references the key by `keyId` token below, NOT by alias,
+// so dropping the alias has no functional impact. A future operator
+// who wants a console-readable alias should derive it from
+// `Stack.of(scope).stackName` so each environment gets its own.
 const notificationPrefKey = new Key(notificationPrefKmsStack, 'NotificationPrefWebhookUrlKey', {
   description:
     'Symmetric KMS key for NotificationPreference.discordWebhookUrl encryption-at-rest (#288).',
   enableKeyRotation: true,
-  alias: 'autonomous-sentinel/notification-preference-webhook-url',
 });
 const notificationPrefLambda = backend.notificationPreferenceMutations.resources
   .lambda as LambdaFunction;
