@@ -47,7 +47,11 @@ export const FieldVote = a
     fieldKey: a.string().required(),
     messageId: a.id().required(),
     message: a.belongsTo('Message', 'messageId'),
-    field: a.enum(['SENDER', 'RECEIVER', 'BODY', 'TYPE']),
+    // Ref the named `FieldVoteField` enum exported below (#310) — an
+    // inline `a.enum([...])` here used to ship alongside the named
+    // enum and AppSync rejected the resulting schema for declaring
+    // `enum FieldVoteField` twice.
+    field: a.ref('FieldVoteField').required(),
     value: a.string().required(),
     // Cognito sub of the voter — `User.id = cognitoSub` (#259).
     voterId: a.id().required(),
