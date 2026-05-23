@@ -1,0 +1,40 @@
+# Amplify Hosting build spec for the autonomous-sentinel monorepo (#6).
+#
+# `appRoot: web` makes Amplify auto-detect the Next.js workspace and
+# its SSR runtime — without it the host would not pick up the Next
+# build output. Working directory inside each phase is `web/`, so the
+# `--prefix ../` flag on `npm ci` installs hoisted workspace deps from
+# the monorepo root.
+#
+# The backend phase runs `ampx pipeline-deploy` against the deploy-
+# time branch + app id; both flow from Amplify Hosting tokens, never
+# hardcoded — preview environments and the eventual production
+# cutover (#230) depend on that.
+version: 1
+applications:
+  - appRoot: web
+    backend:
+      phases:
+        build:
+          commands:
+            - npm ci --prefix ../ --cache ../.npm --prefer-offline
+            - cd ..
+            - npx ampx pipeline-deploy --branch $AWS_BRANCH --app-id $AWS_APP_ID
+            - cd web
+    frontend:
+      phases:
+        preBuild:
+          commands:
+            - npm ci --prefix ../ --cache ../.npm --prefer-offline
+        build:
+          commands:
+            - npm run build
+      artifacts:
+        baseDirectory: .next
+        files:
+          - '**/*'
+      cache:
+        paths:
+          - ../.npm/**/*
+          - ../node_modules/**/*
+          - .next/cache/**/*
