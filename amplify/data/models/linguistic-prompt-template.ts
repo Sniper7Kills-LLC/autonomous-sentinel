@@ -23,6 +23,24 @@ import { a } from '@aws-amplify/backend';
  *   - The Lambda treats a multi-active state as a bug: the
  *     first-by-version-desc wins; CloudWatch warn logged.
  *
+ * Invariants enforced by the deferred admin mutation (NOT the
+ * Amplify Gen 2 model layer, which has no composite-uniqueness
+ * or string-content validation primitives):
+ *   - `(promptId, version)` uniqueness — the create mutation reads
+ *     the current max version for the promptId via a GSI Query and
+ *     writes `max + 1` under a conditional `attribute_not_exists`
+ *     guard on the synthesised composite key. Concurrent admin
+ *     creates lose the race and retry with the new max.
+ *   - `body` contains `{{TRANSCRIPT}}` — the create + update
+ *     mutations reject any body string that fails the placeholder
+ *     check before the row lands. The Lambda render step assumes
+ *     the placeholder is present (matches the `ai-fallback.ts`
+ *     #63 contract — that helper throws on missing placeholder, so
+ *     the mutation MUST catch it at write time, not parse time).
+ *   - Exactly one `isActive=true` row per `promptId` — atomic
+ *     activation mutation flips the prior active row to `false` +
+ *     the new row to `true` inside a TransactWriteItems.
+ *
  * Authz:
  *   - admin group: full CRUD (only mutators).
  *   - linguistic Lambda: schema-level `allow.resource(...)` grant

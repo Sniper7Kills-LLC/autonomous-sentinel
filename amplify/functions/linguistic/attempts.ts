@@ -122,8 +122,9 @@ export function lastSuccessfulResult(
   key: SkipKey,
 ): LinguisticAttempt | undefined {
   if (!Array.isArray(attempts) || attempts.length === 0) return undefined;
-  // Iterate in reverse for most-recent-first; tie-break by ts ISO
-  // string lex compare (ISO 8601 sorts lex == chronological).
+  // Track the max-ts matching attempt — ISO 8601 strings sort
+  // lex == chronological, so a single forward pass with a `>`
+  // compare gives us the most-recent successful match.
   let best: LinguisticAttempt | undefined;
   for (const a of attempts) {
     if (
