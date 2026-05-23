@@ -68,6 +68,18 @@ export function parseTranscribeResult(
   if (typeof transcriptText !== 'string') {
     throw new Error('parseTranscribeResult: results.transcripts[0].transcript is not a string');
   }
+  if (transcriptText.trim() === '') {
+    // An empty transcript means the recording transcribed to
+    // silence — per CLAUDE.md → Pipeline components ("failed
+    // transcription → recording stored with
+    // `transcription_failed=true`, no Message") that is a
+    // failed-transcription outcome, not a valid empty result.
+    // Throwing routes the row to the transcribe DLQ from #67
+    // for the deferred finalizer's failed-transcription path
+    // rather than letting it pass into Linguistic Logic where
+    // no rule will match.
+    throw new Error('parseTranscribeResult: transcript text is empty (transcription_failed)');
+  }
 
   const language = typeof results.language_code === 'string' ? results.language_code : null;
 
@@ -86,9 +98,14 @@ export function parseTranscribeResult(
     }
   }
 
-  const words = normalizeAmazonTranscribe(
-    payload as Parameters<typeof normalizeAmazonTranscribe>[0],
-  );
+  // Pass only the `items` slice the normaliser cares about so
+  // the call site doesn't lean on a structural-cast between the
+  // wider `TranscribeOutputJson` and the narrower
+  // `AmazonTranscribePayload`. `items` may legitimately be
+  // `undefined` here — normaliser returns `[]` in that case.
+  const words = normalizeAmazonTranscribe({
+    results: { items: Array.isArray(results.items) ? results.items : undefined },
+  });
 
   return {
     text: transcriptText,

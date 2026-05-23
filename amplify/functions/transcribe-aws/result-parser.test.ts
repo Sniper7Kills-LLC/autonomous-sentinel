@@ -135,4 +135,17 @@ describe('parseTranscribeResult — malformed input', () => {
       }),
     ).toThrow(/transcript is not a string/);
   });
+
+  it('throws on empty / whitespace-only transcript (transcription_failed)', () => {
+    expect(() =>
+      parseTranscribeResult({
+        results: { transcripts: [{ transcript: '' }] },
+      }),
+    ).toThrow(/transcription_failed/);
+    expect(() =>
+      parseTranscribeResult({
+        results: { transcripts: [{ transcript: '   ' }] },
+      }),
+    ).toThrow(/transcription_failed/);
+  });
 });
