@@ -73,7 +73,14 @@ export function attachBudgetAlarms(stack: Stack, config: BudgetConfig): CfnBudge
 
   return new CfnBudget(stack, 'AutonomousSentinelMonthlyBudget', {
     budget: {
-      budgetName: 'autonomous-sentinel-monthly',
+      // No explicit `budgetName` — AWS Budgets names are account-
+      // scoped uniques, NOT stack-scoped, so a hardcoded value
+      // collides whenever two stacks (e.g. local sandbox + Amplify
+      // Hosting branch) deploy this same template into the same
+      // account (#326). CFN generates a stable
+      // `<stack-name>-<logicalId>-<hash>` name in lieu of one we
+      // supply, which stays unique per stack instance while still
+      // surfacing recognisably in the Budgets console.
       budgetType: 'COST',
       timeUnit: 'MONTHLY',
       budgetLimit: {
