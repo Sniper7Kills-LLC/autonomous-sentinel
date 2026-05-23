@@ -24,7 +24,7 @@
 #   curl -X POST 'http://localhost:9000/2015-03-31/functions/function/invocations' \
 #     -d '{"Records":[{"body":"..."}]}'
 
-ARG WHISPER_CPP_VERSION=v1.7.2
+ARG WHISPER_CPP_VERSION=v1.8.4
 
 # ----- stage 1: build whisper.cpp -----------------------------------
 FROM public.ecr.aws/lambda/nodejs:22 AS builder
@@ -51,11 +51,11 @@ RUN bash ./models/download-ggml-model.sh medium.en
 FROM public.ecr.aws/lambda/nodejs:22
 
 # Whisper binary + model in /opt so we don't pollute the Lambda
-# task-root. whisper.cpp v1.7.2 builds the CLI as
-# `bin/main` (the rename to `whisper-cli` happened post-v1.7.2 on
-# the main branch); bump WHISPER_CPP_VERSION and update this path
-# together when adopting a release that ships the new name.
-COPY --from=builder /build/build/bin/main /opt/whisper
+# task-root. whisper.cpp v1.8.x ships the CLI as `bin/whisper-cli`
+# (renamed from `bin/main` in v1.7.x). If bumping
+# WHISPER_CPP_VERSION below v1.7.2, update this path to
+# `bin/main`.
+COPY --from=builder /build/build/bin/whisper-cli /opt/whisper
 COPY --from=builder /build/models/ggml-medium.en.bin /opt/models/medium.en.bin
 RUN chmod +x /opt/whisper
 
