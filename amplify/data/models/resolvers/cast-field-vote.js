@@ -40,6 +40,8 @@
  * are documented via JSDoc and pinned by `./cast-field-vote.test.ts`.
  */
 
+import { util } from '@aws-appsync/utils';
+
 /**
  * @typedef {'SENDER' | 'RECEIVER' | 'BODY' | 'TYPE'} FieldVoteField
  *
@@ -68,23 +70,26 @@ export function request(ctx) {
   // empty PK component would leave a malformed row in the table that the
   // public aggregate count would happily roll into the wrong bucket.
   if (!messageId || messageId.trim() === '') {
-    throw new Error('castFieldVote: messageId argument is required');
+    util.error('castFieldVote: messageId argument is required');
   }
-  if (!field || String(field).trim() === '') {
-    throw new Error('castFieldVote: field argument is required');
+  if (!field || `${field}`.trim() === '') {
+    util.error('castFieldVote: field argument is required');
   }
   if (!value || value.trim() === '') {
-    throw new Error('castFieldVote: value argument is required');
+    util.error('castFieldVote: value argument is required');
   }
 
   // The voter is whoever the JWT says they are — never the client's claim.
   if (!ctx.identity || !ctx.identity.sub) {
-    throw new Error('castFieldVote: caller identity (Cognito sub) is required');
+    util.error('castFieldVote: caller identity (Cognito sub) is required');
   }
   const voterId = ctx.identity.sub;
 
   const fieldKey = `${messageId}#${field}#${voterId}`;
-  const now = new Date().toISOString();
+  // `util.time.nowISO8601()` instead of `new Date().toISOString()` —
+  // APPSYNC_JS rejects NewExpression. Built-in `util` is the runtime's
+  // time/encoding helper module.
+  const now = util.time.nowISO8601();
 
   // Live Reputation snapshot read by the upstream pipeline step.
   // Missing row falls back to 1 (base weight) — pre-#36 lazy-create
@@ -110,7 +115,7 @@ export function request(ctx) {
     ':field': { S: field },
     ':voterId': { S: voterId },
     ':value': { S: value },
-    ':weightAtVoteTime': { N: String(liveWeight) },
+    ':weightAtVoteTime': { N: `${liveWeight}` },
     ':now': { S: now },
   };
 

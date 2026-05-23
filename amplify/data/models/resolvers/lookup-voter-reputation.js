@@ -27,6 +27,8 @@
  * pinned by `./lookup-voter-reputation.test.ts`.
  */
 
+import { util } from '@aws-appsync/utils';
+
 /**
  * @typedef {Object} VoterIdentity
  * @property {string} [sub]
@@ -44,7 +46,7 @@ export function request(ctx) {
   // resolver also asserts this; failing here keeps the pipeline
   // short on bad input.
   if (!ctx.identity || !ctx.identity.sub) {
-    throw new Error('lookup-voter-reputation: caller identity (Cognito sub) is required');
+    util.error('lookup-voter-reputation: caller identity (Cognito sub) is required');
   }
   const voterId = ctx.identity.sub;
   return {

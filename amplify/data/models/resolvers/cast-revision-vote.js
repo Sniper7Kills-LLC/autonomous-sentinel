@@ -28,6 +28,8 @@
  * Behaviour pinned by `./cast-revision-vote.test.ts`.
  */
 
+import { util } from '@aws-appsync/utils';
+
 /**
  * @typedef {'UP' | 'DOWN'} RevisionVoteValue
  *
@@ -52,17 +54,17 @@ export function request(ctx) {
   const { revisionId, value } = ctx.arguments;
 
   if (!revisionId || revisionId.trim() === '') {
-    throw new Error('castRevisionVote: revisionId argument is required');
+    util.error('castRevisionVote: revisionId argument is required');
   }
-  if (!value || String(value).trim() === '') {
-    throw new Error('castRevisionVote: value argument is required');
+  if (!value || `${value}`.trim() === '') {
+    util.error('castRevisionVote: value argument is required');
   }
   if (value !== 'UP' && value !== 'DOWN') {
-    throw new Error(`castRevisionVote: value must be UP or DOWN; got ${value}`);
+    util.error(`castRevisionVote: value must be UP or DOWN; got ${value}`);
   }
 
   if (!ctx.identity || !ctx.identity.sub) {
-    throw new Error('castRevisionVote: caller identity (Cognito sub) is required');
+    util.error('castRevisionVote: caller identity (Cognito sub) is required');
   }
   const voterId = ctx.identity.sub;
 
@@ -81,7 +83,7 @@ export function request(ctx) {
   const expressionValues = {
     ':voterId': { S: voterId },
     ':value': { S: value },
-    ':weightAtVoteTime': { N: String(liveWeight) },
+    ':weightAtVoteTime': { N: `${liveWeight}` },
   };
 
   const setClauses = [
