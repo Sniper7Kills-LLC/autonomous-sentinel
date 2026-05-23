@@ -56,6 +56,26 @@ describe('RevisionVote model authz (#35)', () => {
     expect(authedRule?.operations).not.toContain('create');
     expect(authedRule?.operations).toContain('read');
   });
+
+  it('does NOT grant any owner-side write op (#312 — castRevisionVote is the only write path)', () => {
+    // Owner-side `update` / `delete` would expose the auto-generated
+    // `updateRevisionVote` / `deleteRevisionVote` mutations. A voter
+    // could then bypass `castRevisionVote`'s `weightAtVoteTime`
+    // if_not_exists snapshot by directly UpdateItem-ing their own
+    // row, and the cast-resolver's `voterId-from-ctx.identity.sub`
+    // invariant (#259) would not protect against a self-targeted
+    // update. Drop owner-write entirely so the cast resolver is the
+    // sole authoritative write surface.
+    type AuthzWithOps = AuthzRule & { operations?: string[] };
+    const writeOps = new Set(['create', 'update', 'delete']);
+    const owners = authzRules(RevisionVote).filter(
+      (r): r is AuthzWithOps => r.strategy === 'owner',
+    );
+    for (const owner of owners) {
+      const hasWrite = (owner.operations ?? []).some((op) => writeOps.has(op));
+      expect(hasWrite).toBe(false);
+    }
+  });
 });
 
 describe('RevisionVote.value column shape (#310)', () => {

@@ -165,8 +165,12 @@ describe('Owner-FK binding wires explicit field + sub claim', () => {
     { name: 'Sdr', model: Sdr, fkField: 'ownerId' },
     { name: 'Comment', model: Comment, fkField: 'authorId' },
     { name: 'AbuseReport', model: AbuseReport, fkField: 'reporterId' },
-    { name: 'FieldVote', model: FieldVote, fkField: 'voterId' },
-    { name: 'RevisionVote', model: RevisionVote, fkField: 'voterId' },
+    // FieldVote + RevisionVote have NO owner authz rule after #312 —
+    // owner-side `update` / `delete` would bypass the cast-resolver's
+    // weight-snapshot + voterId-from-identity invariants. The model-
+    // specific `does NOT grant any owner-side write op` tests in
+    // `field-vote.test.ts` + `revision-vote.test.ts` pin that
+    // contract; the owner-FK-binding row sweep here drops both.
     { name: 'Donation', model: Donation, fkField: 'userId' },
     {
       name: 'NotificationPreference',
