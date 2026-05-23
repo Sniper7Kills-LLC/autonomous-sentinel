@@ -116,11 +116,15 @@ describe('amplify.yml — frontend phase (Next.js build)', () => {
     expect(build).toContain('npm run build');
   });
 
-  it('points artifacts at the Next.js `.next` directory relative to appRoot', () => {
+  it('points artifacts at the Next.js static export `out` directory relative to appRoot (#330)', () => {
     // With `appRoot: web`, baseDirectory is resolved from `web/`.
-    // Anything other than `.next` would break Amplify's Next.js SSR
-    // auto-detection.
-    expect(app?.frontend?.artifacts?.baseDirectory).toBe('.next');
+    // `out/` matches `output: 'export'` in `web/next.config.mjs` —
+    // Amplify Hosting serves the resulting static bundle via the WEB
+    // platform. When SSR routes land, swap to `output: 'standalone'`
+    // + the Amplify Hosting Next.js framework adapter that produces
+    // `.amplify-hosting/deploy-manifest.json` (WEB_COMPUTE), and
+    // update this assertion to the new directory.
+    expect(app?.frontend?.artifacts?.baseDirectory).toBe('out');
   });
 
   it('caches hoisted node_modules + the Next.js build cache', () => {
