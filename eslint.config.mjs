@@ -1,6 +1,7 @@
 // @ts-check
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
+import globals from 'globals';
 import prettier from 'eslint-config-prettier';
 
 /**
@@ -53,10 +54,24 @@ export default tseslint.config(
       'no-var': 'error',
     },
   },
-  // Disable type-aware lint for files outside any tsconfig (configs themselves)
+  // Disable type-aware lint for files outside any tsconfig (configs themselves +
+  // in-container Lambda handlers that ship as plain `.mjs`). The
+  // `projectService: false` knob is what stops the TS parser from
+  // demanding these files be in `tsconfig.include`.
   {
     files: ['**/*.{js,mjs,cjs}'],
     ...tseslint.configs.disableTypeChecked,
+    languageOptions: {
+      globals: { ...globals.node },
+      parserOptions: {
+        projectService: false,
+        project: null,
+      },
+    },
+    rules: {
+      ...tseslint.configs.disableTypeChecked.rules,
+      'no-console': 'off',
+    },
   },
   prettier,
 );
