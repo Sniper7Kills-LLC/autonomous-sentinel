@@ -76,11 +76,22 @@ interface ShouldReprocessOpts {
  * prompt-version bump.
  *
  * Returns `false` (skip) when:
- *   - The attempts log has ANY successful entry at any version
- *     (CLAUDE.md "never re-run on previously successful recordings").
- *   - The attempts log has a successful entry at `>= newPromptVersion`
- *     for the target provider — covers the case where another driver
- *     pass already caught it up.
+ *   - The Recording is soft-deleted (`deletedAt` set).
+ *   - The attempts log has ANY successful entry at any version,
+ *     any provider (CLAUDE.md "never re-run on previously
+ *     successful recordings"). This is intentionally more
+ *     conservative than a per-version compare: a Bedrock success
+ *     AT ALL means there is a published Message; re-deriving it
+ *     under a new prompt risks silent overwrite or noisy
+ *     revisions, regardless of which version produced it.
+ *   - The attempts log has failures only on a different provider
+ *     (a Bedrock bump can't fix rules-only failures). The
+ *     `newPromptVersion` parameter is currently informational
+ *     only — it rides the SQS message via
+ *     `buildReprocessMessage` so the consumer's `attempts.ts`
+ *     `shouldSkip` dedup (#64) can match on `(provider, version,
+ *     hash)`. The selector itself does not gate on the version
+ *     number; the conservative success guard subsumes that need.
  *
  * Returns `true` (enqueue) when:
  *   - The Recording has at least one failed attempt for the target
