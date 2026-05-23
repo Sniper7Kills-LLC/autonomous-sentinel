@@ -49,7 +49,9 @@ interface AuthData {
 function authzRules(model: unknown): AuthData[] {
   const surface = model as { data: { authorization: readonly object[] } };
   return surface.data.authorization.map((rule): AuthData => {
-    const sym = Object.getOwnPropertySymbols(rule)[0];
+    const sym = Object.getOwnPropertySymbols(rule).find(
+      (s) => s.description?.toLowerCase() === 'data',
+    );
     if (!sym) throw new Error('rule has no Symbol payload');
     const payload = (rule as Record<symbol, AuthData | undefined>)[sym];
     if (!payload) throw new Error('rule Symbol payload undefined');
