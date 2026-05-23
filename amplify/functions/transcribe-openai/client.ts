@@ -163,7 +163,11 @@ export async function transcribeWithOpenAI(
     // Rebuild FormData per attempt — a consumed Blob stream is
     // not replayable on some runtimes.
     const form = new FormData();
-    form.set('file', new Blob([audioBytes as unknown as BlobPart], { type: mimeType }), fileName);
+    // `Buffer.from(audioBytes)` is a stable BlobPart across Node 22
+    // + Web Streams runtimes (the lib.dom `Uint8Array<...>` type
+    // mismatch on a raw Uint8Array would otherwise force an
+    // unsafe cast).
+    form.set('file', new Blob([Buffer.from(audioBytes)], { type: mimeType }), fileName);
     form.set('model', model);
     form.set('language', language);
     form.set('response_format', 'verbose_json');
@@ -195,22 +199,26 @@ export async function transcribeWithOpenAI(
     }
 
     if (res.ok) {
+      // Read body text once so a JSON parse failure can still
+      // surface the response payload (truncated) in the error +
+      // CloudWatch log for debugging.
+      const bodyText = await res.text().catch(() => '');
       let parsed: unknown;
       try {
-        parsed = await res.json();
+        parsed = JSON.parse(bodyText);
       } catch (err) {
         throw new OpenAIWhisperError(
           res.status,
           false,
-          '',
-          `OpenAI Whisper returned non-JSON body: ${err instanceof Error ? err.message : String(err)}`,
+          bodyText,
+          `OpenAI Whisper returned non-JSON body (${bodyText.slice(0, 128)}): ${err instanceof Error ? err.message : String(err)}`,
         );
       }
       if (!isVerboseResponse(parsed)) {
         throw new OpenAIWhisperError(
           res.status,
           false,
-          JSON.stringify(parsed),
+          bodyText,
           'OpenAI Whisper response missing required verbose_json fields',
         );
       }
