@@ -72,6 +72,18 @@ export const Recording = a
       'FAILED',
     ]),
     transcriptionFailed: a.boolean().default(false),
+    // Last-mutation timestamp on `transcriptionStatus` — drives the
+    // AppSync `onUpdateRecording` subscription (#70) so the My Uploads
+    // page can sort by "most recent activity" without a separate
+    // GSI scan. Set by the shared `setStatus` helper (#69) on every
+    // status change.
+    transcriptionStatusUpdatedAt: a.datetime(),
+    // Human-readable failure reason captured on FAILED transitions
+    // (#69). The granular `*_FAILED` enum values on
+    // `transcriptionStatus` carry the stage; this column carries the
+    // why (e.g. "AppSync timeout", "Bedrock rate-limited"). Admin DLQ
+    // reprocess UI (#107) reads this to triage.
+    failedReason: a.string(),
     transcript: a.string(),
     // Append-only log of linguistic attempts. Written by #64.
     linguisticAttempts: a.json(),
