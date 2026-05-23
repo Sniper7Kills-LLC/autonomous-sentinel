@@ -33,6 +33,7 @@ import { legacyClaimReplaySweeper } from './functions/legacyClaimReplaySweeper/r
 import { fieldVoteOrphanJanitor } from './functions/fieldVoteOrphanJanitor/resource';
 import { attachBudgetAlarms, readBudgetConfig } from './budgets';
 import { attachStorageLifecycle, readStorageLifecycleConfig } from './storage-lifecycle';
+import { attachPipelineQueues } from './pipeline-queues';
 
 const backend = defineBackend({
   auth,
@@ -454,3 +455,26 @@ attachBudgetAlarms(backend.createStack('BudgetsStack'), readBudgetConfig());
 // watch; production cutover sets `AS_STORAGE_CORS_ORIGINS` to
 // include `https://eam.watch` without a code change.
 attachStorageLifecycle(backend.storage.resources.bucket, readStorageLifecycleConfig());
+
+// Pipeline SQS queues + DLQs (#67) — the backbone of the
+// recording → preprocess → transcribe → linguistic flow. Each
+// consumer Lambda (#49-#52, #54-#58, #62-#63) wires its own
+// `SqsEventSource` against the matching queue in its own PR; this
+// stack stand-up just creates the queues so the rest of the
+// pipeline-stage PRs can reference them without circular wiring.
+// Queue ARNs surfaced via `backend.addOutput` so the consumer
+// Lambdas can read them at runtime + grant themselves receive
+// perms at synth time (the typical Amplify Gen 2 cross-stack
+// pattern).
+const pipelineQueuesStack = backend.createStack('PipelineQueuesStack');
+const pipelineQueues = attachPipelineQueues(pipelineQueuesStack);
+backend.addOutput({
+  custom: {
+    preprocessQueueUrl: pipelineQueues.preprocess.main.queueUrl,
+    preprocessDlqUrl: pipelineQueues.preprocess.dlq.queueUrl,
+    transcribeQueueUrl: pipelineQueues.transcribe.main.queueUrl,
+    transcribeDlqUrl: pipelineQueues.transcribe.dlq.queueUrl,
+    linguisticQueueUrl: pipelineQueues.linguistic.main.queueUrl,
+    linguisticDlqUrl: pipelineQueues.linguistic.dlq.queueUrl,
+  },
+});
