@@ -163,13 +163,22 @@ describe('submitRecording mutation (#284)', () => {
     expect(linkName).toBe('Recording');
   });
 
-  it('is authenticated-only (any signed-in user; no guest, no group gate)', () => {
+  it('is authenticated-only — every signed-in user can call, no guest', () => {
+    // Default auth mode is `identityPool`. `allow.authenticated()` only
+    // grants the generic `amplifyAuthauthenticatedRole`; users in a
+    // Cognito group are routed to a per-group IAM role that inherits
+    // nothing. Enumerate `allow.groups([...])` for every named role so
+    // any signed-in caller passes regardless of which Identity Pool
+    // role the group placed them in. No guest access. See
+    // amplify/storage/resource.ts for the same pattern on S3 grants.
     const auth = submitOp.data.authorization;
     expect(auth.length).toBeGreaterThanOrEqual(1);
     const rules = auth.map((a) => symbolData<AuthData>(a as object));
     expect(rules.some((r) => r.strategy === 'private')).toBe(true);
     expect(rules.some((r) => r.strategy === 'public')).toBe(false);
-    expect(rules.some((r) => r.strategy === 'groups')).toBe(false);
+    const groupsRule = rules.find((r) => r.strategy === 'groups');
+    expect(groupsRule).toBeDefined();
+    expect(groupsRule?.groups).toEqual(expect.arrayContaining(['admin', 'moderator', 'member']));
   });
 
   it('wires the recordingMutations Lambda as the handler', () => {
