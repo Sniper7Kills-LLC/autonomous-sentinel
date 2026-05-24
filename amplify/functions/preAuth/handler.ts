@@ -1,94 +1,34 @@
 import type { PreAuthenticationTriggerHandler } from 'aws-lambda';
-import { GetItemCommand } from '@aws-sdk/client-dynamodb';
-import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
-import { getDdbClient } from '../legacyClaimWorker/fan-out-production';
 
 /**
- * Cognito Pre-Authentication trigger (#335).
+ * Cognito Pre-Authentication trigger (#335 → patched in follow-up to #420).
  *
- * Fires before native username/password sign-in completes. If the
- * caller's User row carries a `bannedAt` timestamp, the handler
- * throws — Cognito returns `NotAuthorizedException` and the
- * credentials never trade for tokens.
+ * **Currently a no-op.** The original implementation read the User
+ * DynamoDB table to block banned accounts from native sign-in. That
+ * direct DDB read from a Lambda in the `auth` nested stack created a
+ * CloudFormation cross-stack ref `auth → data` that, combined with the
+ * existing `data → auth` (AppSync auth mode + Identity Pool) and
+ * `storage → auth` (S3 grants on Identity Pool roles) edges, closed a
+ * cycle CDK could not topologically sort. The cycle blocked every
+ * Amplify Hosting deploy from job 42 onward — see #420 (and the
+ * preTokenGeneration symptom on the same root cause).
  *
- * Federation gap: PreAuth does NOT fire for Google + Discord OIDC
- * sign-ins — Cognito treats federated identities as already
- * authenticated upstream. The federated-side ban check is a separate
- * follow-up; this Lambda is the native-flow gate specified by #335.
+ * To restore deploys, the lookup is removed. Banned-user enforcement
+ * continues at the AppSync resolver / mutation handler layer: every
+ * mutation that mutates state reads `User.bannedAt` before acting, so
+ * a banned account that gets a JWT still can't take action. The proper
+ * re-introduction (Cognito custom attribute `custom:bannedAt` driven by
+ * a DynamoDB stream on the User table) tracks separately.
  *
- * Security policy — **fail-CLOSED on DDB errors**. Intentionally
- * diverges from `preTokenGeneration` (#334) which fails open for
- * Reputation lookup. PreAuth is a hard security gate; granting access
- * to a possibly-banned user on a transient DDB blip is the wrong
- * default. Cognito retries the trigger, so a flaky lookup recovers on
- * its own; the legitimate-user UX cost is bounded and acceptable.
+ * Federated providers (Google + Discord OIDC bridge) always bypassed
+ * PreAuth, so the federated-side ban path was already deferred to a
+ * follow-up — this change just brings native sign-in into the same
+ * "JWT issuance is open, server-side action is gated" posture.
  */
 
 export const BAN_REJECTION_MESSAGE =
   'Account suspended. Contact support if you believe this is in error.';
 
-export interface UserBanRow {
-  cognitoSub: string;
-  bannedAt?: string | null;
-  bannedReason?: string | null;
-  [k: string]: unknown;
-}
-
-export interface PreAuthDeps {
-  getUser: (cognitoSub: string) => Promise<UserBanRow | null>;
-}
-
-let injected: Partial<PreAuthDeps> = {};
-
-export function __setDeps(deps: Partial<PreAuthDeps>): void {
-  injected = deps;
-}
-
-export function __resetDeps(): void {
-  injected = {};
-}
-
-function userTableName(): string {
-  const v = process.env.USER_TABLE_NAME;
-  if (!v) {
-    throw new Error('preAuth: USER_TABLE_NAME env var is required');
-  }
-  return v;
-}
-
-async function defaultGetUser(cognitoSub: string): Promise<UserBanRow | null> {
-  const res = await getDdbClient().send(
-    new GetItemCommand({
-      TableName: userTableName(),
-      Key: marshall({ cognitoSub }),
-    }),
-  );
-  return res.Item ? (unmarshall(res.Item) as UserBanRow) : null;
-}
-
-function resolveDeps(): PreAuthDeps {
-  return { getUser: injected.getUser ?? defaultGetUser };
-}
-
-export const handler: PreAuthenticationTriggerHandler = async (event, _context, _callback) => {
-  // Defensive short-circuits: don't lookup if Cognito already
-  // signalled there's nothing to look up.
-  if (event.request.userNotFound) {
-    return event;
-  }
-  const sub = event.request.userAttributes?.sub;
-  if (!sub) {
-    return event;
-  }
-
-  const user = await resolveDeps().getUser(sub);
-  if (user && user.bannedAt) {
-    console.warn('preAuth: rejecting banned user sign-in', {
-      cognitoSub: sub,
-      bannedAt: user.bannedAt,
-      bannedReason: user.bannedReason ?? null,
-    });
-    throw new Error(BAN_REJECTION_MESSAGE);
-  }
-  return event;
+export const handler: PreAuthenticationTriggerHandler = (event, _context, _callback) => {
+  return Promise.resolve(event);
 };
