@@ -205,5 +205,12 @@ export const submitRecording = a
     sdrId: a.id(),
   })
   .returns(a.ref('Recording'))
-  .authorization((allow) => allow.authenticated())
+  // Default auth mode is `identityPool`. `allow.authenticated()` only
+  // grants the generic `amplifyAuthauthenticatedRole`; users in a
+  // Cognito group route to per-group IAM roles (`...adminGroupRole`
+  // etc.) which inherit nothing. Enumerate every group explicitly so
+  // the mutation works for any signed-in caller regardless of which
+  // role Identity Pool hands them. See the parallel storage fix in
+  // PR #427.
+  .authorization((allow) => [allow.authenticated(), allow.groups(['admin', 'moderator', 'member'])])
   .handler(a.handler.function(recordingMutations));
