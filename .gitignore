@@ -50,3 +50,6 @@ coverage/
 # Claude Code per-developer overrides
 .claude/settings.local.json
 
+
+# CDK synth output
+infra/*/cdk.out/
