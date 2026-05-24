@@ -1,0 +1,91 @@
+.wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  cursor: pointer;
+  user-select: none;
+  font-size: var(--fs-sm);
+  color: var(--color-fg);
+}
+
+.input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.box {
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface-2);
+  border-radius: var(--r-1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    border-color var(--t-fast) var(--ease-out),
+    background var(--t-fast) var(--ease-out);
+  flex-shrink: 0;
+}
+
+.box .tick {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-accent-fg);
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity var(--t-fast) var(--ease-out),
+    transform var(--t-fast) var(--ease-out);
+}
+
+.input:checked + .box {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+.input:checked + .box .tick {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.input:focus-visible + .box {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.input:disabled + .box {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.wrap:hover .box {
+  border-color: var(--color-accent);
+}
+
+/* radio variant */
+.radio {
+  border-radius: 50%;
+}
+.radio .dot {
+  width: 8px;
+  height: 8px;
+  background: var(--color-accent-fg);
+  border-radius: 50%;
+  opacity: 0;
+  transform: scale(0.5);
+  transition:
+    opacity var(--t-fast) var(--ease-out),
+    transform var(--t-fast) var(--ease-out);
+}
+.input:checked + .radio .dot {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.label {
+  line-height: 1.4;
+}

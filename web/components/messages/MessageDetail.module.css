@@ -1,0 +1,521 @@
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-1);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+}
+
+.card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: var(--type-other);
+}
+.card[data-type='SKYKING']::before {
+  background: var(--type-skyking);
+}
+.card[data-type='SKYBIRD']::before {
+  background: var(--type-skybird);
+}
+.card[data-type='SKYMASTER']::before {
+  background: var(--type-skymaster);
+}
+.card[data-type='ALLSTATIONS']::before {
+  background: var(--type-allstations);
+}
+.card[data-type='RADIOCHECK']::before {
+  background: var(--type-radiocheck);
+}
+.card[data-type='BACKEND']::before {
+  background: var(--type-backend);
+}
+.card[data-type='DISREGARDED']::before {
+  background: var(--type-disregarded);
+}
+
+/* --- header ----------------------------------------------- */
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-4) var(--sp-5);
+  border-bottom: 1px solid var(--color-border);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-surface-2) 60%, var(--color-surface)) 0%,
+    var(--color-surface) 100%
+  );
+}
+
+.headTop {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+
+.headBottom {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+
+.ts,
+.freq {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-fg-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.callsignBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--color-fg-faint);
+}
+
+.callsign {
+  font-family: var(--font-mono);
+  font-size: var(--fs-h4);
+  font-weight: 700;
+  color: var(--color-fg);
+  letter-spacing: 0.04em;
+}
+
+.arrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-h4);
+  color: var(--color-accent);
+  padding: 0 var(--sp-2);
+}
+
+/* --- body shell ------------------------------------------- */
+.bodyWrap {
+  padding: var(--sp-5);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.bodyCenter {
+  align-items: center;
+  text-align: center;
+}
+
+.preamble {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--color-fg-muted);
+}
+
+.bodyMeta {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* --- ALLSTATIONS body ------------------------------------- */
+.authWindow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  align-self: flex-start;
+  font-family: var(--font-mono);
+  padding: 4px 10px;
+  border: 1px dashed var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-bg));
+  border-radius: var(--r-1);
+}
+
+.authWindowLabel {
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--color-fg-muted);
+}
+
+.authWindowVal {
+  font-size: var(--fs-body);
+  font-weight: 700;
+  color: var(--color-accent);
+  letter-spacing: 0.12em;
+}
+
+.authWindowHint {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--color-fg-faint);
+}
+
+.preambleBlock {
+  display: inline-flex;
+  align-items: stretch;
+  font-family: var(--font-mono);
+  border: 1px solid var(--color-border-strong);
+  align-self: flex-start;
+}
+
+.preambleLabel {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  padding: 4px 10px;
+  text-transform: uppercase;
+  color: var(--color-fg-muted);
+  background: var(--color-surface-2);
+  display: inline-flex;
+  align-items: center;
+}
+
+.preambleVal {
+  padding: 4px 12px;
+  font-weight: 700;
+  font-size: var(--fs-body);
+  color: var(--color-fg);
+  background: var(--color-bg);
+  letter-spacing: 0.18em;
+}
+
+.charBlock {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(28px, 1fr));
+  gap: 4px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-1);
+  padding: var(--sp-3);
+}
+
+.charBlock[data-suspect='true'] {
+  border-color: color-mix(in srgb, var(--color-warn) 60%, var(--color-border));
+}
+
+.char {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  background: var(--color-surface-2);
+  color: var(--color-fg);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: var(--fs-body);
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-1);
+  letter-spacing: 0;
+  position: relative;
+}
+
+.charPreamble {
+  background: color-mix(in srgb, var(--color-accent) 18%, var(--color-bg));
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.charSuspect {
+  background: color-mix(in srgb, var(--color-warn) 22%, var(--color-bg));
+  border-color: var(--color-warn);
+  color: var(--color-warn);
+}
+
+/* --- SKYKING body ----------------------------------------- */
+.skykingHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+
+.priorityRule {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--type-skyking);
+  padding: 4px 10px;
+  border: 1px solid currentColor;
+  border-radius: var(--r-1);
+  background: color-mix(in srgb, var(--type-skyking) 12%, var(--color-bg));
+}
+
+.timeChip,
+.authChip {
+  display: inline-flex;
+  align-items: stretch;
+  font-family: var(--font-mono);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--r-1);
+  overflow: hidden;
+}
+
+.timeLabel,
+.authLabel {
+  background: var(--color-surface-2);
+  color: var(--color-fg-muted);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  padding: 4px 8px;
+  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+}
+
+.timeVal,
+.authVal {
+  padding: 4px 12px;
+  font-weight: 700;
+  font-size: var(--fs-body);
+  color: var(--color-accent);
+  background: var(--color-bg);
+  letter-spacing: 0.06em;
+}
+
+.phoneticGroupWrap,
+.codenameWrap {
+  display: inline-flex;
+  align-items: stretch;
+  align-self: flex-start;
+  border: 1px solid var(--color-border-strong);
+  font-family: var(--font-mono);
+}
+
+.codewordTag {
+  background: var(--color-surface-2);
+  color: var(--color-fg-muted);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  padding: 0 10px;
+  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+}
+
+.phoneticGroup {
+  padding: 8px 18px;
+  font-weight: 700;
+  font-size: var(--fs-h3);
+  letter-spacing: 0.16em;
+  background: var(--color-bg);
+  color: var(--color-fg);
+}
+
+.codename {
+  padding: 8px 22px;
+  font-weight: 700;
+  font-size: var(--fs-h3);
+  letter-spacing: 0.06em;
+  font-family: var(--font-sans);
+  font-style: italic;
+  background: color-mix(in srgb, var(--type-skyking) 14%, var(--color-bg));
+  color: var(--type-skyking);
+  text-transform: uppercase;
+}
+
+/* --- SKYBIRD / OTHER / BACKEND free text ------------------ */
+.freeText {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono-sm);
+  color: var(--color-fg);
+  line-height: 1.7;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-left: 2px solid var(--color-accent);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-1);
+  white-space: pre-wrap;
+  max-width: none;
+}
+
+/* --- RADIOCHECK body -------------------------------------- */
+.testCount {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: var(--fs-h4);
+  letter-spacing: 0.2em;
+  color: var(--type-radiocheck);
+}
+
+.resultLine {
+  font-family: var(--font-mono);
+  font-size: var(--fs-h3);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--color-fg);
+}
+
+/* --- DISREGARDED ------------------------------------------ */
+.disregarded .freeText {
+  border-left-color: var(--type-disregarded);
+  opacity: 0.85;
+}
+
+.disregardStamp {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: var(--fs-h4);
+  letter-spacing: 0.22em;
+  color: var(--color-danger);
+  border: 2px solid var(--color-danger);
+  padding: 4px 14px;
+  border-radius: var(--r-1);
+  transform: rotate(-2deg);
+  align-self: flex-start;
+  background: color-mix(in srgb, var(--color-danger) 10%, var(--color-bg));
+}
+
+/* --- BACKEND / admin notice ------------------------------- */
+.admin {
+  background: color-mix(in srgb, var(--type-backend) 6%, transparent);
+  border: 1px dashed var(--color-border-strong);
+  padding: var(--sp-3);
+  border-radius: var(--r-1);
+}
+
+.admin[data-severity='warn'] {
+  background: color-mix(in srgb, var(--color-warn) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-warn) 50%, var(--color-border-strong));
+}
+
+.admin[data-severity='danger'] {
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-danger) 50%, var(--color-border-strong));
+}
+
+.adminHead {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-2);
+}
+
+.adminAvatar {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 16px;
+  color: var(--color-accent);
+  border: 1px solid var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg));
+}
+
+.adminAttribution {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.adminName {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: var(--fs-sm);
+  color: var(--color-fg);
+  letter-spacing: 0.04em;
+}
+
+.adminRole {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+
+.adminBadge {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  padding: 3px 10px;
+  border: 1px solid var(--color-fg-muted);
+  color: var(--color-fg-muted);
+  border-radius: var(--r-1);
+}
+.adminBadge[data-severity='warn'] {
+  color: var(--color-warn);
+  border-color: var(--color-warn);
+  background: color-mix(in srgb, var(--color-warn) 14%, var(--color-bg));
+}
+.adminBadge[data-severity='danger'] {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 14%, var(--color-bg));
+}
+
+.adminText {
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  color: var(--color-fg);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  max-width: none;
+}
+
+.adminFlag {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--color-accent);
+  padding: 2px 8px;
+  border: 1px solid var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg));
+}
+
+/* --- repetition badge ------------------------------------- */
+.repBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--color-accent);
+  border: 1px dashed var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg));
+  padding: 3px 10px 3px 8px;
+  border-radius: var(--r-1);
+}
+
+.repIcon {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.repLabel {
+  letter-spacing: 0.12em;
+}

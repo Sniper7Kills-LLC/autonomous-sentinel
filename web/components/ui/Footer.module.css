@@ -1,0 +1,117 @@
+.footer {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1.4fr;
+  gap: var(--sp-6);
+  padding: var(--sp-6) var(--sp-5);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+  margin-top: var(--sp-7);
+}
+
+@media (max-width: 768px) {
+  .footer {
+    grid-template-columns: 1fr 1fr;
+    gap: var(--sp-5);
+  }
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.col a {
+  color: var(--color-fg-muted);
+  font-size: var(--fs-sm);
+  transition: color var(--t-fast) var(--ease-out);
+}
+.col a:hover {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.heading {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--color-fg-faint);
+  margin-bottom: var(--sp-1);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.mark {
+  font-size: 22px;
+  color: var(--color-accent);
+  line-height: 1;
+}
+
+.brandText {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  font-size: var(--fs-sm);
+  color: var(--color-fg);
+}
+
+.tagline {
+  font-size: var(--fs-xs);
+  color: var(--color-fg-muted);
+  max-width: 40ch;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+.meta {
+  display: flex;
+  gap: var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.metaKey {
+  color: var(--color-fg-faint);
+  letter-spacing: 0.14em;
+  width: 56px;
+}
+
+.metaVal {
+  color: var(--color-fg);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-success);
+  display: inline-block;
+  box-shadow: 0 0 6px var(--color-success);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.copyright {
+  margin-top: var(--sp-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-fg-faint);
+}

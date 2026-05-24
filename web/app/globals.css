@@ -1,37 +1,402 @@
+/* =============================================================
+   Autonomous Sentinel — design tokens + base reset
+   Tactical OSINT aesthetic — olive-drab field manual + signal
+   orange. Light theme = parchment / yellowed report stock.
+   ============================================================= */
+
 :root {
-  --background: #0a0e14;
-  --foreground: #d8dee9;
-  --accent: #88c0d0;
+  /* --- color: dark (default) — olive-drab tactical -------- */
+  --color-bg: #0d100b;
+  --color-surface: #161b13;
+  --color-surface-2: #1d241a;
+  --color-surface-3: #272f22;
+  --color-fg: #dde1cf;
+  --color-fg-muted: #8a9379;
+  --color-fg-faint: #525a44;
+  --color-border: #262e20;
+  --color-border-strong: #3a4530;
+
+  /* primary signal — military DayGlo orange */
+  --color-accent: #ea580c;
+  --color-accent-hover: #fb923c;
+  --color-accent-fg: #0d100b;
+
+  /* secondary chrome — deliberately desaturated so the orange wins */
+  --color-info: #94a3b8;
+  --color-success: #84cc16;
+  --color-warn: #facc15;
+  --color-danger: #dc2626;
+
+  /* Message-type stripe colors — same family, distinct hues */
+  --type-skyking: #ea580c;
+  --type-skybird: #94a3b8;
+  --type-skymaster: #c084fc;
+  --type-allstations: #facc15;
+  --type-radiocheck: #84cc16;
+  --type-backend: #6b7280;
+  --type-disregarded: #525a44;
+  --type-other: #78716c;
+
+  /* Classification banner */
+  --class-bg: #facc15;
+  --class-fg: #0d100b;
+  --class-stripe: repeating-linear-gradient(
+    -45deg,
+    #facc15 0,
+    #facc15 14px,
+    #0d100b 14px,
+    #0d100b 22px
+  );
+
+  /* --- type ------------------------------------------------ */
+  --font-sans: var(--font-atkinson), -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: var(--font-jb-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --fs-h1: 2.75rem;
+  --fs-h2: 2rem;
+  --fs-h3: 1.5rem;
+  --fs-h4: 1.25rem;
+  --fs-h5: 1rem;
+  --fs-h6: 0.8125rem;
+  --fs-body: 1rem;
+  --fs-sm: 0.875rem;
+  --fs-xs: 0.75rem;
+  --fs-mono-sm: 0.8125rem;
+
+  /* --- space ----------------------------------------------- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+  --sp-8: 64px;
+
+  /* --- radius — kept tight for hard-edged dossier feel ----- */
+  --r-0: 0;
+  --r-1: 1px;
+  --r-2: 2px;
+
+  /* --- shadow ---------------------------------------------- */
+  --sh-1: 0 1px 0 0 rgba(0, 0, 0, 0.55);
+  --sh-2: 0 6px 18px rgba(0, 0, 0, 0.5);
+  --sh-glow-accent: 0 0 0 1px rgba(234, 88, 12, 0.45), 0 0 14px rgba(234, 88, 12, 0.25);
+  --sh-glow-danger: 0 0 0 1px rgba(220, 38, 38, 0.45), 0 0 14px rgba(220, 38, 38, 0.22);
+
+  /* --- motion ---------------------------------------------- */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --t-fast: 120ms;
+  --t-mid: 200ms;
+
+  /* --- background grid (hero / chrome backdrops) ----------- */
+  --grid-line: rgba(138, 147, 121, 0.06);
+  --grid-line-strong: rgba(138, 147, 121, 0.12);
 }
 
+/* --- color: light theme — yellowed field-manual stock ----- */
+[data-theme='light'] {
+  --color-bg: #e8e2cf;
+  --color-surface: #f3eedd;
+  --color-surface-2: #ddd5be;
+  --color-surface-3: #cdc4a8;
+  --color-fg: #1a2014;
+  --color-fg-muted: #5a6248;
+  --color-fg-faint: #8b8470;
+  --color-border: #b3a98a;
+  --color-border-strong: #6b6448;
+
+  --color-accent: #c2410c;
+  --color-accent-hover: #ea580c;
+  --color-accent-fg: #f3eedd;
+
+  --color-info: #475569;
+  --color-success: #4d7c0f;
+  --color-warn: #854d0e;
+  --color-danger: #991b1b;
+
+  --type-skyking: #c2410c;
+  --type-skybird: #475569;
+  --type-skymaster: #6d28d9;
+  --type-allstations: #854d0e;
+  --type-radiocheck: #4d7c0f;
+  --type-backend: #475569;
+  --type-disregarded: #6b6448;
+  --type-other: #57534e;
+
+  --class-bg: #854d0e;
+  --class-fg: #f3eedd;
+  --class-stripe: repeating-linear-gradient(
+    -45deg,
+    #854d0e 0,
+    #854d0e 14px,
+    #f3eedd 14px,
+    #f3eedd 22px
+  );
+
+  --sh-1: 0 1px 0 0 rgba(0, 0, 0, 0.15);
+  --sh-2: 0 4px 14px rgba(0, 0, 0, 0.12);
+  --sh-glow-accent: 0 0 0 1px rgba(194, 65, 12, 0.45), 0 0 14px rgba(194, 65, 12, 0.22);
+  --sh-glow-danger: 0 0 0 1px rgba(153, 27, 27, 0.45), 0 0 14px rgba(153, 27, 27, 0.22);
+
+  --grid-line: rgba(26, 32, 20, 0.06);
+  --grid-line-strong: rgba(26, 32, 20, 0.12);
+}
+
+/* --- auto: follow OS when no explicit theme on <html> ------ */
 @media (prefers-color-scheme: light) {
-  :root {
-    --background: #fafafa;
-    --foreground: #1a1a1a;
-    --accent: #2e6e8e;
+  :root:not([data-theme]) {
+    --color-bg: #e8e2cf;
+    --color-surface: #f3eedd;
+    --color-surface-2: #ddd5be;
+    --color-surface-3: #cdc4a8;
+    --color-fg: #1a2014;
+    --color-fg-muted: #5a6248;
+    --color-fg-faint: #8b8470;
+    --color-border: #b3a98a;
+    --color-border-strong: #6b6448;
+    --color-accent: #c2410c;
+    --color-accent-hover: #ea580c;
+    --color-accent-fg: #f3eedd;
+    --color-info: #475569;
+    --color-success: #4d7c0f;
+    --color-warn: #854d0e;
+    --color-danger: #991b1b;
+    --type-skyking: #c2410c;
+    --type-skybird: #475569;
+    --type-skymaster: #6d28d9;
+    --type-allstations: #854d0e;
+    --type-radiocheck: #4d7c0f;
+    --type-backend: #475569;
+    --type-disregarded: #6b6448;
+    --type-other: #57534e;
+    --class-bg: #854d0e;
+    --class-fg: #f3eedd;
+    --class-stripe: repeating-linear-gradient(
+      -45deg,
+      #854d0e 0,
+      #854d0e 14px,
+      #f3eedd 14px,
+      #f3eedd 22px
+    );
+    --sh-1: 0 1px 0 0 rgba(0, 0, 0, 0.15);
+    --sh-2: 0 4px 14px rgba(0, 0, 0, 0.12);
+    --grid-line: rgba(26, 32, 20, 0.06);
+    --grid-line-strong: rgba(26, 32, 20, 0.12);
   }
 }
 
-* {
+/* ============================================================
+   Reset
+   ============================================================ */
+
+*,
+*::before,
+*::after {
   box-sizing: border-box;
-  padding: 0;
   margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 html,
 body {
-  max-width: 100vw;
-  overflow-x: hidden;
-  background: var(--background);
-  color: var(--foreground);
-  font-family:
-    ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Consolas,
-    monospace;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: 1.55;
+  min-height: 100vh;
 }
 
-main {
-  padding: 2rem;
+img,
+svg,
+video,
+canvas {
+  display: block;
+  max-width: 100%;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+  transition: color var(--t-fast) var(--ease-out);
+  text-underline-offset: 3px;
+}
+a:hover {
+  color: var(--color-accent-hover);
+  text-decoration: underline;
+}
+
+::selection {
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+}
+
+/* Focus ring — high-contrast, sharp */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* ============================================================
+   Type primitives — used by /dev/style-guide and downstream
+   ============================================================ */
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--color-fg);
+  letter-spacing: -0.01em;
+}
+
+h1 {
+  font-size: var(--fs-h1);
+  letter-spacing: -0.02em;
+}
+h2 {
+  font-size: var(--fs-h2);
+}
+h3 {
+  font-size: var(--fs-h3);
+}
+h4 {
+  font-size: var(--fs-h4);
+}
+h5 {
+  font-size: var(--fs-h5);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-fg-muted);
+  font-weight: 600;
+}
+h6 {
+  font-size: var(--fs-h6);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--color-fg-muted);
+  font-weight: 500;
+}
+
+p {
+  max-width: 70ch;
+  font-family: var(--font-sans);
+}
+
+code,
+kbd,
+samp,
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono-sm);
+}
+
+code {
+  background: var(--color-surface-2);
+  color: var(--color-fg);
+  border: 1px solid var(--color-border);
+  padding: 1px 5px;
+}
+
+kbd {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-bottom-width: 2px;
+  padding: 1px 6px;
+  color: var(--color-fg);
+  font-size: var(--fs-xs);
+}
+
+hr {
+  border: 0;
+  border-top: 1px dashed var(--color-border-strong);
+  margin: var(--sp-5) 0;
+}
+
+ul,
+ol {
+  padding-left: var(--sp-5);
+}
+li + li {
+  margin-top: var(--sp-1);
+}
+
+dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: var(--sp-4);
+  row-gap: var(--sp-2);
+}
+dt {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono-sm);
+  color: var(--color-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+dd {
+  color: var(--color-fg);
+}
+
+/* ============================================================
+   Utility classes used sparingly across primitives
+   ============================================================ */
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+.caps {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* Classification banner used at page chrome */
+.class-banner {
+  background: var(--class-stripe);
+  color: var(--class-fg);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  text-align: center;
+  padding: 3px 12px;
+  letter-spacing: 0.32em;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.class-banner::before,
+.class-banner::after {
+  content: '//';
+  margin: 0 8px;
+}
+
+/* Crosshair / grid backdrop helper for hero blocks */
+.tactical-grid {
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position:
+    -1px -1px,
+    -1px -1px;
 }
