@@ -140,6 +140,11 @@ async function getDataClient(): Promise<PostConfirmDataClient> {
   if (cachedClient) return cachedClient;
   // Dynamic import so unit tests that inject a stub never bootstrap the
   // Amplify runtime.
+  // Lambda runtime has no auto-config — call Amplify.configure() before
+  // generateClient or it throws. Shared helper in
+  // amplify/functions/_shared/configure-amplify.ts.
+  const { configureAmplifyOnce } = await import('../_shared/configure-amplify');
+  configureAmplifyOnce();
   const mod = await import('aws-amplify/data');
   cachedClient = mod.generateClient({ authMode: 'iam' }) as unknown as PostConfirmDataClient;
   return cachedClient;
