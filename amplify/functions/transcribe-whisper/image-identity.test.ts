@@ -35,6 +35,15 @@ describe('Whisper image build-identity wiring', () => {
     expect(dockerfile).toMatch(/ENV\s+BUILD_ID=\$\{BUILD_ID\}/);
   });
 
+  it('Dockerfile builds whisper.cpp statically so the CLI does not depend on libwhisper.so at runtime (#446)', () => {
+    const dockerfile = read(join(HERE, 'Dockerfile'));
+    // Without -DBUILD_SHARED_LIBS=OFF the v1.8.x default produces a
+    // dynamic binary; the runtime stage doesn't carry the .so files
+    // and every invocation fails with `cannot open shared object
+    // file: libwhisper.so.1` (observed on commit 9cc4c32).
+    expect(dockerfile).toContain('-DBUILD_SHARED_LIBS=OFF');
+  });
+
   it('handler.mjs reads GIT_SHA + BUILD_ID from process.env on init', () => {
     const handler = read(join(HERE, 'handler.mjs'));
     expect(handler).toContain('process.env.GIT_SHA');
