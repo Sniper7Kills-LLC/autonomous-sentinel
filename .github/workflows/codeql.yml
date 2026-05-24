@@ -1,0 +1,60 @@
+# CodeQL security scanning (#370).
+#
+# Advanced setup (workflow file) rather than the default (Settings UI)
+# setup so the config is reviewable in PRs and reproducible on forks.
+# Covers TypeScript across all three workspaces via the combined
+# javascript-typescript language pack.
+#
+# Docs: https://docs.github.com/en/code-security/code-scanning/automatically-scanning-your-code-for-vulnerabilities-and-errors/about-code-scanning-with-codeql
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly Monday 06:00 UTC — catches CVEs disclosed against deps
+    # after the most recent PR closed. Avoids overlapping the
+    # Dependabot Monday 06:00 window in case bumps land mid-scan.
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # `security-and-quality` is the broadest query suite — catches
+          # CVE-class issues and lint-class smells. Default `security`
+          # only catches the former; we want both on a small codebase.
+          queries: security-and-quality
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:${{ matrix.language }}'
