@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { App, Stack } from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
-import { attachBudgetAlarms, readBudgetConfig } from './budgets';
+import { Function as LambdaFunction, Runtime, Code } from 'aws-cdk-lib/aws-lambda';
+import { attachBudgetAlarms, attachBudgetThrottleAction, readBudgetConfig } from './budgets';
 
 function synth(env: Record<string, string | undefined> = {}): Template {
   const prev: Record<string, string | undefined> = {};
@@ -14,6 +15,32 @@ function synth(env: Record<string, string | undefined> = {}): Template {
     const app = new App();
     const stack = new Stack(app, 'TestStack');
     attachBudgetAlarms(stack, readBudgetConfig());
+    return Template.fromStack(stack);
+  } finally {
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+function synthWithThrottle(env: Record<string, string | undefined> = {}, cap?: number): Template {
+  const prev: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(env)) {
+    prev[k] = process.env[k];
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  try {
+    const app = new App();
+    const stack = new Stack(app, 'TestStack');
+    const { hardThresholdTopic } = attachBudgetAlarms(stack, readBudgetConfig());
+    const target = new LambdaFunction(stack, 'FakeWhisperFn', {
+      runtime: Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: Code.fromInline('exports.handler = async () => {};'),
+    });
+    attachBudgetThrottleAction(stack, hardThresholdTopic, target, cap);
     return Template.fromStack(stack);
   } finally {
     for (const [k, v] of Object.entries(prev)) {
@@ -160,6 +187,134 @@ describe('budget alarms', () => {
       const props = budgets[id]?.Properties as { Budget?: { BudgetName?: string } } | undefined;
       expect(props?.Budget?.BudgetName).toBeUndefined();
     }
+  });
+
+  it('creates an SNS topic for the hard-threshold (#7) and subscribes the owner email', () => {
+    const t = synth();
+    t.resourceCountIs('AWS::SNS::Topic', 1);
+    // Owner email subscribed for paging (in addition to the budget's own
+    // email subscriber on every threshold).
+    t.hasResourceProperties('AWS::SNS::Subscription', {
+      Protocol: 'email',
+      Endpoint: 'sniper7kills@gmail.com',
+    });
+  });
+
+  it('attaches the SNS topic as a subscriber on the hard-threshold notification only (#7)', () => {
+    const t = synth();
+    const budgets = t.findResources('AWS::Budgets::Budget');
+    const ids = Object.keys(budgets);
+    expect(ids.length).toBe(1);
+    type Sub = { SubscriptionType?: string; Address?: string | object };
+    type Notification = {
+      Notification?: { Threshold?: number };
+      Subscribers?: Sub[];
+    };
+    const id = ids[0]!;
+    const notifications = (
+      budgets[id]!.Properties as { NotificationsWithSubscribers: Notification[] }
+    ).NotificationsWithSubscribers;
+    const hard = notifications.find((n) => n.Notification?.Threshold === 100);
+    const soft = notifications.find((n) => n.Notification?.Threshold === 25);
+    const loud = notifications.find((n) => n.Notification?.Threshold === 50);
+    expect(hard?.Subscribers?.some((s) => s.SubscriptionType === 'SNS')).toBe(true);
+    expect(hard?.Subscribers?.some((s) => s.SubscriptionType === 'EMAIL')).toBe(true);
+    // Soft + loud stay email-only — SNS publish would re-trigger the throttle
+    // Lambda at $50 and $100 even though we only want it at $200.
+    expect(soft?.Subscribers?.every((s) => s.SubscriptionType === 'EMAIL')).toBe(true);
+    expect(loud?.Subscribers?.every((s) => s.SubscriptionType === 'EMAIL')).toBe(true);
+  });
+
+  it('grants AWS Budgets permission to publish to the hard-threshold SNS topic (#7)', () => {
+    const t = synth();
+    t.hasResourceProperties('AWS::SNS::TopicPolicy', {
+      PolicyDocument: Match.objectLike({
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Effect: 'Allow',
+            Principal: { Service: 'budgets.amazonaws.com' },
+            Action: 'sns:Publish',
+          }),
+        ]),
+      }),
+    });
+  });
+
+  it('throttle action creates a Lambda subscribed to the hard-threshold SNS topic (#7)', () => {
+    const t = synthWithThrottle();
+    // Two Lambdas in the template — the fake Whisper target plus the throttle.
+    t.resourceCountIs('AWS::Lambda::Function', 2);
+    t.hasResourceProperties('AWS::SNS::Subscription', {
+      Protocol: 'lambda',
+    });
+  });
+
+  it('grants SNS permission to invoke the throttle Lambda (#7)', () => {
+    // CDK's `LambdaSubscription` auto-emits an AWS::Lambda::Permission for
+    // SNS → InvokeFunction. Without that permission the budget breach would
+    // fan out to a topic that can't invoke its subscriber. Lock the contract
+    // here so a future swap of the subscription mechanism doesn't silently
+    // drop the auto-grant.
+    const t = synthWithThrottle();
+    t.hasResourceProperties('AWS::Lambda::Permission', {
+      Action: 'lambda:InvokeFunction',
+      Principal: 'sns.amazonaws.com',
+    });
+  });
+
+  it('throttle Lambda env wires the target function name + concurrency cap (#7)', () => {
+    const t = synthWithThrottle();
+    const fns = t.findResources('AWS::Lambda::Function');
+    const throttle = Object.values(fns).find(
+      (f) =>
+        typeof (f.Properties as { Environment?: { Variables?: Record<string, unknown> } })
+          .Environment?.Variables?.TARGET_FUNCTION_NAME !== 'undefined',
+    );
+    expect(throttle).toBeDefined();
+    const vars = (
+      throttle!.Properties as {
+        Environment: {
+          Variables: { TARGET_FUNCTION_NAME: unknown; TARGET_CONCURRENCY_CAP: string };
+        };
+      }
+    ).Environment.Variables;
+    expect(vars.TARGET_FUNCTION_NAME).toBeDefined();
+    expect(vars.TARGET_CONCURRENCY_CAP).toBe('1');
+  });
+
+  it('throttle Lambda accepts a custom cap (#7)', () => {
+    const t = synthWithThrottle({}, 3);
+    const fns = t.findResources('AWS::Lambda::Function');
+    const throttle = Object.values(fns).find(
+      (f) =>
+        typeof (f.Properties as { Environment?: { Variables?: Record<string, unknown> } })
+          .Environment?.Variables?.TARGET_CONCURRENCY_CAP !== 'undefined',
+    );
+    expect(throttle).toBeDefined();
+    const cap = (
+      throttle!.Properties as {
+        Environment: { Variables: { TARGET_CONCURRENCY_CAP: string } };
+      }
+    ).Environment.Variables.TARGET_CONCURRENCY_CAP;
+    expect(cap).toBe('3');
+  });
+
+  it('throttle Lambda IAM policy is scoped to PutFunctionConcurrency on the target only (#7)', () => {
+    const t = synthWithThrottle();
+    // The throttle role policy must allow lambda:PutFunctionConcurrency
+    // and must NOT use Resource: '*' — scope to the target ARN only so a
+    // bug in the handler can't throttle anything else in the account.
+    t.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: Match.objectLike({
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Effect: 'Allow',
+            Action: 'lambda:PutFunctionConcurrency',
+            Resource: Match.not('*'),
+          }),
+        ]),
+      }),
+    });
   });
 
   it('uses only AWS-Budgets-valid comparisonOperator enum values on every notification (#320)', () => {
