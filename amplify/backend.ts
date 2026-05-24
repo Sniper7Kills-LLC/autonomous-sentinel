@@ -34,6 +34,7 @@ import { legacyClaimWorker } from './functions/legacyClaimWorker/resource';
 import { legacyClaimReplaySweeper } from './functions/legacyClaimReplaySweeper/resource';
 import { fieldVoteOrphanJanitor } from './functions/fieldVoteOrphanJanitor/resource';
 import { attachBudgetAlarms, attachBudgetThrottleAction, readBudgetConfig } from './budgets';
+import { applyCognitoTokenValidity } from './cognito-token-validity';
 import { attachStorageLifecycle, readStorageLifecycleConfig } from './storage-lifecycle';
 import { attachPipelineQueues } from './pipeline-queues';
 import { getConcurrencyCap } from './lambda-concurrency';
@@ -149,6 +150,12 @@ getUserPublicLambdaFn.addToRolePolicy(
     resources: [userTable.tableArn],
   }),
 );
+
+// Cognito token TTL tuning (#333). Pin Cognito's CDK defaults
+// explicitly so a future Amplify upgrade can't silently shift the
+// rotation cadence. Env-tunable per `cognito-token-validity.ts` so a
+// different operator can shorten / lengthen without editing source.
+applyCognitoTokenValidity(backend.auth.resources.cfnResources.cfnUserPoolClient);
 
 // preAuth trigger wiring (#335). Read-only GetItem on the User table
 // by `cognitoSub`. The handler throws on `bannedAt != null` so Cognito
