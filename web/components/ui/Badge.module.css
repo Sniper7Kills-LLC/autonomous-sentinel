@@ -1,0 +1,101 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: var(--r-1);
+  border: 1px solid transparent;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.neutral {
+  background: var(--color-surface-2);
+  color: var(--color-fg-muted);
+  border-color: var(--color-border);
+}
+.accent {
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+}
+.info {
+  background: color-mix(in srgb, var(--color-info) 18%, var(--color-bg));
+  color: var(--color-info);
+  border-color: color-mix(in srgb, var(--color-info) 40%, transparent);
+}
+.success {
+  background: color-mix(in srgb, var(--color-success) 18%, var(--color-bg));
+  color: var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 40%, transparent);
+}
+.warn {
+  background: color-mix(in srgb, var(--color-warn) 18%, var(--color-bg));
+  color: var(--color-warn);
+  border-color: color-mix(in srgb, var(--color-warn) 40%, transparent);
+}
+.danger {
+  background: color-mix(in srgb, var(--color-danger) 18%, var(--color-bg));
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 40%, transparent);
+}
+
+.outline {
+  background: transparent;
+}
+
+/* --- per-message-type chips ------------------------------ */
+.msgType {
+  font-family: var(--font-mono);
+  background: transparent;
+  position: relative;
+  padding-left: 14px;
+}
+
+.msgType::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 10px;
+  background: currentColor;
+}
+
+.msgType[data-msg-type='SKYKING'] {
+  color: var(--type-skyking);
+  border-color: color-mix(in srgb, var(--type-skyking) 45%, transparent);
+}
+.msgType[data-msg-type='SKYBIRD'] {
+  color: var(--type-skybird);
+  border-color: color-mix(in srgb, var(--type-skybird) 45%, transparent);
+}
+.msgType[data-msg-type='SKYMASTER'] {
+  color: var(--type-skymaster);
+  border-color: color-mix(in srgb, var(--type-skymaster) 45%, transparent);
+}
+.msgType[data-msg-type='ALLSTATIONS'] {
+  color: var(--type-allstations);
+  border-color: color-mix(in srgb, var(--type-allstations) 45%, transparent);
+}
+.msgType[data-msg-type='RADIOCHECK'] {
+  color: var(--type-radiocheck);
+  border-color: color-mix(in srgb, var(--type-radiocheck) 45%, transparent);
+}
+.msgType[data-msg-type='BACKEND'] {
+  color: var(--type-backend);
+  border-color: color-mix(in srgb, var(--type-backend) 45%, transparent);
+}
+.msgType[data-msg-type='DISREGARDED'] {
+  color: var(--type-disregarded);
+  border-color: color-mix(in srgb, var(--type-disregarded) 45%, transparent);
+}
+.msgType[data-msg-type='OTHER'] {
+  color: var(--type-other);
+  border-color: color-mix(in srgb, var(--type-other) 45%, transparent);
+}

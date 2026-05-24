@@ -1,0 +1,65 @@
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 10px 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-2);
+  color: var(--color-fg-muted);
+  white-space: nowrap;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.pulse .dot {
+  animation: pulse 1.4s ease-in-out infinite;
+  box-shadow: 0 0 0 0 currentColor;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 currentColor;
+  }
+  50% {
+    box-shadow: 0 0 0 5px transparent;
+  }
+}
+
+/* --- statuses -------------------------------------------- */
+.queued {
+  color: var(--color-fg-muted);
+}
+.preprocessing,
+.transcribing,
+.parsing {
+  color: var(--color-info);
+  border-color: color-mix(in srgb, var(--color-info) 35%, transparent);
+  background: color-mix(in srgb, var(--color-info) 12%, var(--color-bg));
+}
+.published {
+  color: var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
+  background: color-mix(in srgb, var(--color-success) 12%, var(--color-bg));
+}
+.flagged {
+  color: var(--color-warn);
+  border-color: color-mix(in srgb, var(--color-warn) 35%, transparent);
+  background: color-mix(in srgb, var(--color-warn) 12%, var(--color-bg));
+}
+.failed {
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 12%, var(--color-bg));
+}

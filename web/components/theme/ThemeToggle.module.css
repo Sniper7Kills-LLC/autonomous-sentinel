@@ -1,0 +1,32 @@
+.root {
+  display: inline-flex;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  border-radius: var(--r-1);
+  padding: 2px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.btn {
+  padding: 6px 12px;
+  color: var(--color-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  border-radius: var(--r-1);
+  transition:
+    background var(--t-fast) var(--ease-out),
+    color var(--t-fast) var(--ease-out);
+}
+
+.btn:hover {
+  color: var(--color-fg);
+}
+
+.active {
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+}
+.active:hover {
+  color: var(--color-accent-fg);
+}

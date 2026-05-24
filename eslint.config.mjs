@@ -19,6 +19,7 @@ export default tseslint.config(
       '**/dist/**',
       '**/build/**',
       '**/.next/**',
+      '**/out/**',
       '**/dist-electron/**',
       '**/release/**',
       '**/.amplify/**',
