@@ -82,8 +82,18 @@ describe('cognito-token-validity — bounds rejection', () => {
     expect(() => readCognitoTokenValidityConfig()).toThrow(/AS_COGNITO_ACCESS_TOKEN_MIN/);
   });
 
+  it('rejects id token > 1440 minutes (24h Cognito hard ceiling)', () => {
+    process.env.AS_COGNITO_ID_TOKEN_MIN = '1441';
+    expect(() => readCognitoTokenValidityConfig()).toThrow(/AS_COGNITO_ID_TOKEN_MIN/);
+  });
+
   it('rejects refresh token < 60 minutes (Cognito hard floor)', () => {
     process.env.AS_COGNITO_REFRESH_TOKEN_MIN = '59';
+    expect(() => readCognitoTokenValidityConfig()).toThrow(/AS_COGNITO_REFRESH_TOKEN_MIN/);
+  });
+
+  it('rejects refresh token > 5256000 minutes (10 year Cognito hard ceiling)', () => {
+    process.env.AS_COGNITO_REFRESH_TOKEN_MIN = '5256001';
     expect(() => readCognitoTokenValidityConfig()).toThrow(/AS_COGNITO_REFRESH_TOKEN_MIN/);
   });
 
@@ -130,5 +140,25 @@ describe('cognito-token-validity — applyCognitoTokenValidity', () => {
       idToken: 'minutes',
       refreshToken: 'minutes',
     });
+  });
+
+  it('also sets authSessionValidity on the client (SRP-challenge token TTL)', () => {
+    const { client, capture } = makeClientStub();
+    applyCognitoTokenValidity(
+      client as unknown as Parameters<typeof applyCognitoTokenValidity>[0],
+      COGNITO_TOKEN_VALIDITY_DEFAULTS,
+    );
+    expect(capture().authSessionValidity).toBe(3);
+  });
+
+  it('defaults to readCognitoTokenValidityConfig() when no explicit config is passed', () => {
+    // Pins the binding between apply() and read() — drift here would
+    // mean the env-tunable hook silently breaks because apply() is
+    // called without an explicit config in backend.ts.
+    for (const k of ENV_KEYS) delete process.env[k];
+    process.env.AS_COGNITO_ACCESS_TOKEN_MIN = '120';
+    const { client, capture } = makeClientStub();
+    applyCognitoTokenValidity(client as unknown as Parameters<typeof applyCognitoTokenValidity>[0]);
+    expect(capture().accessTokenValidity).toBe(120);
   });
 });

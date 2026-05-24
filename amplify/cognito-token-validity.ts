@@ -89,7 +89,9 @@ export function readCognitoTokenValidityConfig(): CognitoTokenValidityConfig {
 
 /**
  * Apply the configured TTLs to the auth construct's L1 user pool
- * client + user pool (auth session lives on the pool itself).
+ * client. Auth session validity (the time a single SRP-challenge
+ * session token survives) also lives on the client per CFN —
+ * `authSessionValidity`.
  */
 export function applyCognitoTokenValidity(
   client: CfnUserPoolClient,
@@ -98,6 +100,7 @@ export function applyCognitoTokenValidity(
   client.accessTokenValidity = config.accessTokenValidityMinutes;
   client.idTokenValidity = config.idTokenValidityMinutes;
   client.refreshTokenValidity = config.refreshTokenValidityMinutes;
+  client.authSessionValidity = config.authSessionValidityMinutes;
   client.tokenValidityUnits = {
     accessToken: 'minutes',
     idToken: 'minutes',
