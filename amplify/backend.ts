@@ -671,6 +671,9 @@ const whisperRepo = Repository.fromRepositoryName(
   'WhisperRepo',
   'autonomous-sentinel/whisper-medium',
 );
+// `recordingTable` already declared in the stage-2 preprocess wiring
+// block higher up — reused here for the Whisper finalizer env + IAM.
+
 const whisperFn = new DockerImageFunction(transcribeWhisperStack, 'TranscribeWhisperFn', {
   code: DockerImageCode.fromEcr(whisperRepo, { tagOrDigest: 'latest' }),
   memorySize: 3008,
@@ -680,6 +683,9 @@ const whisperFn = new DockerImageFunction(transcribeWhisperStack, 'TranscribeWhi
     RECORDINGS_BUCKET: mediaBucket.bucketName,
     PIPELINE_TEMP_PREFIX: 'pipeline-temp',
     WHISPER_LANGUAGE: 'en',
+    // #433 stage 3 — write transcript onto Recording + publish to linguistic.
+    RECORDING_TABLE_NAME: recordingTable.tableName,
+    LINGUISTIC_QUEUE_URL: pipelineQueues.linguistic.main.queueUrl,
   },
   reservedConcurrentExecutions: getConcurrencyCap('TRANSCRIBE_WHISPER_LOCAL'),
 });
@@ -695,6 +701,13 @@ whisperFn.addToRolePolicy(
     resources: [`${mediaBucket.bucketArn}/pipeline-temp/*`],
   }),
 );
+whisperFn.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:UpdateItem'],
+    resources: [recordingTable.tableArn],
+  }),
+);
+pipelineQueues.linguistic.main.grantSendMessages(whisperFn);
 whisperFn.addEventSource(new SqsEventSource(pipelineQueues.transcribe.main, { batchSize: 1 }));
 
 // Budget hard-threshold ($200) → throttle Whisper to concurrency 1 (#7).
