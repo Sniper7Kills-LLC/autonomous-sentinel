@@ -581,6 +581,7 @@ pipelineQueues.preprocess.main.grantSendMessages(recordingMutationsLambda);
 const mediaBucket = backend.storage.resources.bucket;
 const preprocessLambda = backend.preprocess.resources.lambda as LambdaFunction;
 preprocessLambda.addEnvironment('MEDIA_BUCKET_NAME', mediaBucket.bucketName);
+preprocessLambda.addEnvironment('RECORDINGS_BUCKET', mediaBucket.bucketName);
 preprocessLambda.addToRolePolicy(
   new PolicyStatement({
     actions: ['s3:PutObject', 's3:DeleteObject', 's3:AbortMultipartUpload'],
@@ -594,6 +595,27 @@ preprocessLambda.addToRolePolicy(
     actions: ['s3:GetObject'],
     resources: [`${mediaBucket.bucketArn}/recordings/originals/*`],
   }),
+);
+
+// Pipeline stage 2 wiring (#433). The preprocess Lambda consumes the
+// preprocess SQS queue (populated by submitRecording), updates the
+// Recording row, and publishes onto the transcribe SQS queue so the
+// Whisper container Lambda picks the recording up.
+const recordingTable = backend.data.resources.tables['Recording'];
+if (!recordingTable) {
+  throw new Error('backend: Recording table not found on data resources');
+}
+preprocessLambda.addEnvironment('RECORDING_TABLE_NAME', recordingTable.tableName);
+preprocessLambda.addEnvironment('TRANSCRIBE_QUEUE_URL', pipelineQueues.transcribe.main.queueUrl);
+preprocessLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:UpdateItem'],
+    resources: [recordingTable.tableArn],
+  }),
+);
+pipelineQueues.transcribe.main.grantSendMessages(preprocessLambda);
+preprocessLambda.addEventSource(
+  new SqsEventSource(pipelineQueues.preprocess.main, { batchSize: 1 }),
 );
 
 // Whisper container Lambda — self-hosted transcribe backend (#54).
