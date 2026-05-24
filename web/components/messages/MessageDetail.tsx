@@ -351,11 +351,15 @@ function findSuspectChars(s: string): string[] {
 
 /**
  * Skyking codewords come in two flavors:
- *   1. 3-character phonetic group (e.g. "PT3", "BAK", "K2J") — pre-2015.
+ *   1. 3-character phonetic group (e.g. "PT3", "K2J") — pre-2015. May
+ *      contain digits.
  *   2. Codename word(s) (e.g. "BEARS", "BILBO", "THE DOORS") — post-2015.
+ *      Always alpha; usually longer than 3 chars or multi-word.
  *
- * Heuristic: alpha-only AND (length > 3 OR contains a space) ⇒ codename.
- * Three-char alpha groups (e.g. "BAK") still render as a phonetic group.
+ * Heuristic for codename detection: contains a space (multi-word codename)
+ * OR is alpha-only AND longer than 3 chars. Pre-2015 3-char groups —
+ * whether all-alpha ("BAK") or alphanumeric ("PT3", "K2J") — render as
+ * phonetic groups.
  */
 function isLikelyCodename(codeword: string): boolean {
   if (/\s/.test(codeword)) return true;

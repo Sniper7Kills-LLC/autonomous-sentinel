@@ -71,11 +71,16 @@ export function useTheme(): ThemeCtx {
  * Inline script content for <head>. Runs before paint and sets
  * data-theme based on stored preference, falling back to OS. Prevents
  * FOUC on hard refresh.
+ *
+ * The localStorage key is hard-coded as a literal — not interpolated from
+ * THEME_STORAGE_KEY — so that this string is fully static at build time
+ * and never carries any future value that might shadow it. If you rename
+ * the constant, update the literal here in lockstep.
  */
 export const NO_FLASH_SCRIPT = `
 (function () {
   try {
-    var s = localStorage.getItem('${THEME_STORAGE_KEY}');
+    var s = localStorage.getItem('as-theme');
     if (s === 'light' || s === 'dark') {
       document.documentElement.setAttribute('data-theme', s);
     }
