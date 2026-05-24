@@ -1,0 +1,214 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+/* --- drop zone -------------------------------------------- */
+.dropZone {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  border: 1.5px dashed var(--color-border-strong);
+  background:
+    repeating-linear-gradient(
+      135deg,
+      transparent 0,
+      transparent 12px,
+      color-mix(in srgb, var(--color-fg-faint) 5%, transparent) 12px,
+      color-mix(in srgb, var(--color-fg-faint) 5%, transparent) 14px
+    ),
+    var(--color-surface);
+  cursor: pointer;
+  transition:
+    border-color var(--t-fast) var(--ease-out),
+    background-color var(--t-fast) var(--ease-out);
+  padding: var(--sp-5);
+}
+
+.dropZone:hover:not(.dropZoneDisabled),
+.dropZoneOver {
+  border-color: var(--color-accent);
+  background-color: color-mix(in srgb, var(--color-accent) 6%, var(--color-surface));
+}
+
+.dropZoneDisabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.fileInput {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.dropPrompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  text-align: center;
+}
+
+.dropEyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+.dropHeading {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: var(--fs-h3);
+  color: var(--color-fg);
+  letter-spacing: -0.01em;
+}
+
+.dropHint {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.06em;
+  color: var(--color-fg-muted);
+}
+
+.fileInfo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-1);
+  text-align: center;
+}
+
+.fileLabel {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.22em;
+  color: var(--color-accent);
+  text-transform: uppercase;
+}
+
+.fileName {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: var(--fs-h4);
+  color: var(--color-fg);
+  word-break: break-all;
+}
+
+.fileMeta {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-fg-muted);
+  letter-spacing: 0.04em;
+}
+
+/* --- controls --------------------------------------------- */
+.controls {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+
+.recId {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-fg-muted);
+  letter-spacing: 0.06em;
+}
+
+.recId code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--color-accent);
+}
+
+/* --- progress bar ----------------------------------------- */
+.progressBar {
+  position: relative;
+  height: 10px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+}
+
+.progressFill {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+  transition: width var(--t-fast) var(--ease-out);
+}
+
+.progressLabel {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: var(--color-fg);
+}
+
+/* --- timeline --------------------------------------------- */
+.timeline {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  padding: var(--sp-3);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.stage {
+  position: relative;
+}
+
+.stage:not(:last-child)::after {
+  content: '→';
+  position: absolute;
+  right: -16px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-fg-faint);
+  font-family: var(--font-mono);
+}
+
+.stageFuture {
+  opacity: 0.45;
+}
+
+.stagePast {
+  opacity: 0.85;
+}
+
+.stageCurrent {
+  /* StatusPill handles the pulse */
+}
+
+.stageFailed {
+  /* StatusPill handles the red */
+}
+
+.serverStatus {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-fg-muted);
+  letter-spacing: 0.06em;
+}
+
+.serverStatus code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--color-accent);
+}

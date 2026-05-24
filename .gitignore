@@ -11,7 +11,12 @@ out/
 *.tsbuildinfo
 
 # Amplify Gen 2 generated artifacts
-amplify_outputs.json
+# Note: `amplify_outputs.json` is intentionally tracked — it carries the
+# public Cognito IDs + Amplify app ARNs that ship to every browser
+# client anyway, and the web workspace imports it at compile time so CI
+# typecheck depends on it being present. Local `ampx sandbox` runs do
+# overwrite it; use `git update-index --skip-worktree amplify_outputs.json`
+# to ignore sandbox-driven churn without untracking the file.
 .amplify/
 amplify/.amplify/
 
