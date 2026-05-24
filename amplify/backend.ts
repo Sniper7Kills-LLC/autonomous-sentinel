@@ -33,6 +33,7 @@ import { listAuditLogPublic } from './functions/listAuditLogPublic/resource';
 import { legacyClaimWorker } from './functions/legacyClaimWorker/resource';
 import { legacyClaimReplaySweeper } from './functions/legacyClaimReplaySweeper/resource';
 import { fieldVoteOrphanJanitor } from './functions/fieldVoteOrphanJanitor/resource';
+import { deployBadge } from './functions/deployBadge/resource';
 import { attachBudgetAlarms, attachBudgetThrottleAction, readBudgetConfig } from './budgets';
 import { applyCognitoTokenValidity } from './cognito-token-validity';
 import { attachStorageLifecycle, readStorageLifecycleConfig } from './storage-lifecycle';
@@ -65,6 +66,7 @@ const backend = defineBackend({
   legacyClaimWorker,
   legacyClaimReplaySweeper,
   fieldVoteOrphanJanitor,
+  deployBadge,
 });
 
 // Wire the legacy-claim worker into postConfirmation (sub-A of #16 / #272).
@@ -664,3 +666,46 @@ whisperFn.addEventSource(new SqsEventSource(pipelineQueues.transcribe.main, { ba
 // Lambda's name + ARN — one-way dependency, no cycle. Subscribes itself
 // to the BudgetHardThresholdTopic created in attachBudgetAlarms above.
 attachBudgetThrottleAction(budgetsStack, budgetHardThresholdTopic, whisperFn);
+
+// Deploy-status badge Lambda (#423).
+//
+// Public Function URL that returns shields.io endpoint JSON
+// describing the latest Amplify Hosting deploy for `main`. Embedded
+// in README via `https://img.shields.io/endpoint?url=<function-url>`
+// so a public reader sees the actual deploy state at a glance.
+//
+// Grouped with `data` in resource.ts to avoid recreating the
+// auth → data CFN cycle that #420 / #424 just closed. The Lambda
+// reads via the Amplify SDK (no DDB), so no cross-stack ref is
+// introduced by the IAM grant below.
+const deployBadgeLambda = backend.deployBadge.resources.lambda as LambdaFunction;
+// AMPLIFY_APP_ID is the prod Amplify Hosting app id — public,
+// appears in every public Amplify URL, not a secret. Hard-coded
+// because CDK doesn't surface it via `backend.*.resources` (Amplify
+// Hosting owns the app, separate from the backend resources).
+deployBadgeLambda.addEnvironment('AMPLIFY_APP_ID', 'd3p8g0zujguxh4');
+deployBadgeLambda.addEnvironment('AMPLIFY_BRANCH', 'main');
+deployBadgeLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['amplify:ListJobs'],
+    // Wildcard region/account so the policy stays portable; scoped
+    // to the prod app id only.
+    resources: [`arn:aws:amplify:*:*:apps/d3p8g0zujguxh4/branches/main/jobs/*`],
+  }),
+);
+// Public Function URL — shields.io fetches over HTTPS, no auth.
+const deployBadgeUrl = deployBadgeLambda.addFunctionUrl({
+  authType: FunctionUrlAuthType.NONE,
+  cors: {
+    allowedOrigins: ['*'],
+    allowedMethods: [
+      /* default */
+    ],
+  },
+  invokeMode: InvokeMode.BUFFERED,
+});
+backend.addOutput({
+  custom: {
+    deployBadgeUrl: deployBadgeUrl.url,
+  },
+});
