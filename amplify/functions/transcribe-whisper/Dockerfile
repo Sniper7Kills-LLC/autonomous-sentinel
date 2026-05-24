@@ -45,9 +45,16 @@ RUN dnf -y install gcc-c++ make cmake git tar gzip wget && dnf clean all
 WORKDIR /build
 # Pin to a release tag so the image is reproducible. Bump the
 # WHISPER_CPP_VERSION ARG above when updating.
+# `-DBUILD_SHARED_LIBS=OFF` produces a statically-linked CLI binary
+# (#446). whisper.cpp v1.8.x defaults to `BUILD_SHARED_LIBS=ON`, so
+# `bin/whisper-cli` is dynamically linked against `libwhisper.so.1`
+# + `libggml.so.X` that only exist inside the builder stage. Without
+# the static flag the runtime image starts up cleanly but the binary
+# fails at first invocation with `cannot open shared object file:
+# No such file or directory`.
 RUN git clone --depth 1 --branch ${WHISPER_CPP_VERSION} \
       https://github.com/ggerganov/whisper.cpp.git . \
- && cmake -B build -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON \
+ && cmake -B build -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON \
  && cmake --build build --config Release -j
 
 # Download the medium English model. The `download-ggml-model.sh`
