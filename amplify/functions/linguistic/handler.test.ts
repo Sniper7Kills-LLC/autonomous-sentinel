@@ -1,17 +1,45 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { SQSEvent } from 'aws-lambda';
-import { mockClient } from 'aws-sdk-client-mock';
-import { DynamoDBClient, PutItemCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
 
-import { handler, classify, parseMessage, __setDeps, __resetDeps } from './handler';
+import {
+  handler,
+  classify,
+  parseMessage,
+  __setDeps,
+  __resetDeps,
+  type LinguisticDataClient,
+} from './handler';
 
 /**
  * Linguistic Lambda contract (#433 stage 4):
  *
- *   SQS message → classify → DDB PutItem(Message) → DDB UpdateItem(Recording → PUBLISHED)
+ *   SQS message → classify → Message.create →
+ *     Recording.update(status=PUBLISHED, messageId=…)
+ *
+ *   on failure → Recording.update(status=PARSE_FAILED, failedReason=…)
+ *     before rethrow.
+ *
+ * Both writes go through the Amplify Data client so AppSync's
+ * subscription publisher fires for the testing portal.
  */
 
-const ddbMock = mockClient(DynamoDBClient);
+interface DataStub {
+  client: LinguisticDataClient;
+  createSpy: ReturnType<typeof vi.fn>;
+  updateSpy: ReturnType<typeof vi.fn>;
+}
+
+function makeDataStub(): DataStub {
+  const createSpy = vi.fn().mockResolvedValue({ data: { id: 'msg-uuid-1' }, errors: null });
+  const updateSpy = vi.fn().mockResolvedValue({ data: {}, errors: null });
+  const client: LinguisticDataClient = {
+    models: {
+      Message: { create: createSpy as never },
+      Recording: { update: updateSpy as never },
+    },
+  };
+  return { client, createSpy, updateSpy };
+}
 
 function makeEvent(body: object): SQSEvent {
   return {
@@ -35,19 +63,6 @@ function makeEvent(body: object): SQSEvent {
     ],
   };
 }
-
-beforeEach(() => {
-  ddbMock.reset();
-  process.env.RECORDING_TABLE_NAME = 'Recording-test-NONE';
-  process.env.MESSAGE_TABLE_NAME = 'Message-test-NONE';
-  ddbMock.on(PutItemCommand).resolves({});
-  ddbMock.on(UpdateItemCommand).resolves({});
-  __setDeps({
-    ddb: new DynamoDBClient({}),
-    now: () => new Date('2026-05-24T18:00:00Z'),
-    uuid: () => 'msg-uuid-1',
-  });
-});
 
 afterEach(() => {
   __resetDeps();
@@ -129,7 +144,13 @@ describe('linguistic — parseMessage', () => {
 });
 
 describe('linguistic — handler happy path', () => {
-  it('creates Message + advances Recording to PUBLISHED', async () => {
+  it('creates Message via Amplify Data + advances Recording to PUBLISHED', async () => {
+    const { client, createSpy, updateSpy } = makeDataStub();
+    __setDeps({
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-uuid-1',
+    });
     const event = makeEvent({
       recordingId: 'rec-1',
       transcript: 'Skyking, Skyking, do not answer',
@@ -137,55 +158,52 @@ describe('linguistic — handler happy path', () => {
     });
     await handler(event, {} as never, () => undefined);
 
-    const puts = ddbMock.commandCalls(PutItemCommand);
-    expect(puts).toHaveLength(1);
-    const putInput = puts[0]?.args[0].input;
-    expect(putInput?.TableName).toBe('Message-test-NONE');
+    expect(createSpy).toHaveBeenCalledOnce();
+    expect(createSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        id: 'msg-uuid-1',
+        type: 'SKYKING',
+        broadcastTs: '2026-05-24T17:55:00Z',
+        body: 'Skyking, Skyking, do not answer',
+        confidence: 0.85,
+        flaggedForReview: false,
+        publishedAt: '2026-05-24T18:00:00.000Z',
+      }),
+    );
 
-    // Pin every field the Amplify Gen 2 Message model expects so a
-    // future schema drift (rename, .required() addition, etc.) trips
-    // here instead of at AppSync read time. broadcastTs is
-    // `.required()` on the model — its absence on the PutItem was
-    // the original review finding that led to this rewrite.
-    const item = putInput?.Item ?? {};
-    expect(item.id).toEqual({ S: 'msg-uuid-1' });
-    expect(item.type).toEqual({ S: 'SKYKING' });
-    expect(item.broadcastTs).toEqual({ S: '2026-05-24T17:55:00Z' });
-    expect(item.body).toEqual({ S: 'Skyking, Skyking, do not answer' });
-    expect(item.confidence).toEqual({ N: '0.85' });
-    expect(item.flaggedForReview).toEqual({ BOOL: false });
-    expect(item.publishedAt).toEqual({ S: '2026-05-24T18:00:00.000Z' });
-    expect(item.__typename).toEqual({ S: 'Message' });
-
-    const updates = ddbMock.commandCalls(UpdateItemCommand);
-    expect(updates).toHaveLength(1);
-    const updateInput = updates[0]?.args[0].input;
-    expect(updateInput?.TableName).toBe('Recording-test-NONE');
-    expect(updateInput?.UpdateExpression).toContain('#mid');
-    expect(updateInput?.ExpressionAttributeValues?.[':mid']).toEqual({
-      S: 'msg-uuid-1',
-    });
-    expect(updateInput?.ExpressionAttributeValues?.[':ts']).toEqual({
-      S: 'PUBLISHED',
-    });
+    expect(updateSpy).toHaveBeenCalledOnce();
+    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        id: 'rec-1',
+        messageId: 'msg-uuid-1',
+        transcriptionStatus: 'PUBLISHED',
+      }),
+    );
   });
 
   it('flags low-confidence Messages for review', async () => {
+    const { client, createSpy } = makeDataStub();
+    __setDeps({
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-uuid-2',
+    });
     const event = makeEvent({
       recordingId: 'rec-2',
       transcript: 'unknown noise',
       enqueuedAt: '2026-05-24T18:00:00Z',
     });
     await handler(event, {} as never, () => undefined);
-    const puts = ddbMock.commandCalls(PutItemCommand);
-    expect(puts[0]?.args[0].input.Item?.flaggedForReview).toEqual({
-      BOOL: true,
-    });
+    expect((createSpy.mock.calls[0]?.[0] as { flaggedForReview?: boolean })?.flaggedForReview).toBe(
+      true,
+    );
   });
 });
 
 describe('linguistic — failure paths', () => {
   it('skips malformed SQS bodies', async () => {
+    const { client } = makeDataStub();
+    __setDeps({ dataClient: client });
     const event: SQSEvent = {
       Records: [
         {
@@ -212,8 +230,17 @@ describe('linguistic — failure paths', () => {
     errSpy.mockRestore();
   });
 
-  it('rethrows when DDB PutItem fails', async () => {
-    ddbMock.on(PutItemCommand).rejects(new Error('throughput exceeded'));
+  it('marks Recording PARSE_FAILED + rethrows when Message.create errors', async () => {
+    const { client, createSpy, updateSpy } = makeDataStub();
+    createSpy.mockResolvedValueOnce({
+      data: null,
+      errors: [{ message: 'throughput' }],
+    });
+    __setDeps({
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-uuid-x',
+    });
     const event = makeEvent({
       recordingId: 'rec-x',
       transcript: 'skyking',
@@ -221,6 +248,15 @@ describe('linguistic — failure paths', () => {
     });
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     await expect(handler(event, {} as never, () => undefined)).rejects.toThrow(/throughput/);
+    // updateSpy is called once — for the PARSE_FAILED mark.
+    expect(updateSpy).toHaveBeenCalledOnce();
+    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        id: 'rec-x',
+        transcriptionStatus: 'PARSE_FAILED',
+        transcriptionFailed: true,
+      }),
+    );
     errSpy.mockRestore();
   });
 });

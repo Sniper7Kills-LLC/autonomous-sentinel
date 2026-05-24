@@ -187,6 +187,44 @@ async function processOne(body) {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+    // Mark TRANSCRIBE_FAILED on the row so admin DLQ filter / portal
+    // surface the stuck state. Direct DDB UpdateItem here (vs Amplify
+    // Data) because this Lambda is in a container image and adding
+    // aws-amplify into the image would balloon the bundle. The portal
+    // subscription will miss this exact transition, but the admin DLQ
+    // page filters on `transcriptionStatus = *_FAILED`.
+    try {
+      const reason =
+        err instanceof WhisperError
+          ? `whisper.cpp exit ${err.code}: ${err.stderr.slice(-512)}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      await ddb.send(
+        new UpdateItemCommand({
+          TableName: RECORDING_TABLE_NAME,
+          Key: marshall({ id: recordingId }),
+          UpdateExpression: 'SET #ts = :ts, #tf = :tf, #fr = :fr, #tsu = :tsu',
+          ExpressionAttributeNames: {
+            '#ts': 'transcriptionStatus',
+            '#tf': 'transcriptionFailed',
+            '#fr': 'failedReason',
+            '#tsu': 'transcriptionStatusUpdatedAt',
+          },
+          ExpressionAttributeValues: marshall({
+            ':ts': 'TRANSCRIBE_FAILED',
+            ':tf': true,
+            ':fr': reason.slice(0, 1024),
+            ':tsu': new Date().toISOString(),
+          }),
+        }),
+      );
+    } catch (markErr) {
+      console.error('whisper-handler: failed to mark TRANSCRIBE_FAILED', {
+        recordingId,
+        err: String(markErr),
+      });
+    }
     throw err;
   } finally {
     await Promise.allSettled([

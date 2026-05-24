@@ -144,7 +144,7 @@ async function getDataClient(): Promise<PostConfirmDataClient> {
   // generateClient or it throws. Shared helper in
   // amplify/functions/_shared/configure-amplify.ts.
   const { configureAmplifyOnce } = await import('../_shared/configure-amplify');
-  configureAmplifyOnce();
+  await configureAmplifyOnce();
   const mod = await import('aws-amplify/data');
   cachedClient = mod.generateClient({ authMode: 'iam' }) as unknown as PostConfirmDataClient;
   return cachedClient;

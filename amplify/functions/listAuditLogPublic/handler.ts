@@ -151,7 +151,7 @@ async function getClient(): Promise<AuditLogPublicDataClient> {
   // generateClient or it throws. Shared helper in
   // amplify/functions/_shared/configure-amplify.ts.
   const { configureAmplifyOnce } = await import('../_shared/configure-amplify');
-  configureAmplifyOnce();
+  await configureAmplifyOnce();
   const mod = await import('aws-amplify/data');
   const client = mod.generateClient({ authMode: 'iam' }) as unknown as {
     models: {
