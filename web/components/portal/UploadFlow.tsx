@@ -184,6 +184,8 @@ export function UploadFlow({ onLog }: UploadFlowProps) {
             },
           });
           if (next === 'PUBLISHED' || next === 'FAILED') {
+            subRef.current?.unsubscribe();
+            subRef.current = null;
             setPhase('done');
           }
         },
@@ -273,14 +275,14 @@ function Timeline({
       {PIPELINE_STAGES.map((stage, i) => {
         const isCurrent = current === stage;
         const isPast = reachedIdx >= 0 && i < reachedIdx;
-        const isFailed = current === 'failed' && i === reachedIdx;
+        // Failure renders as its own pill after the stage list (below).
+        // Stages themselves stay in past/current/future to keep the
+        // visual flow readable when something blows up mid-pipeline.
         const klass = isCurrent
           ? styles.stageCurrent
           : isPast
             ? styles.stagePast
-            : isFailed
-              ? styles.stageFailed
-              : styles.stageFuture;
+            : styles.stageFuture;
         return (
           <div key={stage} className={`${styles.stage} ${klass}`}>
             <StatusPill status={stage} pulse={isCurrent} />
