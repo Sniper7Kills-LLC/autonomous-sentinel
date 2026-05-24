@@ -6,7 +6,7 @@ import {
   InvokeMode,
 } from 'aws-cdk-lib/aws-lambda';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
-import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
+import { Policy, PolicyStatement, Role } from 'aws-cdk-lib/aws-iam';
 import { Rule, Schedule } from 'aws-cdk-lib/aws-events';
 import { LambdaFunction as LambdaTarget } from 'aws-cdk-lib/aws-events-targets';
 import { Key } from 'aws-cdk-lib/aws-kms';
@@ -664,6 +664,40 @@ const whisperRepo = Repository.fromRepositoryName(
   'WhisperRepo',
   'autonomous-sentinel/whisper-medium',
 );
+
+// #444: grant the Amplify Hosting deploy role `ecr:DescribeImages`
+// on the whisper repo so the synth-time digest resolver
+// (`amplify/resolve-ecr-digest.ts`) can read the current digest
+// instead of falling back to the literal `latest` tag. Without
+// this grant the CDK `Code.ImageUri` value is byte-identical
+// across deploys and CFN never rolls the Lambda image forward —
+// the exact bug #442 was supposed to fix.
+//
+// Bootstrap: the deploy that adds this policy still synths
+// without the grant in place (CFN applies the policy resource
+// after synth completes); the grant takes effect on the
+// following deploy. Acceptable because the helper already
+// fails soft.
+//
+// Role name `AutonomousSentinelAmplifyBackendDeploy` is the
+// IAM role attached to this Amplify app's backend deployment —
+// the same one quoted in Hosting build log job 76 as the
+// caller denied `ecr:DescribeImages`.
+const amplifyDeployRole = Role.fromRoleName(
+  transcribeWhisperStack,
+  'AmplifyDeployRoleRef',
+  'AutonomousSentinelAmplifyBackendDeploy',
+);
+new Policy(transcribeWhisperStack, 'WhisperEcrDescribeImagesPolicy', {
+  policyName: 'WhisperEcrDescribeImages',
+  roles: [amplifyDeployRole],
+  statements: [
+    new PolicyStatement({
+      actions: ['ecr:DescribeImages'],
+      resources: [whisperRepo.repositoryArn],
+    }),
+  ],
+});
 // `recordingTable` already declared in the stage-2 preprocess wiring
 // block higher up — reused here for the Whisper finalizer env + IAM.
 
