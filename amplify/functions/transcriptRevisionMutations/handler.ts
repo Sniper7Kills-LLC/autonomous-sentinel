@@ -128,7 +128,7 @@ async function getDefaultClient(): Promise<TranscriptRevisionMutationsDataClient
   // generateClient or it throws. Shared helper in
   // amplify/functions/_shared/configure-amplify.ts.
   const { configureAmplifyOnce } = await import('../_shared/configure-amplify');
-  configureAmplifyOnce();
+  await configureAmplifyOnce();
   const mod = await import('aws-amplify/data');
   cachedDefaultClient = mod.generateClient({
     authMode: 'iam',

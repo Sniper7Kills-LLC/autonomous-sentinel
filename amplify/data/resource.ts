@@ -5,6 +5,9 @@ import { postConfirmation } from '../functions/postConfirmation/resource';
 import { messageMutations } from '../functions/messageMutations/resource';
 import { recordingMutations } from '../functions/recordingMutations/resource';
 import { commentMutations } from '../functions/commentMutations/resource';
+import { preprocess } from '../functions/preprocess/resource';
+import { linguistic } from '../functions/linguistic/resource';
+import { legacyClaimWorker } from '../functions/legacyClaimWorker/resource';
 import { getUserPublicLambda } from '../functions/getUserPublicLambda/resource';
 import { listAuditLogPublic } from '../functions/listAuditLogPublic/resource';
 import { Message, softDeleteMessage, submitRecordingLessMessage } from './models/message';
@@ -157,6 +160,17 @@ export const schema = a
     allow.resource(recordingMutations).to(['query', 'mutate']),
     allow.resource(commentMutations).to(['query', 'mutate']),
     allow.resource(transcriptRevisionMutations).to(['query', 'mutate']),
+    // Pipeline Lambdas (#433) — wire schema-level resource grants so
+    // Amplify Gen 2 injects the AMPLIFY_DATA_* env vars these Lambdas
+    // need to call `generateClient<Schema>()` and route Recording /
+    // Message writes through AppSync (so the testing portal's
+    // observeQuery subscription on Recording fires).
+    allow.resource(preprocess).to(['query', 'mutate']),
+    allow.resource(linguistic).to(['query', 'mutate']),
+    // legacyClaimWorker already calls AppSync via the data client
+    // (#318 SQS handoff); grant the resource scope so its
+    // post-#438 `Amplify.configure(...)` path works.
+    allow.resource(legacyClaimWorker).to(['query', 'mutate']),
     // listAuditLogPublic Lambda Queries AuditLog directly via the
     // Amplify Data client; `query` scope is enough.
     allow.resource(listAuditLogPublic).to(['query']),

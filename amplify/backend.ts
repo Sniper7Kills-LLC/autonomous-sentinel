@@ -15,7 +15,6 @@ import { auth, discordIssuerUrl } from './auth/resource';
 import { data } from './data/resource';
 import { storage } from './storage/resource';
 import { preprocess } from './functions/preprocess/resource';
-import { transcribe } from './functions/transcribe/resource';
 import { linguistic } from './functions/linguistic/resource';
 import { postConfirmation } from './functions/postConfirmation/resource';
 import { preTokenGeneration } from './functions/preTokenGeneration/resource';
@@ -48,7 +47,6 @@ const backend = defineBackend({
   data,
   storage,
   preprocess,
-  transcribe,
   linguistic,
   postConfirmation,
   preTokenGeneration,
@@ -545,9 +543,6 @@ backend.addOutput({
   backend.preprocess.resources.lambda.node.defaultChild as CfnFunction
 ).reservedConcurrentExecutions = getConcurrencyCap('PREPROCESS');
 (
-  backend.transcribe.resources.lambda.node.defaultChild as CfnFunction
-).reservedConcurrentExecutions = getConcurrencyCap('TRANSCRIBE_DISPATCH');
-(
   backend.linguistic.resources.lambda.node.defaultChild as CfnFunction
 ).reservedConcurrentExecutions = getConcurrencyCap('LINGUISTIC');
 
@@ -598,21 +593,18 @@ preprocessLambda.addToRolePolicy(
 );
 
 // Pipeline stage 2 wiring (#433). The preprocess Lambda consumes the
-// preprocess SQS queue (populated by submitRecording), updates the
-// Recording row, and publishes onto the transcribe SQS queue so the
-// Whisper container Lambda picks the recording up.
+// preprocess SQS queue (populated by submitRecording), advances the
+// Recording row via the Amplify Data client (so AppSync's
+// subscription publisher fires for the portal `observeQuery`), and
+// publishes onto the transcribe SQS queue. The schema-side
+// `allow.resource(preprocess)` grant in `data/resource.ts` injects
+// the AMPLIFY_DATA_* env vars + AppSync invoke permission this
+// Lambda needs — no direct DDB grant required.
 const recordingTable = backend.data.resources.tables['Recording'];
 if (!recordingTable) {
   throw new Error('backend: Recording table not found on data resources');
 }
-preprocessLambda.addEnvironment('RECORDING_TABLE_NAME', recordingTable.tableName);
 preprocessLambda.addEnvironment('TRANSCRIBE_QUEUE_URL', pipelineQueues.transcribe.main.queueUrl);
-preprocessLambda.addToRolePolicy(
-  new PolicyStatement({
-    actions: ['dynamodb:UpdateItem'],
-    resources: [recordingTable.tableArn],
-  }),
-);
 pipelineQueues.transcribe.main.grantSendMessages(preprocessLambda);
 preprocessLambda.addEventSource(
   new SqsEventSource(pipelineQueues.preprocess.main, { batchSize: 1 }),
@@ -761,28 +753,12 @@ backend.addOutput({
 
 // Pipeline stage 4 wiring (#433). The linguistic Lambda consumes the
 // linguistic SQS queue (populated by the Whisper handler at stage 3),
-// classifies the transcript, creates a Message row, and advances the
-// Recording to PUBLISHED. `messageTable` is already in scope from the
-// fieldVoteOrphanJanitor wiring above; reuse it.
+// classifies the transcript, and routes Message.create + Recording.update
+// through the Amplify Data client so AppSync subscriptions fire for the
+// portal's `observeQuery`. The schema-side `allow.resource(linguistic)`
+// grant in `data/resource.ts` injects the AMPLIFY_DATA_* env vars + the
+// AppSync invoke permission — no direct DDB grant required.
 const linguisticLambda = backend.linguistic.resources.lambda as LambdaFunction;
-const linguisticRecordingTable = backend.data.resources.tables['Recording'];
-if (!linguisticRecordingTable) {
-  throw new Error('backend: Recording table not found on data resources');
-}
-linguisticLambda.addEnvironment('RECORDING_TABLE_NAME', linguisticRecordingTable.tableName);
-linguisticLambda.addEnvironment('MESSAGE_TABLE_NAME', messageTable.tableName);
-linguisticLambda.addToRolePolicy(
-  new PolicyStatement({
-    actions: ['dynamodb:UpdateItem'],
-    resources: [linguisticRecordingTable.tableArn],
-  }),
-);
-linguisticLambda.addToRolePolicy(
-  new PolicyStatement({
-    actions: ['dynamodb:PutItem'],
-    resources: [messageTable.tableArn],
-  }),
-);
 linguisticLambda.addEventSource(
   new SqsEventSource(pipelineQueues.linguistic.main, { batchSize: 1 }),
 );

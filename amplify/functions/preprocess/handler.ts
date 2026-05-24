@@ -1,8 +1,6 @@
 import type { SQSEvent, SQSHandler } from 'aws-lambda';
 import { CopyObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
-import { DynamoDBClient, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
-import { marshall } from '@aws-sdk/util-dynamodb';
 
 /**
  * Pre-process Lambda (#433 stage 2).
@@ -16,34 +14,27 @@ import { marshall } from '@aws-sdk/util-dynamodb';
  *   2. HEAD the original to confirm it exists + capture size.
  *   3. Copy the original to `recordings/web/<recordingId><ext>` so the
  *      transcribe stage has a stable web-key. **No ffmpeg transcode
- *      yet** — the v1 canonical is the original bytes. ffmpeg-driven
- *      Opus 32 kbps mono encoding will land once a Lambda layer (or
- *      container Lambda) is wired up — tracked in #433 follow-up.
- *   4. Update the Recording row: set `webCanonicalKey`,
- *      `canonicalSizeBytes`, and advance
- *      `transcriptionStatus = TRANSCRIBING`.
+ *      yet** — the v1 canonical is the original bytes.
+ *   4. Update the Recording row via the Amplify Data client so the
+ *      testing portal's `observeQuery` subscription on Recording
+ *      fires. Raw DDB writes would bypass AppSync's subscription
+ *      publisher and the portal user would never see the row
+ *      advance.
  *   5. Publish a transcribe-queue message `{ recordingId, audioKey }`
  *      so the Whisper container Lambda picks the recording up.
  *
  * Failure paths:
  *   - Malformed SQS body → log + skip (consumed; can't usefully redrive).
- *   - Anything else → rethrow so SQS marks the message for redrive /
- *     eventual DLQ; the Recording row stays at QUEUED so an operator
- *     sees the hang.
+ *   - Anything else → set `transcriptionStatus = PREPROCESS_FAILED` +
+ *     `failedReason` on the Recording row so admin DLQ UI / portal
+ *     show the stuck state, then rethrow so SQS marks the message
+ *     for redrive / eventual DLQ.
  *
- * The handler does NOT use the Amplify Data client (which adds a
- * 20+ MB cold-start cost) — it issues a direct DynamoDB UpdateItem
- * against the `RECORDING_TABLE_NAME` env var.
- *
- * Idempotency: a redrived SQS message re-runs the full COPY + DDB
- * UpdateItem + transcribe-queue publish. CopyObject is idempotent
- * (writes the same bytes to the same key), the UpdateItem `SET`
- * idempotently rewrites the same fields, and the downstream
- * transcribe-queue consumer (Whisper) is itself idempotent
- * (re-runs against the same audio yield the same transcript +
- * the same DDB writes). A duplicated SQS publish on this stage is
- * therefore harmless — accepted as a design decision rather than
- * guarded with a `ConditionExpression`.
+ * Idempotency: a redrived SQS message re-runs the full COPY + update
+ * + transcribe-queue publish. CopyObject is idempotent, the Amplify
+ * Data update is a SET on the same fields, and the downstream
+ * transcribe-queue consumer (Whisper) is itself idempotent. A
+ * duplicated SQS publish on this stage is harmless.
  */
 
 interface PreprocessQueueMessage {
@@ -59,10 +50,31 @@ interface TranscribeQueueMessage {
   enqueuedAt: string;
 }
 
+/**
+ * Narrow surface the handler uses from `generateClient<Schema>()`.
+ * Keeps the typing crisp without dragging the full Amplify Data
+ * client surface into the test file.
+ */
+export interface PreprocessDataClient {
+  models: {
+    Recording: {
+      update: (input: {
+        id: string;
+        webCanonicalKey?: string | null;
+        canonicalSizeBytes?: number | null;
+        transcriptionStatus?: string;
+        transcriptionStatusUpdatedAt?: string;
+        transcriptionFailed?: boolean;
+        failedReason?: string | null;
+      }) => Promise<{ data: unknown; errors?: unknown }>;
+    };
+  };
+}
+
 export interface PreprocessDeps {
   s3?: S3Client;
   sqs?: SQSClient;
-  ddb?: DynamoDBClient;
+  dataClient?: PreprocessDataClient;
   now?: () => Date;
 }
 
@@ -86,9 +98,17 @@ function sqs(): SQSClient {
   return injected.sqs ?? (cachedSqs ??= new SQSClient({}));
 }
 
-let cachedDdb: DynamoDBClient | undefined;
-function ddb(): DynamoDBClient {
-  return injected.ddb ?? (cachedDdb ??= new DynamoDBClient({}));
+let cachedDataClient: PreprocessDataClient | undefined;
+async function dataClient(): Promise<PreprocessDataClient> {
+  if (injected.dataClient) return injected.dataClient;
+  if (cachedDataClient) return cachedDataClient;
+  const { configureAmplifyOnce } = await import('../_shared/configure-amplify');
+  await configureAmplifyOnce();
+  const mod = await import('aws-amplify/data');
+  cachedDataClient = mod.generateClient({
+    authMode: 'iam',
+  }) as unknown as PreprocessDataClient;
+  return cachedDataClient;
 }
 
 function nowIso(): string {
@@ -125,8 +145,8 @@ export function parseMessage(body: string): PreprocessQueueMessage {
 
 async function processOne(msg: PreprocessQueueMessage): Promise<void> {
   const bucket = requiredEnv('RECORDINGS_BUCKET');
-  const tableName = requiredEnv('RECORDING_TABLE_NAME');
   const transcribeQueueUrl = requiredEnv('TRANSCRIBE_QUEUE_URL');
+  const client = await dataClient();
 
   const webKey = buildWebKey(msg.recordingId, msg.originalKey);
 
@@ -135,10 +155,7 @@ async function processOne(msg: PreprocessQueueMessage): Promise<void> {
 
   // CopySource format = `${bucket}/${url-encoded-key}` — the slash
   // is a delimiter and must NOT be encoded, only the key part is
-  // URL-encoded (per AWS S3 docs). Previous shape
-  // `encodeURIComponent(\`${bucket}/${key}\`)` percent-encoded the
-  // delimiter slash and AWS rejected the copy with
-  // "Invalid Copy Source".
+  // URL-encoded (per AWS S3 docs).
   await s3().send(
     new CopyObjectCommand({
       Bucket: bucket,
@@ -153,25 +170,20 @@ async function processOne(msg: PreprocessQueueMessage): Promise<void> {
   );
 
   const ts = nowIso();
-  await ddb().send(
-    new UpdateItemCommand({
-      TableName: tableName,
-      Key: marshall({ id: msg.recordingId }),
-      UpdateExpression: 'SET #wck = :wck, #csb = :csb, #ts = :ts, #tsu = :tsu',
-      ExpressionAttributeNames: {
-        '#wck': 'webCanonicalKey',
-        '#csb': 'canonicalSizeBytes',
-        '#ts': 'transcriptionStatus',
-        '#tsu': 'transcriptionStatusUpdatedAt',
-      },
-      ExpressionAttributeValues: marshall({
-        ':wck': webKey,
-        ':csb': sizeBytes,
-        ':ts': 'TRANSCRIBING',
-        ':tsu': ts,
-      }),
-    }),
-  );
+  // Routed through Amplify Data so AppSync's subscription publisher
+  // fires for the portal's observeQuery on Recording.
+  const updateResult = await client.models.Recording.update({
+    id: msg.recordingId,
+    webCanonicalKey: webKey,
+    canonicalSizeBytes: sizeBytes,
+    transcriptionStatus: 'TRANSCRIBING',
+    transcriptionStatusUpdatedAt: ts,
+  });
+  if (updateResult.errors) {
+    throw new Error(
+      `preprocess: Recording.update returned errors: ${JSON.stringify(updateResult.errors)}`,
+    );
+  }
 
   const transcribeMsg: TranscribeQueueMessage = {
     recordingId: msg.recordingId,
@@ -184,6 +196,25 @@ async function processOne(msg: PreprocessQueueMessage): Promise<void> {
       MessageBody: JSON.stringify(transcribeMsg),
     }),
   );
+}
+
+async function markFailed(recordingId: string, reason: string): Promise<void> {
+  try {
+    const client = await dataClient();
+    await client.models.Recording.update({
+      id: recordingId,
+      transcriptionStatus: 'PREPROCESS_FAILED',
+      transcriptionFailed: true,
+      transcriptionStatusUpdatedAt: nowIso(),
+      failedReason: reason.slice(0, 1024),
+    });
+  } catch (err) {
+    // Don't let the failure-marker failure shadow the original error.
+    console.error('preprocess: failed to mark Recording PREPROCESS_FAILED', {
+      recordingId,
+      err: String(err),
+    });
+  }
 }
 
 // `_context` / `_callback` declared explicitly so the test fixtures
@@ -207,10 +238,12 @@ export const handler: SQSHandler = async (event: SQSEvent, _context, _callback) 
         recordingId: msg.recordingId,
       });
     } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
       console.error('preprocess: failed', {
         recordingId: msg.recordingId,
-        err: String(err),
+        err: reason,
       });
+      await markFailed(msg.recordingId, reason);
       throw err;
     }
   }

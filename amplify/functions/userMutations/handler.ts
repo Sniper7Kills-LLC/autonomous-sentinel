@@ -117,7 +117,7 @@ async function getDefaultClient(): Promise<UserMutationsDataClient> {
   // generateClient or it throws. Shared helper in
   // amplify/functions/_shared/configure-amplify.ts.
   const { configureAmplifyOnce } = await import('../_shared/configure-amplify');
-  configureAmplifyOnce();
+  await configureAmplifyOnce();
   const mod = await import('aws-amplify/data');
   // We need a Schema generic from data/resource, but importing the
   // schema (which imports CDK) into a runtime Lambda would fail. The
