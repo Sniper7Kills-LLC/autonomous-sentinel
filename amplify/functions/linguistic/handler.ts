@@ -199,7 +199,10 @@ async function processOne(msg: LinguisticQueueMessage): Promise<void> {
   });
 }
 
-export const handler: SQSHandler = async (event: SQSEvent) => {
+// `_context` / `_callback` declared explicitly so the test fixtures
+// that pass all three Lambda-runtime arguments don't trip CodeQL's
+// "Superfluous trailing arguments" rule.
+export const handler: SQSHandler = async (event: SQSEvent, _context, _callback) => {
   for (const record of event.Records) {
     let msg: LinguisticQueueMessage;
     try {
