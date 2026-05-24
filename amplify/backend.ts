@@ -19,6 +19,7 @@ import { transcribe } from './functions/transcribe/resource';
 import { linguistic } from './functions/linguistic/resource';
 import { postConfirmation } from './functions/postConfirmation/resource';
 import { preTokenGeneration } from './functions/preTokenGeneration/resource';
+import { preAuth } from './functions/preAuth/resource';
 import { discordOidcBridge } from './functions/discordOidcBridge/resource';
 import { userMutations } from './functions/userMutations/resource';
 import { messageMutations } from './functions/messageMutations/resource';
@@ -49,6 +50,7 @@ const backend = defineBackend({
   linguistic,
   postConfirmation,
   preTokenGeneration,
+  preAuth,
   discordOidcBridge,
   userMutations,
   messageMutations,
@@ -142,6 +144,20 @@ legacyClaimWorkerLambda.addToRolePolicy(
 const getUserPublicLambdaFn = backend.getUserPublicLambda.resources.lambda as LambdaFunction;
 getUserPublicLambdaFn.addEnvironment('USER_TABLE_NAME', userTable.tableName);
 getUserPublicLambdaFn.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:GetItem'],
+    resources: [userTable.tableArn],
+  }),
+);
+
+// preAuth trigger wiring (#335). Read-only GetItem on the User table
+// by `cognitoSub`. The handler throws on `bannedAt != null` so Cognito
+// returns `NotAuthorizedException` and the native sign-in fails
+// closed. Federated providers (Google + Discord OIDC bridge) bypass
+// PreAuth; the federated-side ban check is a separate follow-up.
+const preAuthLambda = backend.preAuth.resources.lambda as LambdaFunction;
+preAuthLambda.addEnvironment('USER_TABLE_NAME', userTable.tableName);
+preAuthLambda.addToRolePolicy(
   new PolicyStatement({
     actions: ['dynamodb:GetItem'],
     resources: [userTable.tableArn],

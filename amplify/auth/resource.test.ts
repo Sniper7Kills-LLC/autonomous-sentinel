@@ -3,6 +3,7 @@ import { App, Stack, Token } from 'aws-cdk-lib';
 import { auth, authConfig, discordIssuerUrl, DISCORD_ISSUER_URL_PLACEHOLDER } from './resource';
 import { postConfirmation } from '../functions/postConfirmation/resource';
 import { preTokenGeneration } from '../functions/preTokenGeneration/resource';
+import { preAuth } from '../functions/preAuth/resource';
 
 describe('auth resource', () => {
   it('exports an Amplify auth resource', () => {
@@ -63,6 +64,10 @@ describe('auth resource', () => {
 
   it('registers the preTokenGeneration trigger (issue #334)', () => {
     expect(authConfig.triggers?.preTokenGeneration).toBe(preTokenGeneration);
+  });
+
+  it('registers the preAuthentication trigger (issue #335)', () => {
+    expect(authConfig.triggers?.preAuthentication).toBe(preAuth);
   });
 
   it('federates Discord via the in-house OIDC bridge (issues #14 + #254)', () => {
