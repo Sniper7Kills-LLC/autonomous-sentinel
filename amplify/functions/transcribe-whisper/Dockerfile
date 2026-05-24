@@ -76,6 +76,16 @@ RUN cd ${LAMBDA_TASK_ROOT} && npm install --omit=dev --no-package-lock
 COPY handler.mjs ${LAMBDA_TASK_ROOT}/handler.mjs
 COPY run-whisper.mjs ${LAMBDA_TASK_ROOT}/run-whisper.mjs
 
+# Build identity baked into the image so the handler can log which
+# build is actually running (#442 follow-up). Defaults survive a
+# `podman build .` with no --build-arg flags so local smoke tests
+# still work; CodeBuild passes the resolved git SHA + build ID
+# from `infra/whisper-image-pipeline/bootstrap.sh`.
+ARG GIT_SHA=unknown
+ARG BUILD_ID=unknown
+ENV GIT_SHA=${GIT_SHA}
+ENV BUILD_ID=${BUILD_ID}
+
 # Lambda runtime entry point. Container Lambdas use CMD as the
 # handler identifier (file.export).
 CMD [ "handler.handler" ]

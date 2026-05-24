@@ -48,9 +48,21 @@ const PIPELINE_TEMP_PREFIX = process.env.PIPELINE_TEMP_PREFIX ?? 'pipeline-temp'
 const RECORDING_TABLE_NAME = process.env.RECORDING_TABLE_NAME ?? '';
 const LINGUISTIC_QUEUE_URL = process.env.LINGUISTIC_QUEUE_URL ?? '';
 
+// Build identity baked into the image at `docker build` time
+// (#442 follow-up). Lets the cold-start log + per-invoke
+// "advanced to PARSING" entry confirm which image is actually
+// running, independent of CFN's Lambda code reference.
+const IMAGE_GIT_SHA = process.env.GIT_SHA ?? 'unknown';
+const IMAGE_BUILD_ID = process.env.BUILD_ID ?? 'unknown';
+
 const s3 = new S3Client({});
 const ddb = new DynamoDBClient({});
 const sqs = new SQSClient({});
+
+console.info('whisper-handler: image identity', {
+  gitSha: IMAGE_GIT_SHA,
+  buildId: IMAGE_BUILD_ID,
+});
 
 export async function handler(event) {
   if (!RECORDINGS_BUCKET) {
@@ -173,6 +185,8 @@ async function processOne(body) {
       recordingId,
       transcriptLen: transcriptText.length,
       stderrTail: result.stderrTail.slice(-256),
+      gitSha: IMAGE_GIT_SHA,
+      buildId: IMAGE_BUILD_ID,
     });
   } catch (err) {
     if (err instanceof WhisperError) {
