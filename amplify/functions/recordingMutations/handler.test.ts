@@ -365,6 +365,77 @@ describe('recordingMutations — submitRecording (#284)', () => {
     expect(input.migratedFromV3).toBe(false);
   });
 
+  it('enqueues the new Recording onto the preprocess SQS queue (#433 pipeline kickoff)', async () => {
+    const { client, auditSpy, createSpy } = makeStubs();
+    createSpy.mockResolvedValueOnce({
+      data: {
+        id: 'rec-1',
+        contentHash: 'h-enq',
+        originalKey: 's3://k/enq',
+        uploaderId: 'cog-1',
+        transcriptionStatus: 'QUEUED',
+        transcriptionFailed: false,
+        migratedFromV3: false,
+      } as RecordingRow,
+      errors: null,
+    });
+    const enqueueSpy = vi.fn().mockResolvedValue(undefined);
+    __setDeps({
+      dataClient: client,
+      audit: auditSpy,
+      enqueuePreprocess: enqueueSpy,
+    });
+    const event = makeEvent({
+      fieldName: 'submitRecording',
+      arguments: { contentHash: 'h-enq', originalKey: 's3://k/enq' },
+    });
+    await handler(event, {} as Context, () => undefined);
+
+    expect(enqueueSpy).toHaveBeenCalledOnce();
+    const [msg] = enqueueSpy.mock.calls[0] as [
+      {
+        recordingId: string;
+        originalKey: string;
+        contentHash: string;
+        enqueuedAt: string;
+      },
+    ];
+    expect(msg.recordingId).toBe('rec-1');
+    expect(msg.originalKey).toBe('s3://k/enq');
+    expect(msg.contentHash).toBe('h-enq');
+    expect(typeof msg.enqueuedAt).toBe('string');
+  });
+
+  it('still returns the Recording row when the preprocess enqueue throws — pipeline kick-off is fire-and-forget', async () => {
+    const { client, auditSpy, createSpy } = makeStubs();
+    createSpy.mockResolvedValueOnce({
+      data: {
+        id: 'rec-2',
+        contentHash: 'h-fail',
+        originalKey: 's3://k/fail',
+        uploaderId: 'cog-1',
+        transcriptionStatus: 'QUEUED',
+        transcriptionFailed: false,
+        migratedFromV3: false,
+      } as RecordingRow,
+      errors: null,
+    });
+    const enqueueSpy = vi.fn().mockRejectedValueOnce(new Error('SQS throttled'));
+    __setDeps({
+      dataClient: client,
+      audit: auditSpy,
+      enqueuePreprocess: enqueueSpy,
+    });
+    const event = makeEvent({
+      fieldName: 'submitRecording',
+      arguments: { contentHash: 'h-fail', originalKey: 's3://k/fail' },
+    });
+    const result = await handler(event, {} as Context, () => undefined);
+    expect(result).not.toBeNull();
+    expect((result as RecordingRow).id).toBe('rec-2');
+    expect(enqueueSpy).toHaveBeenCalledOnce();
+  });
+
   it('threads through optional fields when supplied (messageId, frequencyKhz, modulation, ...)', async () => {
     const { client, auditSpy, createSpy } = makeStubs();
     __setDeps({ dataClient: client, audit: auditSpy });
