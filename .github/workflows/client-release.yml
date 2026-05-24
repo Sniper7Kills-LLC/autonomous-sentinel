@@ -28,7 +28,7 @@ jobs:
       - name: Package installers
         run: npm -w upload-client run package
       - name: Upload artifacts to draft release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           draft: true
