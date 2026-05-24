@@ -143,7 +143,26 @@ export function parseMessage(body: string): PreprocessQueueMessage {
   };
 }
 
-async function processOne(msg: PreprocessQueueMessage): Promise<void> {
+interface ProcessOneResult {
+  /** Source bucket key (what the uploader sent). */
+  inputKey: string;
+  /** Destination bucket key (web canonical). */
+  outputKey: string;
+  /** Bytes on disk for both — they're identical at v1 because no
+   * transcode happens yet. Once ffmpeg lands, output will shrink. */
+  inputSizeBytes: number;
+  outputSizeBytes: number;
+  /** File extensions. Useful for the future-ffmpeg log; today input
+   * and output share the same extension because v1 just copies. */
+  inputExt: string;
+  outputExt: string;
+  /** Whether the file was transcoded vs. byte-for-byte copied. v1
+   * always returns `false`; flips to `true` once the ffmpeg path
+   * (Opus 32 kbps mono) is wired in #433 follow-up. */
+  transcoded: boolean;
+}
+
+async function processOne(msg: PreprocessQueueMessage): Promise<ProcessOneResult> {
   const bucket = requiredEnv('RECORDINGS_BUCKET');
   const transcribeQueueUrl = requiredEnv('TRANSCRIBE_QUEUE_URL');
   const client = await dataClient();
@@ -196,6 +215,18 @@ async function processOne(msg: PreprocessQueueMessage): Promise<void> {
       MessageBody: JSON.stringify(transcribeMsg),
     }),
   );
+
+  const inputExt = extensionOf(msg.originalKey) || '<none>';
+  const outputExt = extensionOf(webKey) || '<none>';
+  return {
+    inputKey: msg.originalKey,
+    outputKey: webKey,
+    inputSizeBytes: sizeBytes,
+    outputSizeBytes: sizeBytes,
+    inputExt,
+    outputExt,
+    transcoded: false,
+  };
 }
 
 async function markFailed(recordingId: string, reason: string): Promise<void> {
@@ -233,9 +264,22 @@ export const handler: SQSHandler = async (event: SQSEvent, _context, _callback) 
       continue;
     }
     try {
-      await processOne(msg);
-      console.info('preprocess: advanced to TRANSCRIBING', {
+      const result = await processOne(msg);
+      // Detailed conversion summary — owner asked for explicit "what
+      // did preprocess do" visibility. Once ffmpeg lands, `transcoded`
+      // flips to true and the output sizes will diverge from input.
+      console.info('preprocess: converted + advanced to TRANSCRIBING', {
         recordingId: msg.recordingId,
+        inputKey: result.inputKey,
+        outputKey: result.outputKey,
+        inputExt: result.inputExt,
+        outputExt: result.outputExt,
+        inputSizeBytes: result.inputSizeBytes,
+        outputSizeBytes: result.outputSizeBytes,
+        transcoded: result.transcoded,
+        note: result.transcoded
+          ? 'transcoded'
+          : 'byte-for-byte copy (ffmpeg transcode deferred — #433 follow-up)',
       });
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
