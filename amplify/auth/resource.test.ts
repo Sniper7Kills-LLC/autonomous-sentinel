@@ -38,6 +38,11 @@ describe('auth resource', () => {
     // keeps per-message SMS cost + reliability out of the picture; revisit
     // SMS if regulatory or admin-tier requirements demand it.
     expect(authConfig.multifactor).toEqual({ mode: 'OPTIONAL', totp: true });
+    // Explicit guard against a future edit that turns SMS on — the
+    // shape match above already excludes it, but the named assertion
+    // surfaces the intent in failure output.
+    const mfa = authConfig.multifactor as { sms?: unknown };
+    expect(mfa.sms).toBeUndefined();
   });
 
   it('federates Google with email + profile scopes (issue #13)', () => {
