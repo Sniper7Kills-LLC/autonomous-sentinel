@@ -88,6 +88,18 @@ function pickHighestRole(groups: readonly string[]): KnownRole {
   return DEFAULT_ROLE;
 }
 
+/**
+ * Round to 2 decimal places before stringifying so the claim does not
+ * leak IEEE-754 noise (e.g. `String(0.1 + 0.2)` yields
+ * "0.30000000000000004"). 2 dp is plenty for a rep weight bounded by
+ * the formula at [1, 5]; trailing zeros are stripped by relying on
+ * `String()` after `Math.round` so the claim still reads "3.7" not
+ * "3.70".
+ */
+function formatRepWeightClaim(weight: number): string {
+  return String(Math.round(weight * 100) / 100);
+}
+
 export const handler: PreTokenGenerationTriggerHandler = async (event) => {
   const sub = event.request.userAttributes?.sub;
   if (!sub) {
@@ -105,7 +117,7 @@ export const handler: PreTokenGenerationTriggerHandler = async (event) => {
   try {
     const weight = await resolveDeps().getReputationWeight(sub);
     if (weight !== null) {
-      repWeightClaim = String(weight);
+      repWeightClaim = formatRepWeightClaim(weight);
     }
   } catch (err) {
     // Fail-open. Log + fall through so the token still issues.

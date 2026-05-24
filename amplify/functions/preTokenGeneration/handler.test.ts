@@ -134,6 +134,16 @@ describe('preTokenGeneration — reputation weight', () => {
     const out = await runHandler(buildEvent({ sub: 'sub-num', groups: ['member'] }));
     expect(typeof out.repWeight).toBe('string');
   });
+
+  it('rounds the weight to 2 decimal places to drop IEEE-754 stringification noise', async () => {
+    // `String(0.1 + 0.2)` yields "0.30000000000000004" — leaking that
+    // into a JWT claim is ugly + would break exact-string comparisons
+    // by any consumer. Rep weights are in [1, 5] by the formula; 2 dp
+    // is plenty.
+    __setDeps({ getReputationWeight: () => Promise.resolve(0.1 + 0.2) });
+    const out = await runHandler(buildEvent({ sub: 'sub-fp', groups: ['member'] }));
+    expect(out.repWeight).toBe('0.3');
+  });
 });
 
 describe('preTokenGeneration — fail-open semantics', () => {
