@@ -38,6 +38,7 @@ import { applyCognitoTokenValidity } from './cognito-token-validity';
 import { attachStorageLifecycle, readStorageLifecycleConfig } from './storage-lifecycle';
 import { attachPipelineQueues } from './pipeline-queues';
 import { getConcurrencyCap } from './lambda-concurrency';
+import { resolveEcrDigest } from './resolve-ecr-digest';
 import { type CfnFunction, DockerImageCode, DockerImageFunction } from 'aws-cdk-lib/aws-lambda';
 import { Repository } from 'aws-cdk-lib/aws-ecr';
 import { Size } from 'aws-cdk-lib';
@@ -666,8 +667,23 @@ const whisperRepo = Repository.fromRepositoryName(
 // `recordingTable` already declared in the stage-2 preprocess wiring
 // block higher up — reused here for the Whisper finalizer env + IAM.
 
+// #442: resolve `:latest` to a concrete `sha256:...` digest at synth
+// time. `DockerImageCode.fromEcr` writes `tagOrDigest` verbatim into
+// the synthesized CFN template; when it's a float tag like `latest`
+// the Code.ImageUri property never changes across deploys, so CFN
+// never updates the Lambda — even after a fresh image push. Pinning
+// the digest makes each deploy that follows a new push roll the
+// Lambda forward. Fail-soft: missing creds / missing image returns
+// the original tag and synth still succeeds.
+const whisperImageTagOrDigest = resolveEcrDigest({
+  repositoryName: 'autonomous-sentinel/whisper-medium',
+  region: 'us-east-1',
+  tag: 'latest',
+  fallback: 'latest',
+});
+
 const whisperFn = new DockerImageFunction(transcribeWhisperStack, 'TranscribeWhisperFn', {
-  code: DockerImageCode.fromEcr(whisperRepo, { tagOrDigest: 'latest' }),
+  code: DockerImageCode.fromEcr(whisperRepo, { tagOrDigest: whisperImageTagOrDigest }),
   memorySize: 3008,
   timeout: Duration.minutes(15),
   ephemeralStorageSize: Size.mebibytes(2048),

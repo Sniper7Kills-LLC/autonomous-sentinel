@@ -158,7 +158,7 @@ phases:
   build:
     commands:
       - 'cd amplify/functions/transcribe-whisper'
-      - 'docker build -t $ECR_REPO_URI:latest -t $ECR_REPO_URI:$CODEBUILD_RESOLVED_SOURCE_VERSION .'
+      - 'docker build --build-arg GIT_SHA=$CODEBUILD_RESOLVED_SOURCE_VERSION --build-arg BUILD_ID=$CODEBUILD_BUILD_ID -t $ECR_REPO_URI:latest -t $ECR_REPO_URI:$CODEBUILD_RESOLVED_SOURCE_VERSION .'
   post_build:
     commands:
       - 'docker push $ECR_REPO_URI:latest'
