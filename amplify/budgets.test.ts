@@ -249,6 +249,19 @@ describe('budget alarms', () => {
     });
   });
 
+  it('grants SNS permission to invoke the throttle Lambda (#7)', () => {
+    // CDK's `LambdaSubscription` auto-emits an AWS::Lambda::Permission for
+    // SNS → InvokeFunction. Without that permission the budget breach would
+    // fan out to a topic that can't invoke its subscriber. Lock the contract
+    // here so a future swap of the subscription mechanism doesn't silently
+    // drop the auto-grant.
+    const t = synthWithThrottle();
+    t.hasResourceProperties('AWS::Lambda::Permission', {
+      Action: 'lambda:InvokeFunction',
+      Principal: 'sns.amazonaws.com',
+    });
+  });
+
   it('throttle Lambda env wires the target function name + concurrency cap (#7)', () => {
     const t = synthWithThrottle();
     const fns = t.findResources('AWS::Lambda::Function');
