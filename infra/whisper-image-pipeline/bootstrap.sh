@@ -145,24 +145,24 @@ ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/${CODEBUILD_ROLE}"
 # ---------- 3. CodeBuild project --------------------------------------------
 
 # Buildspec inline — cd into the whisper dir, build, push :latest + :<sha>.
+# NB: every command is a quoted YAML scalar to avoid colon-in-text
+# confusing the YAML re-parser CodeBuild runs at DOWNLOAD_SOURCE
+# (`docker build -t img:tag` would otherwise be parsed as a YAML
+# mapping). Single quotes inside `'...'` doubled per YAML spec.
 BUILDSPEC=$(cat <<'BUILDSPEC_EOF'
 version: 0.2
 phases:
   pre_build:
     commands:
-      - echo "[pre_build] ECR login"
-      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+      - 'aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY'
   build:
     commands:
-      - cd amplify/functions/transcribe-whisper
-      - echo "[build] building image — git SHA $CODEBUILD_RESOLVED_SOURCE_VERSION"
-      - docker build -t "$ECR_REPO_URI:latest" -t "$ECR_REPO_URI:$CODEBUILD_RESOLVED_SOURCE_VERSION" .
+      - 'cd amplify/functions/transcribe-whisper'
+      - 'docker build -t $ECR_REPO_URI:latest -t $ECR_REPO_URI:$CODEBUILD_RESOLVED_SOURCE_VERSION .'
   post_build:
     commands:
-      - echo "[post_build] pushing"
-      - docker push "$ECR_REPO_URI:latest"
-      - docker push "$ECR_REPO_URI:$CODEBUILD_RESOLVED_SOURCE_VERSION"
-      - echo "[post_build] done. tags: latest, $CODEBUILD_RESOLVED_SOURCE_VERSION"
+      - 'docker push $ECR_REPO_URI:latest'
+      - 'docker push $ECR_REPO_URI:$CODEBUILD_RESOLVED_SOURCE_VERSION'
 BUILDSPEC_EOF
 )
 
