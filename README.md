@@ -1,6 +1,7 @@
 # Autonomous Sentinel
 
 [![CI](https://github.com/Sniper7Kills-LLC/autonomous-sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/Sniper7Kills-LLC/autonomous-sentinel/actions/workflows/ci.yml)
+[![Deploy](https://img.shields.io/website?down_color=red&down_message=down&label=AWS%20Amplify%20deploy&style=flat&up_color=success&up_message=live&url=https%3A%2F%2Fmain.d3p8g0zujguxh4.amplifyapp.com)](https://main.d3p8g0zujguxh4.amplifyapp.com)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 [![Node 22 LTS](https://img.shields.io/badge/node-22_LTS-339933?logo=node.js&logoColor=white)](./.nvmrc)
 [![Codename](https://img.shields.io/badge/codename-Autonomous_Sentinel-7057ff)](./CLAUDE.md)
@@ -15,7 +16,7 @@
 
 **Scaffolded — no backend deployed yet.** The legacy Laravel/Vue 2 app continues to run at [eam.watch](https://eam.watch); its source remains at <https://github.com/sniper7kills/EamWatch> for reference.
 
-See [`CLAUDE.md`](./CLAUDE.md) for the full architecture brief and the QUESTIONS-V*.txt files for the decision history.
+See [`CLAUDE.md`](./CLAUDE.md) for the full architecture brief and the QUESTIONS-V\*.txt files for the decision history.
 
 ---
 
@@ -58,11 +59,13 @@ autonomous-sentinel/                npm-workspaces monorepo root
 ## Setup
 
 ### Prerequisites
+
 - Node.js 22 LTS — `nvm use` reads `.nvmrc`
 - npm 10+ (ships with Node 22)
 - AWS account + credentials profile (for backend work)
 
 ### Install
+
 ```bash
 git clone https://github.com/Sniper7Kills-LLC/autonomous-sentinel.git
 cd autonomous-sentinel
@@ -71,6 +74,7 @@ npm install
 ```
 
 ### Run
+
 ```bash
 npm run amplify:sandbox    # spin up your personal Amplify backend
 npm run web:dev            # Next.js dev server
@@ -78,6 +82,7 @@ npm run client:dev         # Electron client dev mode
 ```
 
 ### Lint / typecheck / test
+
 ```bash
 npm run lint
 npm run typecheck
