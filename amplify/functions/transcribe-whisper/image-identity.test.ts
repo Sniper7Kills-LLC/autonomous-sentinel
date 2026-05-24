@@ -46,7 +46,11 @@ describe('Whisper image build-identity wiring', () => {
     // The console.info must fire at module scope, not nested inside
     // the request handler — otherwise it only emits when an SQS
     // event arrives, hiding the identity on idle invocations.
-    expect(handler).toMatch(/console\.info\(\s*['"]whisper-handler: image identity['"]/);
+    //
+    // Regex requires the log to carry an object-literal payload
+    // (`,` + `{`) so a refactor that drops `{ gitSha, buildId }`
+    // can't slip past without also breaking this assertion.
+    expect(handler).toMatch(/console\.info\(\s*['"]whisper-handler: image identity['"]\s*,\s*\{/);
   });
 
   it('handler.mjs annotates the per-invoke PARSING log with gitSha + buildId', () => {

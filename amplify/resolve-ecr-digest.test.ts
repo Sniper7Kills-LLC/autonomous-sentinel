@@ -12,14 +12,14 @@ import { resolveEcrDigest } from './resolve-ecr-digest';
  */
 
 describe('resolveEcrDigest', () => {
-  let execSyncMock: ReturnType<typeof vi.fn>;
+  let execFileSyncMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    execSyncMock = vi.fn();
+    execFileSyncMock = vi.fn();
   });
 
   it('returns the digest string from a successful ECR call', () => {
-    execSyncMock.mockReturnValue(
+    execFileSyncMock.mockReturnValue(
       'sha256:28003889af34f040f3960ca5f886dfdfeddde960493633942df65d77f7f80e3c\n',
     );
     const digest = resolveEcrDigest({
@@ -27,34 +27,59 @@ describe('resolveEcrDigest', () => {
       region: 'us-east-1',
       tag: 'latest',
       fallback: 'latest',
-      execSync: execSyncMock,
+      execFileSync: execFileSyncMock,
     });
     expect(digest).toBe('sha256:28003889af34f040f3960ca5f886dfdfeddde960493633942df65d77f7f80e3c');
   });
 
-  it('passes repo + region + tag through to aws ecr describe-images', () => {
-    execSyncMock.mockReturnValue('sha256:deadbeef\n');
+  it('shells `aws` directly with an argv array so values never reach a shell parser', () => {
+    execFileSyncMock.mockReturnValue('sha256:deadbeef\n');
     resolveEcrDigest({
       repositoryName: 'autonomous-sentinel/whisper-medium',
       region: 'us-east-1',
       tag: 'latest',
       fallback: 'latest',
-      execSync: execSyncMock,
+      execFileSync: execFileSyncMock,
     });
-    const firstCall = execSyncMock.mock.calls[0];
-    if (!firstCall) throw new Error('execSync was not invoked');
-    const cmd = firstCall[0] as string;
-    expect(cmd).toContain('aws ecr describe-images');
-    expect(cmd).toContain('--region us-east-1');
-    expect(cmd).toContain('--repository-name autonomous-sentinel/whisper-medium');
-    expect(cmd).toContain('imageTag=latest');
-    expect(cmd).toContain('--query');
-    expect(cmd).toContain('imageDigest');
-    expect(cmd).toContain('--output text');
+    const firstCall = execFileSyncMock.mock.calls[0];
+    if (!firstCall) throw new Error('execFileSync was not invoked');
+    const [file, args] = firstCall as [string, readonly string[]];
+    expect(file).toBe('aws');
+    expect(args).toContain('ecr');
+    expect(args).toContain('describe-images');
+    expect(args).toContain('--region');
+    expect(args).toContain('us-east-1');
+    expect(args).toContain('--repository-name');
+    expect(args).toContain('autonomous-sentinel/whisper-medium');
+    expect(args).toContain('--image-ids');
+    expect(args).toContain('imageTag=latest');
+    expect(args).toContain('--query');
+    expect(args).toContain('imageDetails[0].imageDigest');
+    expect(args).toContain('--output');
+    expect(args).toContain('text');
   });
 
-  it('falls back to the fallback tag when execSync throws (no creds, network out, ECR error)', () => {
-    execSyncMock.mockImplementation(() => {
+  it('treats argv values as literal — shell metacharacters in the tag are passed through unparsed', () => {
+    // Defensive test: a hostile tag like `foo; rm -rf /` must reach
+    // the aws CLI as a single argv value, not get interpreted by a
+    // shell. With execFileSync + argv array this is automatic; the
+    // assertion makes the property visible to future readers.
+    execFileSyncMock.mockReturnValue('None\n');
+    resolveEcrDigest({
+      repositoryName: 'autonomous-sentinel/whisper-medium',
+      region: 'us-east-1',
+      tag: 'foo; rm -rf /',
+      fallback: 'latest',
+      execFileSync: execFileSyncMock,
+    });
+    const firstCall = execFileSyncMock.mock.calls[0];
+    if (!firstCall) throw new Error('execFileSync was not invoked');
+    const [, args] = firstCall as [string, readonly string[]];
+    expect(args).toContain('imageTag=foo; rm -rf /');
+  });
+
+  it('falls back to the fallback tag when execFileSync throws (no creds, network out, ECR error)', () => {
+    execFileSyncMock.mockImplementation(() => {
       throw new Error('Unable to locate credentials');
     });
     const digest = resolveEcrDigest({
@@ -62,49 +87,49 @@ describe('resolveEcrDigest', () => {
       region: 'us-east-1',
       tag: 'latest',
       fallback: 'latest',
-      execSync: execSyncMock,
+      execFileSync: execFileSyncMock,
     });
     expect(digest).toBe('latest');
   });
 
   it('falls back when stdout is empty (e.g. image not pushed yet)', () => {
-    execSyncMock.mockReturnValue('');
+    execFileSyncMock.mockReturnValue('');
     const digest = resolveEcrDigest({
       repositoryName: 'autonomous-sentinel/whisper-medium',
       region: 'us-east-1',
       tag: 'latest',
       fallback: 'latest',
-      execSync: execSyncMock,
+      execFileSync: execFileSyncMock,
     });
     expect(digest).toBe('latest');
   });
 
   it('falls back when stdout is the literal string "None" (aws CLI sentinel for missing query result)', () => {
-    execSyncMock.mockReturnValue('None\n');
+    execFileSyncMock.mockReturnValue('None\n');
     const digest = resolveEcrDigest({
       repositoryName: 'autonomous-sentinel/whisper-medium',
       region: 'us-east-1',
       tag: 'latest',
       fallback: 'latest',
-      execSync: execSyncMock,
+      execFileSync: execFileSyncMock,
     });
     expect(digest).toBe('latest');
   });
 
   it('rejects stdout that does not look like a sha256 digest (defends against malformed CLI output)', () => {
-    execSyncMock.mockReturnValue('not-a-digest\n');
+    execFileSyncMock.mockReturnValue('not-a-digest\n');
     const digest = resolveEcrDigest({
       repositoryName: 'autonomous-sentinel/whisper-medium',
       region: 'us-east-1',
       tag: 'latest',
       fallback: 'latest',
-      execSync: execSyncMock,
+      execFileSync: execFileSyncMock,
     });
     expect(digest).toBe('latest');
   });
 
   it('trims whitespace around the returned digest', () => {
-    execSyncMock.mockReturnValue(
+    execFileSyncMock.mockReturnValue(
       '   sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd   \n',
     );
     const digest = resolveEcrDigest({
@@ -112,7 +137,7 @@ describe('resolveEcrDigest', () => {
       region: 'us-east-1',
       tag: 'latest',
       fallback: 'latest',
-      execSync: execSyncMock,
+      execFileSync: execFileSyncMock,
     });
     expect(digest).toBe('sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd');
   });
