@@ -33,6 +33,13 @@ describe('auth resource', () => {
     expect('userPoolOverrides' in authConfig).toBe(false);
   });
 
+  it('enables optional TOTP MFA, no SMS (issue #332)', () => {
+    // Mode = OPTIONAL means users can enroll but are not forced. TOTP-only
+    // keeps per-message SMS cost + reliability out of the picture; revisit
+    // SMS if regulatory or admin-tier requirements demand it.
+    expect(authConfig.multifactor).toEqual({ mode: 'OPTIONAL', totp: true });
+  });
+
   it('federates Google with email + profile scopes (issue #13)', () => {
     const google = authConfig.loginWith.externalProviders.google;
     expect(google).toBeDefined();

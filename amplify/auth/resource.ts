@@ -112,6 +112,14 @@ export const authConfig = {
     email: { required: true, mutable: true },
     preferredUsername: { required: false, mutable: true },
   },
+  // Optional TOTP-only MFA (#332). Users can enroll a TOTP authenticator
+  // from their profile once that surface lands; until then, the pool is
+  // ready to accept enrollment via the Amplify Auth UI primitives. SMS
+  // is intentionally NOT enabled (per-message cost + reliability).
+  multifactor: {
+    mode: 'OPTIONAL' as const,
+    totp: true,
+  },
   groups: ['admin', 'moderator', 'member'] as string[],
   triggers: {
     postConfirmation,
