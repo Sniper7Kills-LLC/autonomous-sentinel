@@ -36,10 +36,8 @@ import { attachStorageLifecycle, readStorageLifecycleConfig } from './storage-li
 import { attachPipelineQueues } from './pipeline-queues';
 import { getConcurrencyCap } from './lambda-concurrency';
 import { type CfnFunction, DockerImageCode, DockerImageFunction } from 'aws-cdk-lib/aws-lambda';
-import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
+import { Repository } from 'aws-cdk-lib/aws-ecr';
 import { Size } from 'aws-cdk-lib';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
 
 const backend = defineBackend({
   auth,
@@ -535,11 +533,24 @@ preprocessLambda.addToRolePolicy(
 
 // Whisper container Lambda — self-hosted transcribe backend (#54).
 //
-// Container image declared by `amplify/functions/transcribe-whisper/
-// Dockerfile` from #53. `DockerImageCode.fromImageAsset` lets
-// cdk-assets build + push the image at synth time via the binary
-// pointed at by `CDK_DOCKER` (set to `podman` in this project per
-// the owner's setup — see #341 native-deps decision).
+// Image build pipeline is SEPARATE per AWS Prescriptive Guidance
+// ("Deploy Lambda functions with container images"): dedicated
+// CodeBuild project (declared in `infra/whisper-image-pipeline/`)
+// listens for `amplify/functions/transcribe-whisper/**` changes
+// on `main`, builds + pushes to ECR `autonomous-sentinel/
+// whisper-medium`. This Lambda just references the existing
+// image via `DockerImageCode.fromEcr`.
+//
+// Rationale: Amplify Hosting's CodeBuild backing runs with
+// `privilegedMode: false` (no docker daemon, not configurable
+// via Amplify Hosting public API). Trying to build the image at
+// `ampx pipeline-deploy` time fails — verified by job 35
+// (`Cannot connect to the Docker daemon`). The dedicated build
+// project has its own `privilegedMode: true`.
+//
+// Tag: `:latest` floats to the most recent CodeBuild push for
+// simplicity. Future improvement: pin to git-SHA tag for
+// immutability + per-branch image versioning.
 //
 // Resource sizing per #54 spec + CLAUDE.md → Stack table:
 //   - memorySize 3008 MB: medium model (~1.5 GB) + ffmpeg-decoded
@@ -565,11 +576,16 @@ preprocessLambda.addToRolePolicy(
 //     fronts this once the other three backends ship — for v1
 //     this Lambda is the only consumer.
 const transcribeWhisperStack = backend.createStack('TranscribeWhisperStack');
-const backendDir = dirname(fileURLToPath(import.meta.url));
+// Look up the ECR repo provisioned by `infra/whisper-image-pipeline/`.
+// `fromRepositoryName` makes this a reference, not a CDK-managed
+// resource — the pipeline stack owns the lifecycle.
+const whisperRepo = Repository.fromRepositoryName(
+  transcribeWhisperStack,
+  'WhisperRepo',
+  'autonomous-sentinel/whisper-medium',
+);
 const whisperFn = new DockerImageFunction(transcribeWhisperStack, 'TranscribeWhisperFn', {
-  code: DockerImageCode.fromImageAsset(join(backendDir, 'functions/transcribe-whisper'), {
-    platform: Platform.LINUX_AMD64,
-  }),
+  code: DockerImageCode.fromEcr(whisperRepo, { tagOrDigest: 'latest' }),
   memorySize: 3008,
   timeout: Duration.minutes(15),
   ephemeralStorageSize: Size.mebibytes(2048),
