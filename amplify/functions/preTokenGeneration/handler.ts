@@ -100,7 +100,7 @@ function formatRepWeightClaim(weight: number): string {
   return String(Math.round(weight * 100) / 100);
 }
 
-export const handler: PreTokenGenerationTriggerHandler = async (event) => {
+export const handler: PreTokenGenerationTriggerHandler = async (event, _context, _callback) => {
   const sub = event.request.userAttributes?.sub;
   if (!sub) {
     // Defensive: every Cognito token-generation event includes the sub,
