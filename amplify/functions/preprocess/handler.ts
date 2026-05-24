@@ -34,6 +34,16 @@ import { marshall } from '@aws-sdk/util-dynamodb';
  * The handler does NOT use the Amplify Data client (which adds a
  * 20+ MB cold-start cost) — it issues a direct DynamoDB UpdateItem
  * against the `RECORDING_TABLE_NAME` env var.
+ *
+ * Idempotency: a redrived SQS message re-runs the full COPY + DDB
+ * UpdateItem + transcribe-queue publish. CopyObject is idempotent
+ * (writes the same bytes to the same key), the UpdateItem `SET`
+ * idempotently rewrites the same fields, and the downstream
+ * transcribe-queue consumer (Whisper) is itself idempotent
+ * (re-runs against the same audio yield the same transcript +
+ * the same DDB writes). A duplicated SQS publish on this stage is
+ * therefore harmless — accepted as a design decision rather than
+ * guarded with a `ConditionExpression`.
  */
 
 interface PreprocessQueueMessage {
@@ -123,10 +133,16 @@ async function processOne(msg: PreprocessQueueMessage): Promise<void> {
   const head = await s3().send(new HeadObjectCommand({ Bucket: bucket, Key: msg.originalKey }));
   const sizeBytes = head.ContentLength ?? 0;
 
+  // CopySource format = `${bucket}/${url-encoded-key}` — the slash
+  // is a delimiter and must NOT be encoded, only the key part is
+  // URL-encoded (per AWS S3 docs). Previous shape
+  // `encodeURIComponent(\`${bucket}/${key}\`)` percent-encoded the
+  // delimiter slash and AWS rejected the copy with
+  // "Invalid Copy Source".
   await s3().send(
     new CopyObjectCommand({
       Bucket: bucket,
-      CopySource: encodeURIComponent(`${bucket}/${msg.originalKey}`),
+      CopySource: `${bucket}/${encodeURIComponent(msg.originalKey)}`,
       Key: webKey,
       MetadataDirective: 'REPLACE',
       Metadata: {

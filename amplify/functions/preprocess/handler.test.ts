@@ -111,7 +111,14 @@ describe('preprocess — happy path', () => {
     const copyCalls = s3Mock.commandCalls(CopyObjectCommand);
     expect(copyCalls).toHaveLength(1);
     expect(copyCalls[0]?.args[0].input.Key).toBe('recordings/web/rec-42.wav');
-    expect(copyCalls[0]?.args[0].input.CopySource).toContain('abc.wav');
+    // CopySource must be `bucket/<url-encoded-key>` — the slash
+    // delimiter must NOT be encoded. Pin the full string so a
+    // future regression on the encoding (the original PR encoded
+    // the whole thing including the delimiter, which AWS rejects)
+    // fails the test.
+    expect(copyCalls[0]?.args[0].input.CopySource).toBe(
+      'test-bucket/recordings%2Foriginals%2Fabc.wav',
+    );
 
     const ddbCalls = ddbMock.commandCalls(UpdateItemCommand);
     expect(ddbCalls).toHaveLength(1);
@@ -127,6 +134,21 @@ describe('preprocess — happy path', () => {
     };
     expect(sentBody.recordingId).toBe('rec-42');
     expect(sentBody.audioKey).toBe('recordings/web/rec-42.wav');
+  });
+
+  it('URL-encodes only the key portion of CopySource — preserves the bucket/slash delimiter', async () => {
+    // Key with characters that need encoding (space, parentheses).
+    const event = makeEvent({
+      recordingId: 'rec-encode',
+      originalKey: 'recordings/originals/hash (1).wav',
+      contentHash: 'h-encode',
+      enqueuedAt: '2026-05-24T17:55:00Z',
+    });
+    await handler(event, {} as never, () => undefined);
+    const copyCalls = s3Mock.commandCalls(CopyObjectCommand);
+    expect(copyCalls[0]?.args[0].input.CopySource).toBe(
+      'test-bucket/recordings%2Foriginals%2Fhash%20(1).wav',
+    );
   });
 });
 
