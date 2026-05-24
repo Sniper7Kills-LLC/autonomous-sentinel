@@ -148,6 +148,14 @@ Dependabot watches all four npm scopes (`/`, `/web`, `/amplify`, `/upload-client
 - Minor and patch updates are grouped into a single PR per workspace per week to cut review noise; major version bumps open their own PRs so each gets individual review.
 - Treat Dependabot PRs like any other: CI must pass, and the maintainer merges. Auto-merge is intentionally off until update PRs prove non-disruptive.
 
+## Security scanning
+
+CodeQL runs on every PR, every push to `main`, and on a weekly Monday schedule. Workflow lives at `.github/workflows/codeql.yml` and covers all three workspaces via the combined `javascript-typescript` query pack (`security-and-quality` queries).
+
+- Findings surface under the repo's **Security → Code scanning** tab.
+- The maintainer triages new findings; "false positive" / "won't fix" can be set on individual alerts from the GitHub UI.
+- For local triage during development, run `codeql database create` against your branch — see GitHub's CodeQL CLI docs.
+
 ## Pull requests
 
 - Branch from `main`. Use a descriptive branch name (`feat/...`, `fix/...`, `docs/...`).
