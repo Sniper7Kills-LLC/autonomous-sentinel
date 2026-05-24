@@ -1,0 +1,109 @@
+# Dependabot configuration (#369)
+#
+# Covers all four npm scopes in the monorepo (root + three workspaces)
+# and the GitHub Actions workflows. Weekly cadence; minor + patch
+# updates grouped into a single PR per ecosystem to cut review noise.
+# Major updates open their own PRs so they get individual review.
+#
+# Docs: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+version: 2
+updates:
+  # ─── npm: root workspace (devDependencies for the monorepo: eslint, prettier, vitest, husky, lint-staged, typescript)
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - area:infra
+      - type:chore
+      - priority:p2
+    commit-message:
+      prefix: chore(deps)
+      include: scope
+    groups:
+      npm-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # ─── npm: web/ (Next.js + React PWA)
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - area:web
+      - type:chore
+      - priority:p2
+    commit-message:
+      prefix: chore(deps-web)
+      include: scope
+    groups:
+      web-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # ─── npm: amplify/ (Amplify Gen 2 backend)
+  - package-ecosystem: npm
+    directory: /amplify
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - area:amplify
+      - type:chore
+      - priority:p2
+    commit-message:
+      prefix: chore(deps-amplify)
+      include: scope
+    groups:
+      amplify-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # ─── npm: upload-client/ (Electron tray app)
+  - package-ecosystem: npm
+    directory: /upload-client
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - area:client
+      - type:chore
+      - priority:p2
+    commit-message:
+      prefix: chore(deps-client)
+      include: scope
+    groups:
+      client-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # ─── GitHub Actions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - area:infra
+      - type:chore
+      - priority:p2
+    commit-message:
+      prefix: chore(deps-actions)
+      include: scope
+    groups:
+      actions-minor-and-patch:
+        update-types:
+          - minor
+          - patch
