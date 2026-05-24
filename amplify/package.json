@@ -29,7 +29,7 @@
     "aws-amplify": "^6.6.0",
     "aws-cdk-lib": "^2.158.0",
     "constructs": "^10.3.0",
-    "jose": "^5.10.0"
+    "jose": "^6.2.3"
   },
   "devDependencies": {
     "@aws-appsync/utils": "^2.1.1",
