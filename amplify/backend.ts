@@ -31,7 +31,7 @@ import { listAuditLogPublic } from './functions/listAuditLogPublic/resource';
 import { legacyClaimWorker } from './functions/legacyClaimWorker/resource';
 import { legacyClaimReplaySweeper } from './functions/legacyClaimReplaySweeper/resource';
 import { fieldVoteOrphanJanitor } from './functions/fieldVoteOrphanJanitor/resource';
-import { attachBudgetAlarms, readBudgetConfig } from './budgets';
+import { attachBudgetAlarms, attachBudgetThrottleAction, readBudgetConfig } from './budgets';
 import { attachStorageLifecycle, readStorageLifecycleConfig } from './storage-lifecycle';
 import { attachPipelineQueues } from './pipeline-queues';
 import { getConcurrencyCap } from './lambda-concurrency';
@@ -448,8 +448,14 @@ new Rule(fieldVoteOrphanJanitorLambda.stack, 'FieldVoteOrphanJanitorDailySweep',
 });
 
 // Cost-discipline budget alarms (#7). Lives in its own nested stack so it can
-// be removed or replaced without touching the data / function stacks.
-attachBudgetAlarms(backend.createStack('BudgetsStack'), readBudgetConfig());
+// be removed or replaced without touching the data / function stacks. The
+// hard-threshold SNS topic returned here is wired to the Whisper concurrency
+// throttle below, after the Whisper Lambda is constructed.
+const budgetsStack = backend.createStack('BudgetsStack');
+const { hardThresholdTopic: budgetHardThresholdTopic } = attachBudgetAlarms(
+  budgetsStack,
+  readBudgetConfig(),
+);
 
 // S3 lifecycle + versioning + CORS + encryption configuration on
 // the media bucket (#44, #45, #47, #48). Applied via L1 escape-hatch
@@ -609,3 +615,9 @@ whisperFn.addToRolePolicy(
   }),
 );
 whisperFn.addEventSource(new SqsEventSource(pipelineQueues.transcribe.main, { batchSize: 1 }));
+
+// Budget hard-threshold ($200) → throttle Whisper to concurrency 1 (#7).
+// The throttle Lambda lives in BudgetsStack and references the Whisper
+// Lambda's name + ARN — one-way dependency, no cycle. Subscribes itself
+// to the BudgetHardThresholdTopic created in attachBudgetAlarms above.
+attachBudgetThrottleAction(budgetsStack, budgetHardThresholdTopic, whisperFn);

@@ -1,5 +1,9 @@
 import { CfnBudget } from 'aws-cdk-lib/aws-budgets';
-import type { Stack } from 'aws-cdk-lib';
+import { Duration, type Stack } from 'aws-cdk-lib';
+import { Topic } from 'aws-cdk-lib/aws-sns';
+import { EmailSubscription, LambdaSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
+import { Effect, PolicyStatement, ServicePrincipal } from 'aws-cdk-lib/aws-iam';
+import { Code, Function as LambdaFunction, type IFunction, Runtime } from 'aws-cdk-lib/aws-lambda';
 
 /**
  * AWS Budget alarms for Autonomous Sentinel (issue #7).
@@ -14,13 +18,10 @@ import type { Stack } from 'aws-cdk-lib';
  *   - `AS_BUDGET_SOFT_USD` / `AS_BUDGET_LOUD_USD` / `AS_BUDGET_HARD_USD`
  *     — defaults $50 / $100 / $200 respectively
  *
- * Out of scope here (left to the owner / a follow-up):
- *   - $200 Budget Action that throttles the Whisper Lambda concurrency to 1.
- *     The Whisper Lambda is still a placeholder in phase 0; once it lands as
- *     its own resource with a stable name, a CfnBudgetsAction + SNS topic
- *     wires the auto-throttle.
- *   - Subscribing the address: AWS sends a confirmation email when the budget
- *     is created; the owner has to click through once per address.
+ * The $200 (hard) tier additionally publishes to an SNS topic
+ * (`hardThresholdTopic`). `attachBudgetThrottleAction` subscribes a small
+ * throttle Lambda to that topic so the Whisper container Lambda's reserved
+ * concurrency drops to 1 when the cap breaches.
  */
 
 const DEFAULT_EMAIL = 'sniper7kills@gmail.com';
@@ -43,6 +44,11 @@ export interface BudgetConfig {
   softUsd: number;
   loudUsd: number;
   hardUsd: number;
+}
+
+export interface BudgetAlarmsResult {
+  budget: CfnBudget;
+  hardThresholdTopic: Topic;
 }
 
 export function readBudgetConfig(): BudgetConfig {
@@ -68,10 +74,35 @@ export function readBudgetConfig(): BudgetConfig {
   return config;
 }
 
-export function attachBudgetAlarms(stack: Stack, config: BudgetConfig): CfnBudget {
-  const subscribers = [{ subscriptionType: 'EMAIL', address: config.email }];
+export function attachBudgetAlarms(stack: Stack, config: BudgetConfig): BudgetAlarmsResult {
+  // Hard-threshold SNS topic — paged via owner email AND fans out to the
+  // throttle Lambda once attached. Soft + loud stay email-only because a
+  // throttle action at $50 / $100 would clip the Whisper Lambda before
+  // the budget is actually at risk.
+  const hardThresholdTopic = new Topic(stack, 'BudgetHardThresholdTopic', {
+    displayName: 'Autonomous Sentinel — budget hard-threshold breach',
+  });
+  hardThresholdTopic.addSubscription(new EmailSubscription(config.email));
 
-  return new CfnBudget(stack, 'AutonomousSentinelMonthlyBudget', {
+  // AWS Budgets is the publisher → grant SNS:Publish on the topic. Without
+  // this, the budget notification silently drops at runtime.
+  hardThresholdTopic.addToResourcePolicy(
+    new PolicyStatement({
+      sid: 'AllowAwsBudgetsPublish',
+      effect: Effect.ALLOW,
+      principals: [new ServicePrincipal('budgets.amazonaws.com')],
+      actions: ['sns:Publish'],
+      resources: [hardThresholdTopic.topicArn],
+    }),
+  );
+
+  const emailSubscribers = [{ subscriptionType: 'EMAIL', address: config.email }];
+  const hardSubscribers = [
+    { subscriptionType: 'EMAIL', address: config.email },
+    { subscriptionType: 'SNS', address: hardThresholdTopic.topicArn },
+  ];
+
+  const budget = new CfnBudget(stack, 'AutonomousSentinelMonthlyBudget', {
     budget: {
       // No explicit `budgetName` — AWS Budgets names are account-
       // scoped uniques, NOT stack-scoped, so a hardcoded value
@@ -101,7 +132,7 @@ export function attachBudgetAlarms(stack: Stack, config: BudgetConfig): CfnBudge
           threshold: (config.softUsd / config.hardUsd) * 100,
           thresholdType: 'PERCENTAGE',
         },
-        subscribers,
+        subscribers: emailSubscribers,
       },
       {
         notification: {
@@ -110,7 +141,7 @@ export function attachBudgetAlarms(stack: Stack, config: BudgetConfig): CfnBudge
           threshold: (config.loudUsd / config.hardUsd) * 100,
           thresholdType: 'PERCENTAGE',
         },
-        subscribers,
+        subscribers: emailSubscribers,
       },
       {
         // `GREATER_THAN` at 100% — the AWS Budgets API only accepts
@@ -125,8 +156,62 @@ export function attachBudgetAlarms(stack: Stack, config: BudgetConfig): CfnBudge
           threshold: 100,
           thresholdType: 'PERCENTAGE',
         },
-        subscribers,
+        subscribers: hardSubscribers,
       },
     ],
   });
+
+  return { budget, hardThresholdTopic };
+}
+
+// Inline handler source — bundled into the throttle Lambda via
+// `Code.fromInline`. Kept terse (no logging branches, no retries) because
+// AWS Lambda Node.js 20 runtime ships `@aws-sdk/client-lambda` as a built-in
+// module, and the cold-start budget of an alarm-triggered cap call is
+// non-critical. The CFN-rendered template carries this string literally,
+// so any change here ships as a code update on next deploy.
+const THROTTLE_HANDLER_SRC = `
+const { LambdaClient, PutFunctionConcurrencyCommand } = require('@aws-sdk/client-lambda');
+const client = new LambdaClient({});
+exports.handler = async () => {
+  await client.send(new PutFunctionConcurrencyCommand({
+    FunctionName: process.env.TARGET_FUNCTION_NAME,
+    ReservedConcurrentExecutions: Number(process.env.TARGET_CONCURRENCY_CAP),
+  }));
+};
+`.trim();
+
+export function attachBudgetThrottleAction(
+  stack: Stack,
+  topic: Topic,
+  target: IFunction,
+  cap = 1,
+): IFunction {
+  const throttleFn = new LambdaFunction(stack, 'BudgetThrottleFn', {
+    runtime: Runtime.NODEJS_20_X,
+    handler: 'index.handler',
+    code: Code.fromInline(THROTTLE_HANDLER_SRC),
+    timeout: Duration.seconds(10),
+    description:
+      'Sets a target Lambda reservedConcurrentExecutions to cap on budget hard-threshold breach (#7).',
+    environment: {
+      TARGET_FUNCTION_NAME: target.functionName,
+      TARGET_CONCURRENCY_CAP: String(cap),
+    },
+  });
+
+  // Scope IAM tight — PutFunctionConcurrency on the single target ARN, not
+  // `Resource: '*'`. A bug in the handler can only ever throttle this one
+  // Lambda, not anything else in the account.
+  throttleFn.addToRolePolicy(
+    new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['lambda:PutFunctionConcurrency'],
+      resources: [target.functionArn],
+    }),
+  );
+
+  topic.addSubscription(new LambdaSubscription(throttleFn));
+
+  return throttleFn;
 }
