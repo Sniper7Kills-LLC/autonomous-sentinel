@@ -51,6 +51,9 @@ describe('Amplify deploy role ECR DescribeImages grant', () => {
     expect(policyBlock).toContain("actions: ['ecr:DescribeImages']");
     expect(policyBlock).not.toContain('ecr:*');
     expect(policyBlock).not.toContain('"*"');
+    // Standalone single-quoted wildcard would slip past the
+    // `"*"` check above. Catch it explicitly.
+    expect(policyBlock).not.toMatch(/actions:\s*\[\s*['"]\*['"]\s*\]/);
   });
 
   it('scopes the resource to the whisper repo ARN, not a wildcard', () => {
