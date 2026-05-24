@@ -133,7 +133,7 @@ describe('linguistic — handler happy path', () => {
     const event = makeEvent({
       recordingId: 'rec-1',
       transcript: 'Skyking, Skyking, do not answer',
-      enqueuedAt: '2026-05-24T18:00:00Z',
+      enqueuedAt: '2026-05-24T17:55:00Z',
     });
     await handler(event, {} as never, () => undefined);
 
@@ -141,8 +141,21 @@ describe('linguistic — handler happy path', () => {
     expect(puts).toHaveLength(1);
     const putInput = puts[0]?.args[0].input;
     expect(putInput?.TableName).toBe('Message-test-NONE');
-    expect(putInput?.Item?.type).toEqual({ S: 'SKYKING' });
-    expect(putInput?.Item?.id).toEqual({ S: 'msg-uuid-1' });
+
+    // Pin every field the Amplify Gen 2 Message model expects so a
+    // future schema drift (rename, .required() addition, etc.) trips
+    // here instead of at AppSync read time. broadcastTs is
+    // `.required()` on the model — its absence on the PutItem was
+    // the original review finding that led to this rewrite.
+    const item = putInput?.Item ?? {};
+    expect(item.id).toEqual({ S: 'msg-uuid-1' });
+    expect(item.type).toEqual({ S: 'SKYKING' });
+    expect(item.broadcastTs).toEqual({ S: '2026-05-24T17:55:00Z' });
+    expect(item.body).toEqual({ S: 'Skyking, Skyking, do not answer' });
+    expect(item.confidence).toEqual({ N: '0.85' });
+    expect(item.flaggedForReview).toEqual({ BOOL: false });
+    expect(item.publishedAt).toEqual({ S: '2026-05-24T18:00:00.000Z' });
+    expect(item.__typename).toEqual({ S: 'Message' });
 
     const updates = ddbMock.commandCalls(UpdateItemCommand);
     expect(updates).toHaveLength(1);

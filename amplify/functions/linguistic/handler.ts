@@ -142,6 +142,15 @@ async function processOne(msg: LinguisticQueueMessage): Promise<void> {
   const messageId = uuid();
   const ts = nowDate().toISOString();
 
+  // Field names mirror the Amplify Gen 2 Message model exactly
+  // (`amplify/data/models/message.ts`):
+  //   - `confidence` (not `confidenceScore`)
+  //   - `broadcastTs` is `.required()` on the schema, so we MUST emit
+  //     it. Use `enqueuedAt` as a stand-in for now — the upstream
+  //     pipeline carries no native broadcast timestamp yet (#433
+  //     follow-up: thread the SDR-captured broadcasted_at through
+  //     submitRecording → preprocess → whisper → linguistic so this
+  //     field reflects the real on-air time).
   await ddb().send(
     new PutItemCommand({
       TableName: messageTable,
@@ -149,8 +158,9 @@ async function processOne(msg: LinguisticQueueMessage): Promise<void> {
         {
           id: messageId,
           type: result.type,
+          broadcastTs: msg.enqueuedAt,
           body: msg.transcript,
-          confidenceScore: result.confidence,
+          confidence: result.confidence,
           flaggedForReview: result.confidence < 0.8,
           publishedAt: ts,
           createdAt: ts,
