@@ -219,15 +219,31 @@ FILTER_GROUPS='[[
   {"type":"FILE_PATH","pattern":"^amplify/functions/transcribe-whisper/.*"}
 ]]'
 
+# pullRequestBuildPolicy: CodeBuild's default is ALL_PULL_REQUESTS,
+# which posts a "approval required" status check on every PR commit
+# regardless of whether the PR touches files the filterGroups care
+# about. That clutters every internal + Dependabot PR status with a
+# scary-looking failing check (#401).
+#
+# FORK_PULL_REQUESTS keeps the safety net where it matters — outside-
+# contributor fork PRs can carry malicious buildspecs and must be
+# gated on owner comment approval — while letting in-repo branches
+# (Dependabot, internal features) skip the spurious status.
+PR_BUILD_POLICY='{
+  "requiresCommentApproval":"FORK_PULL_REQUESTS",
+  "approverRoles":["GITHUB_WRITE","GITHUB_MAINTAIN","GITHUB_ADMIN"]
+}'
+
 # Re-create webhook idempotently — delete-if-exists then create.
 aws codebuild delete-webhook --project-name "${CODEBUILD_PROJECT}" --region "${AWS_REGION}" 2>/dev/null || true
 
 aws codebuild create-webhook \
   --project-name "${CODEBUILD_PROJECT}" \
   --filter-groups "${FILTER_GROUPS}" \
+  --pull-request-build-policy "${PR_BUILD_POLICY}" \
   --region "${AWS_REGION}" >/dev/null
 
-echo "[bootstrap] webhook created (path-filtered to amplify/functions/transcribe-whisper/**)"
+echo "[bootstrap] webhook created (path-filtered to amplify/functions/transcribe-whisper/**, PR policy: FORK_PULL_REQUESTS)"
 
 # ---------- 5. Trigger first build ------------------------------------------
 
