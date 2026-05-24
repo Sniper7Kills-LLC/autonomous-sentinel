@@ -156,6 +156,24 @@ CodeQL runs on every PR, every push to `main`, and on a weekly Monday schedule. 
 - The maintainer triages new findings; "false positive" / "won't fix" can be set on individual alerts from the GitHub UI.
 - For local triage during development, run `codeql database create` against your branch — see GitHub's CodeQL CLI docs.
 
+## Branch protection on `main`
+
+`main` is protected. Direct pushes, force-pushes, and deletions are blocked; merges land via PR with green CI.
+
+- Required status checks (must pass before merge): `all-checks` (CI workflow aggregate — lint + typecheck + test per workspace) and `Analyze (javascript-typescript)` (CodeQL).
+- Branches must be up to date with `main` before merging (`strict: true`) — CI on a stale tree can't accidentally green something `main` already broke.
+- Conversation resolution required.
+- PRs are required, but `required_approving_review_count` is 0 because this is a single-maintainer repo. Raise once a second maintainer joins.
+- Administrators are intentionally not enforced — leaves an escape hatch for the owner; revisit if abused.
+
+The declarative payload lives at `.github/branch-protection.json`. To re-apply (idempotent):
+
+```bash
+.github/scripts/apply-branch-protection.sh
+```
+
+The script requires `gh` authenticated as a repo admin and `jq` on PATH. Re-running just overwrites the rule with the same payload — safe.
+
 ## Pull requests
 
 - Branch from `main`. Use a descriptive branch name (`feat/...`, `fix/...`, `docs/...`).

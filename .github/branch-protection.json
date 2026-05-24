@@ -1,0 +1,22 @@
+{
+  "_comment": "Branch protection payload for `main` (#371). Apply via .github/scripts/apply-branch-protection.sh. PRs are required, but required_approving_review_count is 0 because this is a single-maintainer repo — bumping to 1 would lock the owner out of merging their own PRs without a second reviewer. Raise once a second maintainer joins. CI checks `all-checks` (CI workflow aggregate) and `Analyze (javascript-typescript)` (CodeQL) must pass; the branch must be up to date with main before merging (`strict: true`). Force-push, deletion, and stale-review dismissal are all locked down. Administrators (the owner) are intentionally not enforced — leaves an escape hatch for break-glass fixes; revisit if abused.",
+  "required_status_checks": {
+    "strict": true,
+    "contexts": ["all-checks", "Analyze (javascript-typescript)"]
+  },
+  "enforce_admins": false,
+  "required_pull_request_reviews": {
+    "dismiss_stale_reviews": true,
+    "require_code_owner_reviews": false,
+    "required_approving_review_count": 0,
+    "require_last_push_approval": false
+  },
+  "restrictions": null,
+  "required_conversation_resolution": true,
+  "allow_force_pushes": false,
+  "allow_deletions": false,
+  "block_creations": false,
+  "required_linear_history": false,
+  "lock_branch": false,
+  "allow_fork_syncing": true
+}
