@@ -59,7 +59,6 @@ If you need to bypass for a quick fix, `git commit --no-verify` skips the hook. 
 ### Sandbox first
 
 Every backend change must run cleanly in a personal Amplify Gen 2 sandbox before opening a PR. The sandbox creates an isolated stack in your AWS account; tear it down with `npx ampx sandbox delete` from inside `amplify/` when done.
-<<<<<<< HEAD
 
 ## AWS developer setup
 
@@ -141,10 +140,6 @@ An idle Amplify Gen 2 sandbox for this stack costs ~$0/mo at the dev tier (Dynam
 | Sandbox lockfile errors              | Another `ampx sandbox` is already running for this directory; check for stale processes |
 | `secret 'X' not found`               | Run `npx ampx sandbox secret set X` first                                               |
 
-=======
-
-> > > > > > > a7aa758 (chore(hooks): wire husky + lint-staged pre-commit (#10))
-
 ## Dependency updates
 
 Dependabot watches all four npm scopes (`/`, `/web`, `/amplify`, `/upload-client`) and the GitHub Actions workflows. Configuration lives in `.github/dependabot.yml`.
@@ -152,6 +147,32 @@ Dependabot watches all four npm scopes (`/`, `/web`, `/amplify`, `/upload-client
 - Cadence: weekly, Monday mornings UTC.
 - Minor and patch updates are grouped into a single PR per workspace per week to cut review noise; major version bumps open their own PRs so each gets individual review.
 - Treat Dependabot PRs like any other: CI must pass, and the maintainer merges. Auto-merge is intentionally off until update PRs prove non-disruptive.
+
+## Security scanning
+
+CodeQL runs on every PR, every push to `main`, and on a weekly Monday schedule. Workflow lives at `.github/workflows/codeql.yml` and covers all three workspaces via the combined `javascript-typescript` query pack (`security-and-quality` queries).
+
+- Findings surface under the repo's **Security → Code scanning** tab.
+- The maintainer triages new findings; "false positive" / "won't fix" can be set on individual alerts from the GitHub UI.
+- For local triage during development, run `codeql database create` against your branch — see GitHub's CodeQL CLI docs.
+
+## Branch protection on `main`
+
+`main` is protected. Direct pushes, force-pushes, and deletions are blocked; merges land via PR with green CI.
+
+- Required status checks (must pass before merge): `all-checks` (CI workflow aggregate — lint + typecheck + test per workspace) and `Analyze (javascript-typescript)` (CodeQL).
+- Branches must be up to date with `main` before merging (`strict: true`) — CI on a stale tree can't accidentally green something `main` already broke.
+- Conversation resolution required.
+- PRs are required, but `required_approving_review_count` is 0 because this is a single-maintainer repo. Raise once a second maintainer joins.
+- Administrators are intentionally not enforced — leaves an escape hatch for the owner; revisit if abused.
+
+The declarative payload lives at `.github/branch-protection.json`. To re-apply (idempotent):
+
+```bash
+.github/scripts/apply-branch-protection.sh
+```
+
+The script requires `gh` authenticated as a repo admin and `jq` on PATH. Re-running just overwrites the rule with the same payload — safe.
 
 ## Pull requests
 
