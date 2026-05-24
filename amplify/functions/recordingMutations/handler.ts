@@ -380,8 +380,15 @@ async function dispatchSubmit(
   return row;
 }
 
+// `_context` / `_callback` are declared explicitly (vs. the
+// shorter `async (event) => …` form) so the test fixtures that
+// pass all three Lambda-runtime arguments don't trip CodeQL's
+// "Superfluous trailing arguments" rule. The body still ignores
+// them.
 export const handler: AppSyncResolverHandler<Record<string, unknown>, RecordingRow | null> = async (
   event,
+  _context,
+  _callback,
 ) => {
   const client = injected.dataClient ?? (await getDefaultClient());
   const auditFn: AuditFn = injected.audit ?? ((ctx, opts) => defaultAudit(ctx, opts));
