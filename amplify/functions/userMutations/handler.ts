@@ -113,6 +113,11 @@ async function getDefaultClient(): Promise<UserMutationsDataClient> {
   // Dynamic import so unit tests that inject a client never load the
   // Amplify runtime. The production Lambda execution role assumes IAM
   // and reaches the AppSync data plane via `generateClient`.
+  // Lambda runtime has no auto-config — call Amplify.configure() before
+  // generateClient or it throws. Shared helper in
+  // amplify/functions/_shared/configure-amplify.ts.
+  const { configureAmplifyOnce } = await import('../_shared/configure-amplify');
+  configureAmplifyOnce();
   const mod = await import('aws-amplify/data');
   // We need a Schema generic from data/resource, but importing the
   // schema (which imports CDK) into a runtime Lambda would fail. The

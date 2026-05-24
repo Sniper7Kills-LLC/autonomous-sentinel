@@ -104,6 +104,11 @@ let cachedDataClient: WorkerDataClient | undefined;
 async function getDataClient(): Promise<WorkerDataClient> {
   if (injected.dataClient) return injected.dataClient;
   if (cachedDataClient) return cachedDataClient;
+  // Lambda runtime has no auto-config — call Amplify.configure() before
+  // generateClient or it throws. Shared helper in
+  // amplify/functions/_shared/configure-amplify.ts.
+  const { configureAmplifyOnce } = await import('../_shared/configure-amplify');
+  configureAmplifyOnce();
   const mod = await import('aws-amplify/data');
   cachedDataClient = mod.generateClient({
     authMode: 'iam',

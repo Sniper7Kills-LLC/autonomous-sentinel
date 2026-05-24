@@ -124,6 +124,11 @@ let cachedDefaultClient: TranscriptRevisionMutationsDataClient | undefined;
 
 async function getDefaultClient(): Promise<TranscriptRevisionMutationsDataClient> {
   if (cachedDefaultClient) return cachedDefaultClient;
+  // Lambda runtime has no auto-config — call Amplify.configure() before
+  // generateClient or it throws. Shared helper in
+  // amplify/functions/_shared/configure-amplify.ts.
+  const { configureAmplifyOnce } = await import('../_shared/configure-amplify');
+  configureAmplifyOnce();
   const mod = await import('aws-amplify/data');
   cachedDefaultClient = mod.generateClient({
     authMode: 'iam',
