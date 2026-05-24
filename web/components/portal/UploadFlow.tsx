@@ -137,12 +137,22 @@ export function UploadFlow({ onLog }: UploadFlowProps) {
       });
 
       // ----- 3. submitRecording mutation -------------------------------
+      //
+      // Default `authorizationMode` on the data resource is
+      // `identityPool` (IAM-signed via Cognito Identity Pool). The
+      // mutation is allowed for any signed-in user (`allow.authenticated()`
+      // + `allow.groups([...])`), but the IAM check only inspects the
+      // policy attached to the caller's Identity Pool role — admin /
+      // moderator / member users route to per-group roles that have
+      // no `appsync:GraphQL` grant for this resolver. Override the
+      // call to `userPool` so AppSync uses the User Pool JWT path,
+      // which honours the group rule.
       setPhase('submitting');
       const client = getDataClient();
-      const result = await client.mutations.submitRecording({
-        contentHash,
-        originalKey,
-      });
+      const result = await client.mutations.submitRecording(
+        { contentHash, originalKey },
+        { authMode: 'userPool' },
+      );
       onLog({
         ts: new Date().toISOString(),
         label: 'graphql.submitRecording',
@@ -164,8 +174,12 @@ export function UploadFlow({ onLog }: UploadFlowProps) {
 
       // ----- 4. Subscribe to status updates ----------------------------
       setPhase('tracking');
+      // Same userPool override as the mutation above — the Recording
+      // model's read rule is also `allow.authenticated()` + group rules
+      // and only the userPool path honours the group membership claim.
       subRef.current = client.models.Recording.observeQuery({
         filter: { id: { eq: created.id } },
+        authMode: 'userPool',
       }).subscribe({
         next: ({ items }) => {
           const r = items[0];
