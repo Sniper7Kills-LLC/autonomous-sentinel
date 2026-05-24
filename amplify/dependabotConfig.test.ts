@@ -80,10 +80,33 @@ describe('dependabot.yml — schedule + grouping', () => {
       expect(u.groups, `entry for ${u.directory} missing groups`).toBeDefined();
       const groupValues = Object.values(u.groups ?? {});
       const hasMinorPatchGroup = groupValues.some((g) => {
-        const types = (g as { 'update-types'?: readonly string[] })['update-types'] ?? [];
+        const types = extractUpdateTypes(g);
         return types.includes('minor') && types.includes('patch');
       });
       expect(hasMinorPatchGroup, `entry for ${u.directory} missing minor+patch group`).toBe(true);
     }
   });
+
+  it('never groups major bumps — each major version PR must stand alone for review', () => {
+    // Grouping a major into the same PR as minors/patches hides the
+    // breaking-change diff behind a wall of safe bumps. Majors must open
+    // their own PRs so they get individual review. The test guards
+    // against a future careless edit that adds `major` to a group.
+    for (const u of updates) {
+      for (const [groupName, group] of Object.entries(u.groups ?? {})) {
+        const types = extractUpdateTypes(group);
+        expect(
+          types,
+          `group '${groupName}' on ${u['package-ecosystem']} ${u.directory} must not include 'major'`,
+        ).not.toContain('major');
+      }
+    }
+  });
 });
+
+function extractUpdateTypes(group: unknown): readonly string[] {
+  if (typeof group !== 'object' || group === null) return [];
+  const candidate = (group as Record<string, unknown>)['update-types'];
+  if (!Array.isArray(candidate)) return [];
+  return candidate.filter((t): t is string => typeof t === 'string');
+}
