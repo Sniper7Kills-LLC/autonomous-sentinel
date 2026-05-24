@@ -2,6 +2,7 @@ import { defineAuth, secret } from '@aws-amplify/backend';
 import { Lazy } from 'aws-cdk-lib';
 import { postConfirmation } from '../functions/postConfirmation/resource';
 import { preTokenGeneration } from '../functions/preTokenGeneration/resource';
+import { preAuth } from '../functions/preAuth/resource';
 
 /**
  * Cognito User Pool for Autonomous Sentinel.
@@ -115,6 +116,7 @@ export const authConfig = {
   triggers: {
     postConfirmation,
     preTokenGeneration,
+    preAuthentication: preAuth,
   },
   access: (allow: AuthAccessAllow) => [allow.resource(postConfirmation).to(['addUserToGroup'])],
 };
