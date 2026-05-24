@@ -157,19 +157,20 @@ getUserPublicLambdaFn.addToRolePolicy(
 // different operator can shorten / lengthen without editing source.
 applyCognitoTokenValidity(backend.auth.resources.cfnResources.cfnUserPoolClient);
 
-// preAuth trigger wiring (#335). Read-only GetItem on the User table
-// by `cognitoSub`. The handler throws on `bannedAt != null` so Cognito
-// returns `NotAuthorizedException` and the native sign-in fails
-// closed. Federated providers (Google + Discord OIDC bridge) bypass
-// PreAuth; the federated-side ban check is a separate follow-up.
-const preAuthLambda = backend.preAuth.resources.lambda as LambdaFunction;
-preAuthLambda.addEnvironment('USER_TABLE_NAME', userTable.tableName);
-preAuthLambda.addToRolePolicy(
-  new PolicyStatement({
-    actions: ['dynamodb:GetItem'],
-    resources: [userTable.tableArn],
-  }),
-);
+// preAuth trigger wiring (#335).
+//
+// REGRESSION FIX (follow-up to #420): the direct User-table read here
+// recreated the same CFN nested-stack cycle (auth → data) that the
+// preTokenGeneration patch closed. preAuth lives in the `auth` stack
+// (Cognito trigger placement) but read DDB from the `data` stack;
+// combined with the existing data → auth + storage → auth edges, that
+// closed the cycle CDK can't sort. Job 60 still failed after the
+// preTokenGeneration fix landed because this second offender was
+// untouched. Removing the env var + IAM grant here breaks the
+// remaining edge. Banned-user enforcement continues at the AppSync
+// resolver / mutation handler layer; the proper re-introduction
+// (Cognito custom attribute driven by a User-table DynamoDB stream)
+// tracks separately.
 
 // preTokenGeneration trigger wiring (#334).
 //
