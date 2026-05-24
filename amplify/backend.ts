@@ -758,3 +758,31 @@ backend.addOutput({
     deployBadgeUrl: deployBadgeUrl.url,
   },
 });
+
+// Pipeline stage 4 wiring (#433). The linguistic Lambda consumes the
+// linguistic SQS queue (populated by the Whisper handler at stage 3),
+// classifies the transcript, creates a Message row, and advances the
+// Recording to PUBLISHED. `messageTable` is already in scope from the
+// fieldVoteOrphanJanitor wiring above; reuse it.
+const linguisticLambda = backend.linguistic.resources.lambda as LambdaFunction;
+const linguisticRecordingTable = backend.data.resources.tables['Recording'];
+if (!linguisticRecordingTable) {
+  throw new Error('backend: Recording table not found on data resources');
+}
+linguisticLambda.addEnvironment('RECORDING_TABLE_NAME', linguisticRecordingTable.tableName);
+linguisticLambda.addEnvironment('MESSAGE_TABLE_NAME', messageTable.tableName);
+linguisticLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:UpdateItem'],
+    resources: [linguisticRecordingTable.tableArn],
+  }),
+);
+linguisticLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:PutItem'],
+    resources: [messageTable.tableArn],
+  }),
+);
+linguisticLambda.addEventSource(
+  new SqsEventSource(pipelineQueues.linguistic.main, { batchSize: 1 }),
+);
