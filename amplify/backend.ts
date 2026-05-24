@@ -171,23 +171,22 @@ preAuthLambda.addToRolePolicy(
   }),
 );
 
-// preTokenGeneration trigger wiring (#334). Read-only GetItem on the
-// Reputation table by `userId` (the caller's Cognito sub). The handler
-// injects `custom:role` + `custom:repWeight` into the ID token on
-// every token issuance. Fail-open on lookup error — sign-in never
-// blocks on a DDB blip.
-const reputationTable = backend.data.resources.tables['Reputation'];
-if (!reputationTable) {
-  throw new Error('backend: Reputation table not found on data resources');
-}
-const preTokenGenerationLambda = backend.preTokenGeneration.resources.lambda as LambdaFunction;
-preTokenGenerationLambda.addEnvironment('REPUTATION_TABLE_NAME', reputationTable.tableName);
-preTokenGenerationLambda.addToRolePolicy(
-  new PolicyStatement({
-    actions: ['dynamodb:GetItem'],
-    resources: [reputationTable.tableArn],
-  }),
-);
+// preTokenGeneration trigger wiring (#334).
+//
+// REGRESSION FIX (#420): the direct Reputation-table read introduced a
+// CFN nested-stack cycle (auth → data) that blocked every Amplify
+// deploy from job 42 onward. Until the proper repWeight pipeline lands
+// (DDB-stream-driven Cognito custom attribute, tracked separately), the
+// trigger ships *role only*. The handler still emits `custom:repWeight
+// = "1"` for every token so the frontend contract is unchanged; the
+// claim is just no longer authoritative until the follow-up lands.
+//
+// No env var. No IAM grant. No cross-stack ref into `data`.
+//
+// When re-introducing the real lookup, do not reach for
+// `reputationTable.tableArn` / `.tableName` from this site — that's
+// exactly the pattern that broke. See #420 for the safe re-introduction
+// options.
 
 // listSdrPublic Lambda wiring (#286). Read-only Scan on the Sdr
 // table; granularity blur + publicVisible filter happen in-handler.
