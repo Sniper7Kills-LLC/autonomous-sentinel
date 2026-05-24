@@ -694,15 +694,15 @@ deployBadgeLambda.addToRolePolicy(
   }),
 );
 // Public Function URL — shields.io fetches over HTTPS, no auth.
+// CORS defaults from CDK allow `*` origins + GET, which is exactly
+// what shields.io needs. Omit `allowedMethods` rather than passing
+// an empty array — CFN rejects `Cors.AllowMethods: []` as invalid
+// during stack update (caused job 63 to fail).
 const deployBadgeUrl = deployBadgeLambda.addFunctionUrl({
   authType: FunctionUrlAuthType.NONE,
   cors: {
     allowedOrigins: ['*'],
-    allowedMethods: [
-      /* default */
-    ],
   },
-  invokeMode: InvokeMode.BUFFERED,
 });
 backend.addOutput({
   custom: {
