@@ -687,6 +687,21 @@ whisperFn.addToRolePolicy(
     resources: [`${mediaBucket.bucketArn}/recordings/web/*`],
   }),
 );
+// Modern AWS S3 SDK probes the bucket on the error path of a GetObject
+// (so a missing-key 404 becomes a 403 instead of leaking existence).
+// Without `s3:ListBucket`, even a successful GetObject can surface as
+// `AccessDenied for s3:ListBucket on <bucket>`. Scope the grant to the
+// `recordings/web/*` prefix so this role can only list its own input
+// surface.
+whisperFn.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['s3:ListBucket'],
+    resources: [mediaBucket.bucketArn],
+    conditions: {
+      StringLike: { 's3:prefix': ['recordings/web/*'] },
+    },
+  }),
+);
 whisperFn.addToRolePolicy(
   new PolicyStatement({
     actions: ['s3:PutObject', 's3:DeleteObject', 's3:AbortMultipartUpload'],
