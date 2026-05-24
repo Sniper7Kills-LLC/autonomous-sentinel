@@ -31,4 +31,20 @@ export default [
       'react/prop-types': 'off',
     },
   },
+  {
+    // The Amplify-Gen-2-generated `amplify_outputs.json` resolves to
+    // different inferred types depending on which version of the
+    // Amplify Gen 2 toolchain TypeScript reads from disk. Some envs
+    // narrow it to a `ResourcesConfig`-compatible shape (cast is
+    // "unnecessary"), CI's typecheck widens it to `unknown` (cast is
+    // required to silence `no-unsafe-argument`). Disabling both rules
+    // for this single file keeps the call site stable across envs;
+    // there's nothing else in the file that would benefit from
+    // keeping the rules on.
+    files: ['lib/amplifyClient.ts'],
+    rules: {
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-unnecessary-type-assertion': 'off',
+    },
+  },
 ];
