@@ -1,4 +1,5 @@
 import type { AppSyncResolverHandler } from 'aws-lambda';
+import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import {
   audit as defaultAudit,
   type AuditContext,
@@ -91,10 +92,31 @@ export interface RecordingMutationsDataClient {
 
 export type AuditFn = (ctx: AuditContext, opts: AuditOptions) => Promise<string>;
 
+/**
+ * `enqueuePreprocess` publishes the freshly-created Recording id to the
+ * preprocess SQS queue so the preprocess Lambda can start the pipeline
+ * (#433). Default implementation uses the AWS SDK against the queue
+ * URL in `PREPROCESS_QUEUE_URL`. Override in tests to assert the
+ * payload shape without spinning the SDK up.
+ *
+ * Failure to publish does NOT roll back the Recording row — the row is
+ * the audit-of-record; a missed enqueue can be redriven by an
+ * operator (or eventually a janitor). The handler logs and proceeds.
+ */
+export type EnqueuePreprocessFn = (msg: PreprocessQueueMessage) => Promise<void>;
+
+export interface PreprocessQueueMessage {
+  recordingId: string;
+  originalKey: string;
+  contentHash: string;
+  enqueuedAt: string;
+}
+
 interface Deps {
   dataClient?: RecordingMutationsDataClient;
   audit?: AuditFn;
   now?: () => Date;
+  enqueuePreprocess?: EnqueuePreprocessFn;
 }
 
 let injected: Deps = {};
@@ -116,6 +138,33 @@ async function getDefaultClient(): Promise<RecordingMutationsDataClient> {
     authMode: 'iam',
   }) as unknown as RecordingMutationsDataClient;
   return cachedDefaultClient;
+}
+
+let cachedSqsClient: SQSClient | undefined;
+function getSqsClient(): SQSClient {
+  if (!cachedSqsClient) cachedSqsClient = new SQSClient({});
+  return cachedSqsClient;
+}
+
+/**
+ * Production implementation of {@link EnqueuePreprocessFn}. Reads the
+ * queue URL from the `PREPROCESS_QUEUE_URL` env var (wired by
+ * `amplify/backend.ts` against `pipelineQueues.preprocess.main.queueUrl`).
+ */
+async function defaultEnqueuePreprocess(msg: PreprocessQueueMessage): Promise<void> {
+  const queueUrl = process.env.PREPROCESS_QUEUE_URL;
+  if (!queueUrl) {
+    console.warn('submitRecording: PREPROCESS_QUEUE_URL unset — pipeline kick-off skipped', {
+      recordingId: msg.recordingId,
+    });
+    return;
+  }
+  await getSqsClient().send(
+    new SendMessageCommand({
+      QueueUrl: queueUrl,
+      MessageBody: JSON.stringify(msg),
+    }),
+  );
 }
 
 function isAdmin(identity: unknown): boolean {
@@ -215,7 +264,11 @@ const RECORDING_DUPLICATE_HASH = 'RECORDING_DUPLICATE_HASH';
 
 async function dispatchSubmit(
   event: Parameters<AppSyncResolverHandler<Record<string, unknown>, RecordingRow | null>>[0],
-  deps: { client: RecordingMutationsDataClient; now: () => Date },
+  deps: {
+    client: RecordingMutationsDataClient;
+    now: () => Date;
+    enqueuePreprocess: EnqueuePreprocessFn;
+  },
 ): Promise<RecordingRow | null> {
   const uploaderSub = identitySub(event.identity);
   if (!uploaderSub) {
@@ -301,7 +354,30 @@ async function dispatchSubmit(
       `submitRecording: Recording.create returned errors: ${JSON.stringify(created.errors)}`,
     );
   }
-  return created.data;
+  const row = created.data;
+
+  // Kick off the pipeline. Fire-and-forget: a failure here must NOT
+  // roll back the Recording row — the row is canonical, the queue
+  // message is recoverable. Log + return so the client still sees
+  // the new id; an operator (or follow-up janitor) can redrive
+  // missed messages.
+  if (row?.id) {
+    try {
+      await deps.enqueuePreprocess({
+        recordingId: row.id,
+        originalKey,
+        contentHash,
+        enqueuedAt: deps.now().toISOString(),
+      });
+    } catch (err) {
+      console.error(
+        'submitRecording: failed to enqueue preprocess message — Recording row was created but pipeline stays QUEUED until operator redrives',
+        { recordingId: row.id, err: String(err) },
+      );
+    }
+  }
+
+  return row;
 }
 
 export const handler: AppSyncResolverHandler<Record<string, unknown>, RecordingRow | null> = async (
@@ -310,6 +386,8 @@ export const handler: AppSyncResolverHandler<Record<string, unknown>, RecordingR
   const client = injected.dataClient ?? (await getDefaultClient());
   const auditFn: AuditFn = injected.audit ?? ((ctx, opts) => defaultAudit(ctx, opts));
   const now = injected.now ?? (() => new Date());
+  const enqueuePreprocess: EnqueuePreprocessFn =
+    injected.enqueuePreprocess ?? defaultEnqueuePreprocess;
   const deps = { client, audit: auditFn, now };
 
   // AppSync's pipeline-function payload puts `fieldName` at the top level
@@ -322,7 +400,7 @@ export const handler: AppSyncResolverHandler<Record<string, unknown>, RecordingR
     case 'softDeleteRecording':
       return dispatchSoftDelete(event, deps);
     case 'submitRecording':
-      return dispatchSubmit(event, { client, now });
+      return dispatchSubmit(event, { client, now, enqueuePreprocess });
     default:
       throw new Error(`recordingMutations: unsupported fieldName "${field}"`);
   }

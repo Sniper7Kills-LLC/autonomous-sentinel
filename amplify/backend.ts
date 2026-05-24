@@ -551,6 +551,20 @@ backend.addOutput({
   backend.linguistic.resources.lambda.node.defaultChild as CfnFunction
 ).reservedConcurrentExecutions = getConcurrencyCap('LINGUISTIC');
 
+// recordingMutations → preprocess queue (pipeline stage 1, #433).
+//
+// After `submitRecording` creates the Recording row it publishes a
+// message to the preprocess SQS queue. The preprocess Lambda pulls
+// from the queue and starts the ffmpeg / transcode / status-advance
+// flow. Failure to publish does not roll the row back — operators
+// can redrive missed messages from the DLQ.
+const recordingMutationsLambda = backend.recordingMutations.resources.lambda as LambdaFunction;
+recordingMutationsLambda.addEnvironment(
+  'PREPROCESS_QUEUE_URL',
+  pipelineQueues.preprocess.main.queueUrl,
+);
+pipelineQueues.preprocess.main.grantSendMessages(recordingMutationsLambda);
+
 // Pre-process Lambda → `recordings/web/*` write grant (#46).
 //
 // The pre-process Lambda transcodes the original upload into the
