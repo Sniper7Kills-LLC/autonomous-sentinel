@@ -18,6 +18,7 @@ import { preprocess } from './functions/preprocess/resource';
 import { transcribe } from './functions/transcribe/resource';
 import { linguistic } from './functions/linguistic/resource';
 import { postConfirmation } from './functions/postConfirmation/resource';
+import { preTokenGeneration } from './functions/preTokenGeneration/resource';
 import { discordOidcBridge } from './functions/discordOidcBridge/resource';
 import { userMutations } from './functions/userMutations/resource';
 import { messageMutations } from './functions/messageMutations/resource';
@@ -47,6 +48,7 @@ const backend = defineBackend({
   transcribe,
   linguistic,
   postConfirmation,
+  preTokenGeneration,
   discordOidcBridge,
   userMutations,
   messageMutations,
@@ -143,6 +145,24 @@ getUserPublicLambdaFn.addToRolePolicy(
   new PolicyStatement({
     actions: ['dynamodb:GetItem'],
     resources: [userTable.tableArn],
+  }),
+);
+
+// preTokenGeneration trigger wiring (#334). Read-only GetItem on the
+// Reputation table by `userId` (the caller's Cognito sub). The handler
+// injects `custom:role` + `custom:repWeight` into the ID token on
+// every token issuance. Fail-open on lookup error — sign-in never
+// blocks on a DDB blip.
+const reputationTable = backend.data.resources.tables['Reputation'];
+if (!reputationTable) {
+  throw new Error('backend: Reputation table not found on data resources');
+}
+const preTokenGenerationLambda = backend.preTokenGeneration.resources.lambda as LambdaFunction;
+preTokenGenerationLambda.addEnvironment('REPUTATION_TABLE_NAME', reputationTable.tableName);
+preTokenGenerationLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:GetItem'],
+    resources: [reputationTable.tableArn],
   }),
 );
 
