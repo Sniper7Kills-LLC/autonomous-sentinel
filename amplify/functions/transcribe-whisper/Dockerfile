@@ -45,16 +45,27 @@ RUN dnf -y install gcc-c++ make cmake git tar gzip wget && dnf clean all
 WORKDIR /build
 # Pin to a release tag so the image is reproducible. Bump the
 # WHISPER_CPP_VERSION ARG above when updating.
-# `-DBUILD_SHARED_LIBS=OFF` produces a statically-linked CLI binary
-# (#446). whisper.cpp v1.8.x defaults to `BUILD_SHARED_LIBS=ON`, so
-# `bin/whisper-cli` is dynamically linked against `libwhisper.so.1`
-# + `libggml.so.X` that only exist inside the builder stage. Without
-# the static flag the runtime image starts up cleanly but the binary
-# fails at first invocation with `cannot open shared object file:
-# No such file or directory`.
+# cmake flags:
+#   `-DBUILD_SHARED_LIBS=OFF` (#446): static-link the CLI so the
+#     runtime stage doesn't need `libwhisper.so.1` + `libggml.so.X`.
+#   `-DGGML_NATIVE=OFF` (#457): block ggml's default `-march=native`
+#     which would bake the BUILDER CPU's instruction set into the
+#     binary. CodeBuild standard:7.0 runs on EC2 with AVX-512;
+#     Lambda x86_64 only has AVX/AVX2/FMA. Without this flag the
+#     binary hits SIGILL right after model load when the first
+#     AVX-512 matrix op fires.
+#   `-DGGML_AVX512=OFF` (#457): belt-and-braces — even if a future
+#     ggml default flips, this explicitly disables the AVX-512
+#     codepath. AVX2 + FMA stay on (ggml's defaults), which is the
+#     Lambda-supported tier.
 RUN git clone --depth 1 --branch ${WHISPER_CPP_VERSION} \
       https://github.com/ggerganov/whisper.cpp.git . \
- && cmake -B build -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON \
+ && cmake -B build \
+      -DBUILD_SHARED_LIBS=OFF \
+      -DGGML_NATIVE=OFF \
+      -DGGML_AVX512=OFF \
+      -DWHISPER_BUILD_TESTS=OFF \
+      -DWHISPER_BUILD_EXAMPLES=ON \
  && cmake --build build --config Release -j
 
 # Download the medium English model. The `download-ggml-model.sh`

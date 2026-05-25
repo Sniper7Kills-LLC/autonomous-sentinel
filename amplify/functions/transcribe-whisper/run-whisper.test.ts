@@ -252,6 +252,32 @@ describe('runWhisper — failure modes', () => {
     }
   });
 
+  it('captures signal name on signal-killed exits (e.g. SIGILL) so the failure is greppable (#457)', async () => {
+    const fakeProc = makeFakeProc();
+    const spawnFn = vi.fn(() => {
+      queueMicrotask(() => {
+        fakeProc.stderr.emit('data', Buffer.from('whisper_model_load: n_langs = 99\n'));
+        // Node emits ('close', null, 'SIGILL') when a child is
+        // killed by a signal.
+        fakeProc.emit('close', null, 'SIGILL');
+      });
+      return fakeProc;
+    });
+    try {
+      await runWhisper({
+        inputPath: '/tmp/in.wav',
+        outputPrefix: '/tmp/out',
+        spawnFn: spawnFn as unknown as typeof SpawnFn,
+      });
+      throw new Error('expected rejection');
+    } catch (err) {
+      expect(err).toBeInstanceOf(WhisperError);
+      expect((err as WhisperError).signal).toBe('SIGILL');
+      expect((err as WhisperError).code).toBeNull();
+      expect((err as Error).message).toContain('signal SIGILL');
+    }
+  });
+
   it('rejects with WhisperError on spawn-thrown error', async () => {
     const spawnFn = (() => {
       throw new Error('ENOENT: /opt/whisper not found');
