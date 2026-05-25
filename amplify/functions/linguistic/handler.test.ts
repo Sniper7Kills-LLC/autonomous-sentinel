@@ -119,27 +119,59 @@ describe('linguistic — classify', () => {
 
 describe('linguistic — parseMessage', () => {
   it('rejects body missing recordingId', () => {
-    expect(() => parseMessage(JSON.stringify({ transcript: 'x' }))).toThrow(
-      /missing required fields/,
-    );
+    expect(() => parseMessage(JSON.stringify({ transcript: 'x' }))).toThrow(/recordingId/);
   });
 
-  it('rejects body missing transcript', () => {
-    expect(() => parseMessage(JSON.stringify({ recordingId: 'r' }))).toThrow(
-      /missing required fields/,
-    );
+  it('rejects transcript body missing transcript field', () => {
+    expect(() => parseMessage(JSON.stringify({ recordingId: 'r' }))).toThrow(/transcript/);
   });
 
-  it('round-trips a valid body', () => {
+  it('round-trips a valid transcript body', () => {
     const out = parseMessage(
       JSON.stringify({
+        kind: 'transcript',
         recordingId: 'r-1',
         transcript: 'skyking skyking',
         enqueuedAt: '2026-05-24T18:00:00Z',
       }),
     );
+    expect(out.kind).toBe('transcript');
     expect(out.recordingId).toBe('r-1');
-    expect(out.transcript).toBe('skyking skyking');
+    if (out.kind === 'transcript') {
+      expect(out.transcript).toBe('skyking skyking');
+    }
+  });
+
+  it('treats a body without `kind` as transcript for back-compat (#452)', () => {
+    const out = parseMessage(
+      JSON.stringify({
+        recordingId: 'r-1',
+        transcript: 'skyking',
+        enqueuedAt: '2026-05-24T18:00:00Z',
+      }),
+    );
+    expect(out.kind).toBe('transcript');
+  });
+
+  it('round-trips a valid transcribe-failure body (#452)', () => {
+    const out = parseMessage(
+      JSON.stringify({
+        kind: 'transcribe-failure',
+        recordingId: 'r-fail',
+        reason: 'whisper.cpp exit 127: bad input file',
+        enqueuedAt: '2026-05-24T18:00:00Z',
+      }),
+    );
+    expect(out.kind).toBe('transcribe-failure');
+    if (out.kind === 'transcribe-failure') {
+      expect(out.reason).toBe('whisper.cpp exit 127: bad input file');
+    }
+  });
+
+  it('rejects transcribe-failure body missing reason (#452)', () => {
+    expect(() =>
+      parseMessage(JSON.stringify({ kind: 'transcribe-failure', recordingId: 'r-fail' })),
+    ).toThrow(/reason/);
   });
 });
 
@@ -176,6 +208,7 @@ describe('linguistic — handler happy path', () => {
       expect.objectContaining({
         id: 'rec-1',
         messageId: 'msg-uuid-1',
+        transcript: 'Skyking, Skyking, do not answer',
         transcriptionStatus: 'PUBLISHED',
       }),
     );
@@ -257,6 +290,62 @@ describe('linguistic — failure paths', () => {
         transcriptionFailed: true,
       }),
     );
+    errSpy.mockRestore();
+  });
+});
+
+describe('linguistic — transcribe-failure path (#452)', () => {
+  it('marks Recording TRANSCRIBE_FAILED via Amplify Data', async () => {
+    const { client, createSpy, updateSpy } = makeDataStub();
+    __setDeps({
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    const event = makeEvent({
+      kind: 'transcribe-failure',
+      recordingId: 'rec-fail',
+      reason: 'whisper.cpp exit 127: bad input file',
+      enqueuedAt: '2026-05-24T17:55:00Z',
+    });
+    await handler(event, {} as never, () => undefined);
+
+    // Routes through Amplify Data so the portal subscription fires.
+    expect(updateSpy).toHaveBeenCalledOnce();
+    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        id: 'rec-fail',
+        transcriptionStatus: 'TRANSCRIBE_FAILED',
+        transcriptionFailed: true,
+        failedReason: 'whisper.cpp exit 127: bad input file',
+      }),
+    );
+    // No Message created on failure paths.
+    expect(createSpy).not.toHaveBeenCalled();
+  });
+
+  it('does NOT overwrite TRANSCRIBE_FAILED with PARSE_FAILED when the linguistic-side update itself errors', async () => {
+    const { client, createSpy, updateSpy } = makeDataStub();
+    updateSpy.mockResolvedValueOnce({
+      data: null,
+      errors: [{ message: 'throughput' }],
+    });
+    __setDeps({
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    const event = makeEvent({
+      kind: 'transcribe-failure',
+      recordingId: 'rec-fail-2',
+      reason: 'whisper.cpp exit 127',
+      enqueuedAt: '2026-05-24T18:00:00Z',
+    });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await expect(handler(event, {} as never, () => undefined)).rejects.toThrow(/throughput/);
+    // Only the failed TRANSCRIBE_FAILED write — no follow-up
+    // PARSE_FAILED would be wrong because that's a *parser* failure,
+    // not what happened here.
+    expect(updateSpy).toHaveBeenCalledOnce();
+    expect(createSpy).not.toHaveBeenCalled();
     errSpy.mockRestore();
   });
 });

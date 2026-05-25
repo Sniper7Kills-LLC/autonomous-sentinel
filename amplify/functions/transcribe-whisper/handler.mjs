@@ -12,29 +12,31 @@
  *   2. Download the audio from S3 to /tmp.
  *   3. Run `/opt/whisper` against the medium English model.
  *   4. Read the `<id>.json` whisper.cpp output.
- *   5. Persist transcript text onto the Recording row via DDB
- *      UpdateItem (status → PARSING, transcript set).
- *   6. Publish onto the linguistic queue so the linguistic Lambda
- *      picks the recording up.
- *   7. Stage the raw whisper JSON in `pipeline-temp/<id>/whisper.json`
+ *   5. Stage the raw whisper JSON in `pipeline-temp/<id>/whisper.json`
  *      for future word-timestamp use.
- *   8. Clean up /tmp.
+ *   6. Publish onto the linguistic queue with the transcript so the
+ *      linguistic Lambda picks the recording up + persists the
+ *      transcript + status via Amplify Data (#452 — Recording state
+ *      changes MUST route through AppSync so the portal's
+ *      `observeQuery` subscription fires; direct DDB writes from
+ *      the container bypass the subscription publisher).
+ *   7. Clean up /tmp.
  *
- * Failure: any throw fails the SQS batch (`batchSize=1` so one
- * Recording per message); SQS redrives per the queue's
- * `maxReceiveCount`, then lands on the transcribe DLQ from #67.
+ * Failure path: publish a `failure` message to the linguistic queue
+ * carrying `recordingId` + `reason` (#452). Linguistic owns the
+ * Recording state machine + writes `TRANSCRIBE_FAILED` via Amplify
+ * Data so the portal subscription fires. The handler then throws so
+ * SQS redrives the Whisper message per `maxReceiveCount`; eventual
+ * DLQ landing for the original Whisper message is unaffected because
+ * the failure-status publish is idempotent.
  *
- * **Pre-#433 stage 3 the handler stopped after step 4** — staged the
- * JSON in pipeline-temp/ and deferred the row update + linguistic
- * handoff to an unwritten finalizer Lambda. That left the Recording
- * row stuck at TRANSCRIBING forever. This update folds the finalizer
- * directly into the Whisper handler.
+ * No DDB writes from this Lambda. The image deliberately doesn't
+ * carry `aws-amplify`; routing state through the linguistic Lambda
+ * keeps the container small while restoring subscription coverage.
  */
 
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { DynamoDBClient, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
-import { marshall } from '@aws-sdk/util-dynamodb';
 import { createWriteStream } from 'node:fs';
 import { mkdir, readFile, unlink } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
@@ -45,7 +47,6 @@ import { readWhisperConfig, runWhisper, WhisperError } from './run-whisper.mjs';
 
 const RECORDINGS_BUCKET = process.env.RECORDINGS_BUCKET ?? '';
 const PIPELINE_TEMP_PREFIX = process.env.PIPELINE_TEMP_PREFIX ?? 'pipeline-temp';
-const RECORDING_TABLE_NAME = process.env.RECORDING_TABLE_NAME ?? '';
 const LINGUISTIC_QUEUE_URL = process.env.LINGUISTIC_QUEUE_URL ?? '';
 
 // Build identity baked into the image at `docker build` time
@@ -56,7 +57,6 @@ const IMAGE_GIT_SHA = process.env.GIT_SHA ?? 'unknown';
 const IMAGE_BUILD_ID = process.env.BUILD_ID ?? 'unknown';
 
 const s3 = new S3Client({});
-const ddb = new DynamoDBClient({});
 const sqs = new SQSClient({});
 
 console.info('whisper-handler: image identity', {
@@ -67,9 +67,6 @@ console.info('whisper-handler: image identity', {
 export async function handler(event) {
   if (!RECORDINGS_BUCKET) {
     throw new Error('whisper-handler: RECORDINGS_BUCKET env var is unset');
-  }
-  if (!RECORDING_TABLE_NAME) {
-    throw new Error('whisper-handler: RECORDING_TABLE_NAME env var is unset');
   }
   if (!LINGUISTIC_QUEUE_URL) {
     throw new Error('whisper-handler: LINGUISTIC_QUEUE_URL env var is unset');
@@ -108,6 +105,25 @@ function audioKeyFor(body) {
 function extensionOf(key) {
   const dot = key.lastIndexOf('.');
   return dot >= 0 ? key.slice(dot) : '';
+}
+
+async function publishFailure(recordingId, reason) {
+  // Caller wraps in its own try/catch so the original Whisper error
+  // is preserved as the throw value even if this publish itself
+  // fails. We don't swallow here — silently dropping a failure
+  // publish would leave the Recording stuck in TRANSCRIBING limbo
+  // until SQS retries time out (#453 self-review).
+  await sqs.send(
+    new SendMessageCommand({
+      QueueUrl: LINGUISTIC_QUEUE_URL,
+      MessageBody: JSON.stringify({
+        kind: 'transcribe-failure',
+        recordingId,
+        reason: reason.slice(0, 1024),
+        enqueuedAt: new Date().toISOString(),
+      }),
+    }),
+  );
 }
 
 async function processOne(body) {
@@ -149,31 +165,14 @@ async function processOne(body) {
       }),
     );
 
-    // Write transcript onto the Recording row + advance status.
+    // Publish onto the linguistic queue. Linguistic owns the
+    // Recording.update for `transcript` + status (#452).
     const ts = new Date().toISOString();
-    await ddb.send(
-      new UpdateItemCommand({
-        TableName: RECORDING_TABLE_NAME,
-        Key: marshall({ id: recordingId }),
-        UpdateExpression: 'SET #t = :t, #ts = :ts, #tsu = :tsu',
-        ExpressionAttributeNames: {
-          '#t': 'transcript',
-          '#ts': 'transcriptionStatus',
-          '#tsu': 'transcriptionStatusUpdatedAt',
-        },
-        ExpressionAttributeValues: marshall({
-          ':t': transcriptText,
-          ':ts': 'PARSING',
-          ':tsu': ts,
-        }),
-      }),
-    );
-
-    // Publish onto the linguistic queue.
     await sqs.send(
       new SendMessageCommand({
         QueueUrl: LINGUISTIC_QUEUE_URL,
         MessageBody: JSON.stringify({
+          kind: 'transcript',
           recordingId,
           transcript: transcriptText,
           enqueuedAt: ts,
@@ -181,7 +180,7 @@ async function processOne(body) {
       }),
     );
 
-    console.info('whisper-handler: advanced to PARSING', {
+    console.info('whisper-handler: published transcript to linguistic queue', {
       recordingId,
       transcriptLen: transcriptText.length,
       stderrTail: result.stderrTail.slice(-256),
@@ -201,42 +200,24 @@ async function processOne(body) {
         error: err instanceof Error ? err.message : String(err),
       });
     }
-    // Mark TRANSCRIBE_FAILED on the row so admin DLQ filter / portal
-    // surface the stuck state. Direct DDB UpdateItem here (vs Amplify
-    // Data) because this Lambda is in a container image and adding
-    // aws-amplify into the image would balloon the bundle. The portal
-    // subscription will miss this exact transition, but the admin DLQ
-    // page filters on `transcriptionStatus = *_FAILED`.
+    const reason =
+      err instanceof WhisperError
+        ? `whisper.cpp exit ${err.code}: ${err.stderr.slice(-512)}`
+        : err instanceof Error
+          ? err.message
+          : String(err);
+    // Route the failure through the linguistic queue so the linguistic
+    // Lambda can mark TRANSCRIBE_FAILED via Amplify Data and the portal
+    // subscription fires (#452). Wrap so a publish-side failure logs
+    // without shadowing the original Whisper error; SQS still redrives
+    // the Whisper message either way.
     try {
-      const reason =
-        err instanceof WhisperError
-          ? `whisper.cpp exit ${err.code}: ${err.stderr.slice(-512)}`
-          : err instanceof Error
-            ? err.message
-            : String(err);
-      await ddb.send(
-        new UpdateItemCommand({
-          TableName: RECORDING_TABLE_NAME,
-          Key: marshall({ id: recordingId }),
-          UpdateExpression: 'SET #ts = :ts, #tf = :tf, #fr = :fr, #tsu = :tsu',
-          ExpressionAttributeNames: {
-            '#ts': 'transcriptionStatus',
-            '#tf': 'transcriptionFailed',
-            '#fr': 'failedReason',
-            '#tsu': 'transcriptionStatusUpdatedAt',
-          },
-          ExpressionAttributeValues: marshall({
-            ':ts': 'TRANSCRIBE_FAILED',
-            ':tf': true,
-            ':fr': reason.slice(0, 1024),
-            ':tsu': new Date().toISOString(),
-          }),
-        }),
-      );
-    } catch (markErr) {
-      console.error('whisper-handler: failed to mark TRANSCRIBE_FAILED', {
+      await publishFailure(recordingId, reason);
+    } catch (publishErr) {
+      console.error('whisper-handler: failure-publish also failed; SQS will redrive', {
         recordingId,
-        err: String(markErr),
+        originalReason: reason,
+        publishErr: publishErr instanceof Error ? publishErr.message : String(publishErr),
       });
     }
     throw err;
