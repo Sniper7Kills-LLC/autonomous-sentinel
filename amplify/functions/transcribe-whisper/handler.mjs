@@ -192,6 +192,7 @@ async function processOne(body) {
       console.error('whisper-handler: whisper.cpp failed', {
         recordingId,
         code: err.code,
+        signal: err.signal,
         stderr: err.stderr.slice(-1024),
       });
     } else {
@@ -202,7 +203,7 @@ async function processOne(body) {
     }
     const reason =
       err instanceof WhisperError
-        ? `whisper.cpp exit ${err.code}: ${err.stderr.slice(-512)}`
+        ? `whisper.cpp ${err.signal ? `signal ${err.signal}` : `exit ${err.code}`}: ${err.stderr.slice(-512)}`
         : err instanceof Error
           ? err.message
           : String(err);

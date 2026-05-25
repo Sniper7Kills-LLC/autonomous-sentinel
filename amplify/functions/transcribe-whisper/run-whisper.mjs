@@ -38,14 +38,22 @@ export class WhisperError extends Error {
    * @param {string} message
    * @param {number | null} code
    * @param {string} stderr
+   * @param {string | null} [signal] - POSIX signal name when the
+   *   process was killed by a signal (`SIGILL`, `SIGSEGV`,
+   *   `SIGKILL`, etc.). Null on a normal exit. Captured because
+   *   `code: null` alone hides the difference between "binary
+   *   incompatible with host CPU" (SIGILL) and "OOM killer"
+   *   (SIGKILL) and "real segfault" (SIGSEGV) — #457.
    */
-  constructor(message, code, stderr) {
+  constructor(message, code, stderr, signal = null) {
     super(message);
     this.name = 'WhisperError';
     /** @type {number | null} */
     this.code = code;
     /** @type {string} */
     this.stderr = stderr;
+    /** @type {string | null} */
+    this.signal = signal;
   }
 }
 
@@ -201,7 +209,7 @@ export function runWhisper(opts) {
       reject(new WhisperError(`runWhisper: spawn error: ${err.message}`, null, decode()));
     });
 
-    child.once('close', (code) => {
+    child.once('close', (code, signal) => {
       if (code === 0) {
         resolve({
           inputPath: opts.inputPath,
@@ -214,11 +222,17 @@ export function runWhisper(opts) {
         });
         return;
       }
+      // Include the POSIX signal name in the error message when the
+      // process was killed by a signal — `code: null` alone hides
+      // SIGILL (CPU-instruction mismatch) vs SIGSEGV vs SIGKILL.
+      // Captured separately on the error for programmatic access.
+      const exitDesc = signal ? `signal ${signal}` : `code ${code ?? 'null'}`;
       reject(
         new WhisperError(
-          `runWhisper: whisper.cpp exited with code ${code ?? 'null'}`,
+          `runWhisper: whisper.cpp exited with ${exitDesc}`,
           code,
           decode(),
+          signal ?? null,
         ),
       );
     });

@@ -19,7 +19,8 @@ export const DEFAULT_STDERR_CAPTURE_BYTES: number;
 export class WhisperError extends Error {
   readonly code: number | null;
   readonly stderr: string;
-  constructor(message: string, code: number | null, stderr: string);
+  readonly signal: string | null;
+  constructor(message: string, code: number | null, stderr: string, signal?: string | null);
 }
 
 export interface BuildArgsOpts {

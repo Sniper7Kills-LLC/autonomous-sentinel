@@ -44,6 +44,16 @@ describe('Whisper image build-identity wiring', () => {
     expect(dockerfile).toContain('-DBUILD_SHARED_LIBS=OFF');
   });
 
+  it('Dockerfile disables ggml native CPU detection + AVX-512 so the binary runs on Lambda CPUs (#457)', () => {
+    const dockerfile = read(join(HERE, 'Dockerfile'));
+    // CodeBuild standard:7.0 runs on EC2 instances with AVX-512;
+    // ggml defaults `GGML_NATIVE=ON` adds `-march=native` which
+    // bakes those instructions into the binary. Lambda x86_64 only
+    // has AVX/AVX2/FMA → SIGILL right after model load.
+    expect(dockerfile).toContain('-DGGML_NATIVE=OFF');
+    expect(dockerfile).toContain('-DGGML_AVX512=OFF');
+  });
+
   it('Dockerfile installs libgomp in the runtime stage so OpenMP-linked whisper binary loads (#448)', () => {
     const dockerfile = read(join(HERE, 'Dockerfile'));
     // Even after -DBUILD_SHARED_LIBS=OFF the binary dynamically
