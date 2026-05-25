@@ -66,6 +66,16 @@ RUN bash ./models/download-ggml-model.sh medium.en
 # ----- stage 2: runtime ---------------------------------------------
 FROM public.ecr.aws/lambda/nodejs:22
 
+# Runtime dependency: GNU OpenMP shared library (#448). whisper.cpp
+# uses OpenMP for parallel matmul/ggml ops; even with
+# `-DBUILD_SHARED_LIBS=OFF` (#446) the binary still dynamically
+# links `libgomp.so.1` via the `-fopenmp` flag the toolchain
+# applies. The Lambda base image doesn't ship it. Disabling
+# OpenMP (`-DGGML_OPENMP=OFF`) would avoid the dep but cost
+# matmul throughput on the 3008 MB / ~2-vCPU Lambda; keeping
+# OpenMP + installing the runtime library is the right trade.
+RUN dnf -y install libgomp && dnf clean all
+
 # Whisper binary + model in /opt so we don't pollute the Lambda
 # task-root. whisper.cpp v1.8.x ships the CLI as `bin/whisper-cli`
 # (renamed from `bin/main` in v1.7.x). If bumping
