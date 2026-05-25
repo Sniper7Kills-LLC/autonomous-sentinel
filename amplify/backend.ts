@@ -725,8 +725,9 @@ const whisperFn = new DockerImageFunction(transcribeWhisperStack, 'TranscribeWhi
     RECORDINGS_BUCKET: mediaBucket.bucketName,
     PIPELINE_TEMP_PREFIX: 'pipeline-temp',
     WHISPER_LANGUAGE: 'en',
-    // #433 stage 3 — write transcript onto Recording + publish to linguistic.
-    RECORDING_TABLE_NAME: recordingTable.tableName,
+    // #452 — all Recording state changes now route through the
+    // linguistic Lambda via this queue (success + failure). The
+    // container no longer writes to DDB directly.
     LINGUISTIC_QUEUE_URL: pipelineQueues.linguistic.main.queueUrl,
   },
   reservedConcurrentExecutions: getConcurrencyCap('TRANSCRIBE_WHISPER_LOCAL'),
@@ -758,12 +759,10 @@ whisperFn.addToRolePolicy(
     resources: [`${mediaBucket.bucketArn}/pipeline-temp/*`],
   }),
 );
-whisperFn.addToRolePolicy(
-  new PolicyStatement({
-    actions: ['dynamodb:UpdateItem'],
-    resources: [recordingTable.tableArn],
-  }),
-);
+// #452 — DDB `Recording.UpdateItem` grant removed; Whisper now
+// publishes both success + failure to the linguistic queue and
+// the linguistic Lambda owns all Recording.update calls via
+// Amplify Data so AppSync's subscription publisher fires.
 pipelineQueues.linguistic.main.grantSendMessages(whisperFn);
 whisperFn.addEventSource(new SqsEventSource(pipelineQueues.transcribe.main, { batchSize: 1 }));
 

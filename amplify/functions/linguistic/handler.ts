@@ -4,22 +4,37 @@ import { randomUUID } from 'node:crypto';
 /**
  * Linguistic Lambda (#433 stage 4).
  *
- * Consumes the linguistic SQS queue (populated by the Whisper handler
- * at stage 3). Each message carries
- *   `{ recordingId, transcript, enqueuedAt }`.
+ * Consumes the linguistic SQS queue. Two message kinds — both
+ * published by the Whisper container Lambda (#452):
  *
- * For each message:
- *   1. Rule-based parser classifies the transcript by keyword to
- *      pick a `Message.type` from the enum.
- *   2. Creates a Message row through the Amplify Data client so
- *      AppSync's subscription publisher fires.
- *   3. Updates the Recording row (Amplify Data client too) so the
- *      portal's `observeQuery` subscription sees the row advance to
- *      `PUBLISHED` with the new `messageId`.
+ *   1. `{ kind: 'transcript', recordingId, transcript, enqueuedAt }`
+ *      — happy path. Classify the transcript, create the Message
+ *      row, and advance the Recording row to `PUBLISHED` with the
+ *      transcript text + new `messageId` in a single Amplify Data
+ *      update.
  *
- * Failure path: mark the Recording `PARSE_FAILED` + `failedReason`
- * before rethrowing so SQS redrives + admin/portal see the stuck
- * state.
+ *   2. `{ kind: 'transcribe-failure', recordingId, reason, enqueuedAt }`
+ *      — Whisper hit an error. Linguistic owns the Recording state
+ *      machine; it writes `TRANSCRIBE_FAILED` + `failedReason` via
+ *      Amplify Data so the portal subscription fires. Without
+ *      `kind` (legacy callers) the message is treated as a
+ *      transcript for back-compat with any in-flight SQS messages
+ *      published before this handler shipped.
+ *
+ * Why every state change must route here:
+ *   - The Whisper Lambda is a container image that deliberately
+ *     doesn't carry `aws-amplify` (~5 MB on a ~1.7 GB image is
+ *     small but still pointless extra surface).
+ *   - Direct DDB writes from the container bypass AppSync's
+ *     subscription publisher, which is what the testing portal's
+ *     `observeQuery` watches — the portal would silently miss the
+ *     final state and stay stuck on `TRANSCRIBING`.
+ *
+ * Failure of this Lambda itself: mark the Recording `PARSE_FAILED`
+ * before rethrowing so SQS redrives. Whisper-side failures land as
+ * `TRANSCRIBE_FAILED` regardless of how the linguistic step itself
+ * fares — they're recorded the moment the failure message is
+ * consumed, before any classifier runs.
  *
  * v1 ships **rule-based parsing only** — the LinguisticConfig /
  * LinguisticRule / LinguisticPromptTemplate models plus Bedrock
@@ -36,11 +51,21 @@ type MessageType =
   | 'DISREGARDED'
   | 'OTHER';
 
-interface LinguisticQueueMessage {
+interface TranscriptQueueMessage {
+  kind: 'transcript';
   recordingId: string;
   transcript: string;
   enqueuedAt: string;
 }
+
+interface TranscribeFailureQueueMessage {
+  kind: 'transcribe-failure';
+  recordingId: string;
+  reason: string;
+  enqueuedAt: string;
+}
+
+type LinguisticQueueMessage = TranscriptQueueMessage | TranscribeFailureQueueMessage;
 
 interface ClassifyResult {
   type: MessageType;
@@ -65,6 +90,7 @@ export interface LinguisticDataClient {
       update: (input: {
         id: string;
         messageId?: string | null;
+        transcript?: string | null;
         transcriptionStatus?: string;
         transcriptionStatusUpdatedAt?: string;
         transcriptionFailed?: boolean;
@@ -144,19 +170,46 @@ export function classify(transcript: string): ClassifyResult {
   return { type: 'OTHER', confidence: 0.3, rule: 'fallback' };
 }
 
+interface RawLinguisticMessage {
+  kind?: 'transcript' | 'transcribe-failure';
+  recordingId?: string;
+  transcript?: string;
+  reason?: string;
+  enqueuedAt?: string;
+}
+
 export function parseMessage(body: string): LinguisticQueueMessage {
-  const parsed = JSON.parse(body) as Partial<LinguisticQueueMessage>;
-  if (!parsed.recordingId || typeof parsed.transcript !== 'string') {
-    throw new Error(`linguistic: SQS body missing required fields: ${JSON.stringify(parsed)}`);
+  const parsed = JSON.parse(body) as RawLinguisticMessage;
+  if (!parsed.recordingId) {
+    throw new Error(`linguistic: SQS body missing recordingId: ${JSON.stringify(parsed)}`);
+  }
+  if (parsed.kind === 'transcribe-failure') {
+    if (typeof parsed.reason !== 'string') {
+      throw new Error(
+        `linguistic: transcribe-failure body missing reason: ${JSON.stringify(parsed)}`,
+      );
+    }
+    return {
+      kind: 'transcribe-failure',
+      recordingId: parsed.recordingId,
+      reason: parsed.reason,
+      enqueuedAt: parsed.enqueuedAt ?? nowDate().toISOString(),
+    };
+  }
+  // Treat anything else (including legacy messages without `kind`)
+  // as a transcript message for back-compat.
+  if (typeof parsed.transcript !== 'string') {
+    throw new Error(`linguistic: transcript body missing transcript: ${JSON.stringify(parsed)}`);
   }
   return {
+    kind: 'transcript',
     recordingId: parsed.recordingId,
     transcript: parsed.transcript,
     enqueuedAt: parsed.enqueuedAt ?? nowDate().toISOString(),
   };
 }
 
-async function processOne(msg: LinguisticQueueMessage): Promise<void> {
+async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   const client = await dataClient();
   const result = classify(msg.transcript);
   const messageId = uuid();
@@ -181,9 +234,13 @@ async function processOne(msg: LinguisticQueueMessage): Promise<void> {
   }
   const newMessageId = created.data?.id ?? messageId;
 
+  // Single Recording.update writes transcript + advances state to
+  // PUBLISHED in one round-trip; intermediate PARSING state is
+  // collapsed since linguistic finishes the work synchronously.
   const updated = await client.models.Recording.update({
     id: msg.recordingId,
     messageId: newMessageId,
+    transcript: msg.transcript,
     transcriptionStatus: 'PUBLISHED',
     transcriptionStatusUpdatedAt: ts,
   });
@@ -199,6 +256,29 @@ async function processOne(msg: LinguisticQueueMessage): Promise<void> {
     type: result.type,
     confidence: result.confidence,
     rule: result.rule,
+  });
+}
+
+async function processTranscribeFailure(msg: TranscribeFailureQueueMessage): Promise<void> {
+  const client = await dataClient();
+  const ts = nowDate().toISOString();
+  const updated = await client.models.Recording.update({
+    id: msg.recordingId,
+    transcriptionStatus: 'TRANSCRIBE_FAILED',
+    transcriptionFailed: true,
+    failedReason: msg.reason.slice(0, 1024),
+    transcriptionStatusUpdatedAt: ts,
+  });
+  if (updated.errors) {
+    throw new Error(
+      `linguistic: Recording.update (TRANSCRIBE_FAILED) returned errors: ${JSON.stringify(
+        updated.errors,
+      )}`,
+    );
+  }
+  console.info('linguistic: marked Recording TRANSCRIBE_FAILED', {
+    recordingId: msg.recordingId,
+    reasonLen: msg.reason.length,
   });
 }
 
@@ -236,14 +316,26 @@ export const handler: SQSHandler = async (event: SQSEvent, _context, _callback) 
       continue;
     }
     try {
-      await processOne(msg);
+      if (msg.kind === 'transcribe-failure') {
+        await processTranscribeFailure(msg);
+      } else {
+        await processTranscript(msg);
+      }
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       console.error('linguistic: failed', {
         recordingId: msg.recordingId,
+        kind: msg.kind,
         err: reason,
       });
-      await markFailed(msg.recordingId, reason);
+      // Only mark PARSE_FAILED on transcript-path failures. Failures
+      // while writing TRANSCRIBE_FAILED (rare; AppSync outage etc.)
+      // don't overwrite the row — let SQS redrive surface the
+      // upstream Whisper failure rather than mask it with our own
+      // PARSE_FAILED.
+      if (msg.kind === 'transcript') {
+        await markFailed(msg.recordingId, reason);
+      }
       throw err;
     }
   }
