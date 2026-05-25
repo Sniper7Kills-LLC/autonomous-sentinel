@@ -44,6 +44,17 @@ describe('Whisper image build-identity wiring', () => {
     expect(dockerfile).toContain('-DBUILD_SHARED_LIBS=OFF');
   });
 
+  it('Dockerfile installs libgomp in the runtime stage so OpenMP-linked whisper binary loads (#448)', () => {
+    const dockerfile = read(join(HERE, 'Dockerfile'));
+    // Even after -DBUILD_SHARED_LIBS=OFF the binary dynamically
+    // links libgomp.so.1 (GNU OpenMP runtime) because whisper.cpp
+    // builds with -fopenmp. The Lambda nodejs:22 base doesn't ship
+    // libgomp; without this install the CLI fails at exec with
+    // `cannot open shared object file: libgomp.so.1`
+    // (observed on Recording fc63246f at 2026-05-25 00:04 UTC).
+    expect(dockerfile).toMatch(/dnf\s+-y\s+install[^\n]*\blibgomp\b/);
+  });
+
   it('handler.mjs reads GIT_SHA + BUILD_ID from process.env on init', () => {
     const handler = read(join(HERE, 'handler.mjs'));
     expect(handler).toContain('process.env.GIT_SHA');
