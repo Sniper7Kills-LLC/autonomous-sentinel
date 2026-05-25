@@ -58,6 +58,13 @@ export class WhisperError extends Error {
  * @returns {string[]}
  */
 export function buildArgs(opts) {
+  // whisper.cpp argv: `-m model -f input -l lang -t threads -oj -of prefix`.
+  //
+  // Note (#450): do NOT add boolean flags with a literal `'false'`
+  // / `'true'` follow-up value. whisper.cpp's boolean options
+  // (e.g. `--print-progress`) are presence flags — a trailing
+  // `'false'` is parsed as a positional input file path and the
+  // run fails with `error: input file not found 'false'`.
   return [
     '-m',
     opts.modelPath,
@@ -70,8 +77,6 @@ export function buildArgs(opts) {
     '-oj',
     '-of',
     opts.outputPrefix,
-    '--print-progress',
-    'false',
   ];
 }
 
