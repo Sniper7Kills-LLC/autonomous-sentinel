@@ -58,7 +58,14 @@ export class WhisperError extends Error {
  * @returns {string[]}
  */
 export function buildArgs(opts) {
-  // whisper.cpp argv: `-m model -f input -l lang -t threads -oj -of prefix`.
+  // whisper.cpp argv: `-ng -m model -f input -l lang -t threads -oj -of prefix`.
+  //
+  // `-ng` (#455): disable GPU backend. Lambda runtime has no GPU.
+  // whisper.cpp v1.8.x defaults to `use_gpu=1` which probes Vulkan/
+  // CUDA/Metal during init; on a CPU-only Lambda this segfaults
+  // immediately after model load with `code: null` (signal-killed)
+  // and no error message — just silent death. CPU is the only
+  // backend available anyway.
   //
   // Note (#450): do NOT add boolean flags with a literal `'false'`
   // / `'true'` follow-up value. whisper.cpp's boolean options
@@ -66,6 +73,7 @@ export function buildArgs(opts) {
   // `'false'` is parsed as a positional input file path and the
   // run fails with `error: input file not found 'false'`.
   return [
+    '-ng',
     '-m',
     opts.modelPath,
     '-f',

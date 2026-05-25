@@ -43,6 +43,7 @@ describe('buildArgs', () => {
         modelPath: '/opt/models/medium.en.bin',
       }),
     ).toEqual([
+      '-ng',
       '-m',
       '/opt/models/medium.en.bin',
       '-f',
@@ -55,6 +56,21 @@ describe('buildArgs', () => {
       '-of',
       '/tmp/out',
     ]);
+  });
+
+  it('always emits -ng so whisper.cpp does not probe a non-existent GPU on Lambda (#455)', () => {
+    const args = buildArgs({
+      inputPath: '/tmp/in.opus',
+      outputPrefix: '/tmp/out',
+      language: 'en',
+      threads: 4,
+      modelPath: '/opt/models/medium.en.bin',
+    });
+    // Without -ng the v1.8.x default `use_gpu=1` triggers GPU
+    // backend init (Vulkan / CUDA / Metal) which segfaults on the
+    // CPU-only Lambda runtime — process dies with exit code null
+    // (signal kill) right after model load.
+    expect(args).toContain('-ng');
   });
 
   it('never emits bare "true" / "false" tokens — whisper.cpp would read them as positional input paths (#450)', () => {
