@@ -108,24 +108,22 @@ function extensionOf(key) {
 }
 
 async function publishFailure(recordingId, reason) {
-  try {
-    await sqs.send(
-      new SendMessageCommand({
-        QueueUrl: LINGUISTIC_QUEUE_URL,
-        MessageBody: JSON.stringify({
-          kind: 'transcribe-failure',
-          recordingId,
-          reason: reason.slice(0, 1024),
-          enqueuedAt: new Date().toISOString(),
-        }),
+  // Caller wraps in its own try/catch so the original Whisper error
+  // is preserved as the throw value even if this publish itself
+  // fails. We don't swallow here — silently dropping a failure
+  // publish would leave the Recording stuck in TRANSCRIBING limbo
+  // until SQS retries time out (#453 self-review).
+  await sqs.send(
+    new SendMessageCommand({
+      QueueUrl: LINGUISTIC_QUEUE_URL,
+      MessageBody: JSON.stringify({
+        kind: 'transcribe-failure',
+        recordingId,
+        reason: reason.slice(0, 1024),
+        enqueuedAt: new Date().toISOString(),
       }),
-    );
-  } catch (publishErr) {
-    console.error('whisper-handler: failed to publish failure message', {
-      recordingId,
-      err: String(publishErr),
-    });
-  }
+    }),
+  );
 }
 
 async function processOne(body) {
@@ -210,8 +208,18 @@ async function processOne(body) {
           : String(err);
     // Route the failure through the linguistic queue so the linguistic
     // Lambda can mark TRANSCRIBE_FAILED via Amplify Data and the portal
-    // subscription fires (#452).
-    await publishFailure(recordingId, reason);
+    // subscription fires (#452). Wrap so a publish-side failure logs
+    // without shadowing the original Whisper error; SQS still redrives
+    // the Whisper message either way.
+    try {
+      await publishFailure(recordingId, reason);
+    } catch (publishErr) {
+      console.error('whisper-handler: failure-publish also failed; SQS will redrive', {
+        recordingId,
+        originalReason: reason,
+        publishErr: publishErr instanceof Error ? publishErr.message : String(publishErr),
+      });
+    }
     throw err;
   } finally {
     await Promise.allSettled([
