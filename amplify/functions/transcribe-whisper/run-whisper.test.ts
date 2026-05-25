@@ -54,9 +54,23 @@ describe('buildArgs', () => {
       '-oj',
       '-of',
       '/tmp/out',
-      '--print-progress',
-      'false',
     ]);
+  });
+
+  it('never emits bare "true" / "false" tokens — whisper.cpp would read them as positional input paths (#450)', () => {
+    const args = buildArgs({
+      inputPath: '/tmp/in.opus',
+      outputPrefix: '/tmp/out',
+      language: 'en',
+      threads: 4,
+      modelPath: '/opt/models/medium.en.bin',
+    });
+    // whisper.cpp's boolean options (e.g. `--print-progress`) are
+    // presence flags — a trailing `'false'` is parsed as a
+    // positional input file path. Catch any future regression
+    // that pairs a flag with a literal bool value.
+    expect(args).not.toContain('false');
+    expect(args).not.toContain('true');
   });
 });
 
