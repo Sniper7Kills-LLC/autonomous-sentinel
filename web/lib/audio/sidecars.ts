@@ -142,8 +142,16 @@ function averageChannels(channels: number[][]): number[] {
 /**
  * Active-word lookup — returns the index into `words` whose
  * `[start, end)` contains the playhead. -1 when no match (e.g.
- * pre-roll silence or gap between words). Linear scan; words
- * lists are short enough that an interval tree is overkill at v1.
+ * pre-roll silence or gap between words).
+ *
+ * Boundary semantics: half-open. At the exact instant a word ends
+ * (`time === w.end`), the next word's `start` (if any) is matched
+ * instead — keeps adjacent-word transitions clean. The trailing edge
+ * of the very last word produces -1 (silence after the broadcast),
+ * which `<TranscriptPane>` renders as "no word highlighted".
+ *
+ * Linear scan; word lists are short enough that an interval tree
+ * is overkill at v1.
  */
 export function findActiveWord(words: WordTimestamp[], time: number): number {
   for (let i = 0; i < words.length; i++) {

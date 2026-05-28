@@ -85,6 +85,11 @@ export function AudioPlayer({
 
   useEffect(() => {
     if (!assets || !waveformRef.current) return;
+    // Defensive destroy in case a previous wavesurfer instance is
+    // still attached — React.StrictMode double-invocation or a
+    // rapid `assets` flip could otherwise leak one of the two
+    // wavesurfer objects.
+    wavesurferRef.current?.destroy();
     const ws = WaveSurfer.create({
       container: waveformRef.current,
       url: assets.audioUrl,
@@ -104,20 +109,34 @@ export function AudioPlayer({
       backend: 'MediaElement',
     });
     wavesurferRef.current = ws;
+    // Mount guard — every handler short-circuits once the cleanup has
+    // nulled the ref. Stops late `ready` / `timeupdate` events
+    // (and the React-18 unmounted-setState warning) from firing
+    // against the destroyed instance.
+    const isLive = () => wavesurferRef.current === ws;
     ws.on('ready', () => {
+      if (!isLive()) return;
       setReady(true);
       setDuration(ws.getDuration());
     });
-    ws.on('play', () => setPlaying(true));
-    ws.on('pause', () => setPlaying(false));
-    ws.on('finish', () => setPlaying(false));
-    ws.on('timeupdate', (t) => setCurrentTime(t));
+    ws.on('play', () => {
+      if (isLive()) setPlaying(true);
+    });
+    ws.on('pause', () => {
+      if (isLive()) setPlaying(false);
+    });
+    ws.on('finish', () => {
+      if (isLive()) setPlaying(false);
+    });
+    ws.on('timeupdate', (t) => {
+      if (isLive()) setCurrentTime(t);
+    });
     ws.on('error', (err: unknown) => {
-      setError(err instanceof Error ? err.message : String(err));
+      if (isLive()) setError(err instanceof Error ? err.message : String(err));
     });
     return () => {
-      ws.destroy();
       wavesurferRef.current = null;
+      ws.destroy();
     };
   }, [assets]);
 
@@ -170,14 +189,32 @@ export function AudioPlayer({
         </span>
         <span className={styles.spacer} />
         {assets && (
-          <a
-            href={assets.audioUrl}
-            download={`${recordingId}.opus`}
+          <button
+            type="button"
+            // Resolve a fresh signed URL on each click instead of
+            // baking the initial `assets.audioUrl` into the href —
+            // the initial URL TTL can lapse on a long-lived page
+            // before a user clicks Download.
+            onClick={() => {
+              void (async () => {
+                try {
+                  const fresh = await getRecordingAssetUrl(webCanonicalKey);
+                  const a = document.createElement('a');
+                  a.href = fresh;
+                  a.download = `${recordingId}.opus`;
+                  a.rel = 'noopener';
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : String(err));
+                }
+              })();
+            }}
             className={styles.dlLink}
-            rel="noopener"
           >
             Download .opus
-          </a>
+          </button>
         )}
       </div>
       <TranscriptPane
@@ -204,7 +241,9 @@ function TranscriptPane({ words, activeIdx, onJump, fallbackText }: TranscriptPa
         {words.map((w, i) => (
           <button
             type="button"
-            key={`${w.start}-${i}`}
+            // Index-based key — start times can collide on malformed
+            // pipelines without breaking the render.
+            key={`word-${i}`}
             className={`${styles.word} ${styles.wordHover} ${
               i === activeIdx ? styles.wordActive : ''
             }`}

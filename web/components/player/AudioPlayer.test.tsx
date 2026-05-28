@@ -74,7 +74,7 @@ describe('AudioPlayer', () => {
     // `assets` settle on a separate frame from the wavesurfer
     // `useEffect`, so wait for the `on('ready', ...)` registration
     // to land before firing synthetic events.
-    await screen.findByRole('link', { name: /download \.opus/i });
+    await screen.findByRole('button', { name: /download \.opus/i });
     await waitFor(() => {
       expect(wsApi.on).toHaveBeenCalledWith('ready', expect.any(Function));
     });
@@ -160,6 +160,15 @@ describe('AudioPlayer', () => {
       />,
     );
     expect(await screen.findByLabelText('Transcript (unsynchronised)')).toBeInTheDocument();
+  });
+
+  it('destroys the wavesurfer instance on unmount', async () => {
+    const { unmount } = render(
+      <AudioPlayer recordingId="rec-1" webCanonicalKey="recordings/web/rec-1.opus" />,
+    );
+    await waitForWavesurferMount();
+    unmount();
+    expect(wsApi.destroy).toHaveBeenCalled();
   });
 
   it('renders an error banner when the URL fetch rejects', async () => {
