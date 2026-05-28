@@ -20,7 +20,30 @@ const jbMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: 'Autonomous Sentinel',
   description: 'EAM Watch — Emergency Action Message broadcast catalog.',
+  manifest: '/manifest.webmanifest',
+  applicationName: 'Autonomous Sentinel',
+  appleWebApp: {
+    capable: true,
+    title: 'Autonomous Sentinel',
+    statusBarStyle: 'black-translucent',
+  },
+  themeColor: '#0b0f14',
 };
+
+/**
+ * Inline script that registers the offline-shell service worker once
+ * the window load event fires. Kept as a string so it can be injected
+ * via `dangerouslySetInnerHTML` — registering inside a client
+ * component would defer registration until after hydration and miss
+ * a few seconds of first-visit caching opportunity.
+ */
+const REGISTER_SW = `
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('/sw.js').catch(function () { /* no-op */ });
+  });
+}
+`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -29,6 +52,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script
           // No-FOUC: set data-theme from localStorage before first paint.
           dangerouslySetInnerHTML={{ __html: NO_FLASH_SCRIPT }}
+        />
+        <script
+          // Register the offline-shell service worker post-load.
+          dangerouslySetInnerHTML={{ __html: REGISTER_SW }}
         />
       </head>
       <body>

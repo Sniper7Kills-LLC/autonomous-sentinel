@@ -1,0 +1,76 @@
+.bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  margin-bottom: 1rem;
+}
+
+.actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.chips {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.6rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: 999px;
+  font-family: var(--font-jb-mono);
+  font-size: 0.75rem;
+  color: var(--text-1);
+}
+
+.chipKey {
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.chipClose {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-2);
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.chipClose:hover,
+.chipClose:focus-visible {
+  color: var(--danger);
+}
+
+.clearAll {
+  background: none;
+  border: none;
+  color: var(--text-2);
+  font-family: var(--font-jb-mono);
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 0.25rem 0.4rem;
+}
+
+.clearAll:hover,
+.clearAll:focus-visible {
+  color: var(--text-1);
+  text-decoration: underline;
+}

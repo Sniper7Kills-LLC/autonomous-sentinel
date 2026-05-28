@@ -1,0 +1,53 @@
+.form {
+  display: grid;
+  gap: 1rem;
+  max-width: 36rem;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  padding: 1.5rem;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+@media (max-width: 540px) {
+  .row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.successBox {
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--color-info);
+  background: color-mix(in srgb, var(--color-info) 10%, transparent);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-jb-mono);
+  font-size: 0.85rem;
+  color: var(--text-1);
+}
+
+.queuedBox {
+  border-color: var(--color-warn);
+  background: color-mix(in srgb, var(--color-warn) 12%, transparent);
+}
+
+.errorBox {
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-jb-mono);
+  font-size: 0.85rem;
+  color: var(--text-1);
+}

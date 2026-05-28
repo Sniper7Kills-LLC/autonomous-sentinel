@@ -32,6 +32,23 @@ export default [
     },
   },
   {
+    // Service workers live in `public/` and run under the `ServiceWorkerGlobalScope`
+    // — give the parser the matching globals so `self`, `caches`, etc.
+    // resolve without polluting the rest of the workspace's env.
+    files: ['public/sw.js'],
+    languageOptions: {
+      globals: {
+        self: 'readonly',
+        caches: 'readonly',
+        clients: 'readonly',
+        fetch: 'readonly',
+        Request: 'readonly',
+        Response: 'readonly',
+        URL: 'readonly',
+      },
+    },
+  },
+  {
     // The Amplify-Gen-2-generated `amplify_outputs.json` resolves to
     // different inferred types depending on which version of the
     // Amplify Gen 2 toolchain TypeScript reads from disk. Some envs

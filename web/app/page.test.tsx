@@ -1,44 +1,32 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import HomePage from './page';
+import { render, screen, waitFor } from '@testing-library/react';
+import LandingPage from './page';
 
-// `<Authenticator>` from @aws-amplify/ui-react reaches for Amplify
-// Hub + Auth on mount, which we don't want to spin up in unit tests.
-// Replace it with a passthrough that renders children with a stub
-// `user` / `signOut`, exercising the portal UI underneath.
-vi.mock('@aws-amplify/ui-react', () => ({
-  Authenticator: ({
-    children,
-  }: {
-    children: (ctx: { signOut: () => void; user: unknown }) => React.ReactNode;
-  }) =>
-    children({
-      signOut: () => {},
-      user: { username: 'test-user', signInDetails: { loginId: 'test@example.com' } },
-    }),
-}));
-
-// Skip the Amplify SDK calls during render — the AmplifyConfigure
-// component is unit-of-trust here; it's covered separately.
-vi.mock('@/components/auth/AmplifyConfigure', () => ({
-  AmplifyConfigure: () => null,
-}));
-
-// UploadFlow imports `aws-amplify/storage` + `aws-amplify/data` which
-// fail to initialise without a configured Amplify. Stub the whole
-// component out for the page-level smoke test.
-vi.mock('@/components/portal/UploadFlow', () => ({
-  UploadFlow: () => <div data-testid="upload-flow" />,
-}));
-
-// ThemeToggle reads context from ThemeProvider; the page-level smoke
-// test renders HomePage in isolation, not the root layout. Stub it.
+vi.mock('@/components/auth/AmplifyConfigure', () => ({ AmplifyConfigure: () => null }));
 vi.mock('@/components/theme/ThemeToggle', () => ({
   ThemeToggle: () => <div data-testid="theme-toggle" />,
 }));
+vi.mock('@/lib/messages/query', () => ({
+  listMessages: vi.fn().mockResolvedValue({ items: [], nextToken: null }),
+}));
+vi.mock('next/navigation', async (importActual) => {
+  const actual = await importActual<Record<string, unknown>>();
+  return {
+    ...actual,
+    useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
+    useSearchParams: () => new URLSearchParams(),
+    usePathname: () => '/',
+  };
+});
 
-describe('HomePage (testing portal)', () => {
+const getCurrentUserMock = vi.fn<() => Promise<unknown>>();
+vi.mock('aws-amplify/auth', () => ({
+  getCurrentUser: () => getCurrentUserMock(),
+}));
+
+describe('LandingPage', () => {
   beforeEach(() => {
+    getCurrentUserMock.mockReset();
     vi.stubGlobal(
       'matchMedia',
       vi.fn().mockReturnValue({
@@ -50,28 +38,30 @@ describe('HomePage (testing portal)', () => {
       }),
     );
   });
+  afterEach(() => vi.unstubAllGlobals());
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it('renders the project codename in the brand strip', () => {
-    render(<HomePage />);
-    expect(screen.getAllByText(/AUTONOMOUS\s*SENTINEL/i).length).toBeGreaterThan(0);
-  });
-
-  it('frames itself as the pre-launch testing portal', () => {
-    render(<HomePage />);
-    expect(screen.getByText(/TESTING PORTAL/i)).toBeInTheDocument();
+  it('renders the hero and CTAs for guests', async () => {
+    getCurrentUserMock.mockRejectedValue(new Error('not signed in'));
+    render(<LandingPage />);
     expect(
-      screen.getByRole('heading', {
-        name: /drop an audio capture/i,
-      }),
+      screen.getByRole('heading', { name: /catalogue the emergency action message channel/i }),
     ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /browse the archive/i })).toBeInTheDocument();
+    // Personalized panel must NOT appear for guests.
+    await waitFor(() => {
+      expect(screen.queryByLabelText('Signed-in actions')).toBeNull();
+    });
   });
 
-  it('mounts the upload flow when authenticated', () => {
-    render(<HomePage />);
-    expect(screen.getByTestId('upload-flow')).toBeInTheDocument();
+  it('shows personalized panel when authenticated', async () => {
+    getCurrentUserMock.mockResolvedValue({
+      username: 'member',
+      signInDetails: { loginId: 'member@example.com' },
+    });
+    render(<LandingPage />);
+    await waitFor(() => {
+      expect(screen.getByLabelText('Signed-in actions')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/member@example\.com/i)).toBeInTheDocument();
   });
 });

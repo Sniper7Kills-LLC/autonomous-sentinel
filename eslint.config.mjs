@@ -30,6 +30,24 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {
+    // Service workers live in `**/public/sw.js` and run under the
+    // `ServiceWorkerGlobalScope`. Match the absolute path lint-staged
+    // passes so the SW globals resolve even when eslint is invoked
+    // from the monorepo root instead of the workspace dir.
+    files: ['**/public/sw.js'],
+    languageOptions: {
+      globals: {
+        self: 'readonly',
+        caches: 'readonly',
+        clients: 'readonly',
+        fetch: 'readonly',
+        Request: 'readonly',
+        Response: 'readonly',
+        URL: 'readonly',
+      },
+    },
+  },
+  {
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
