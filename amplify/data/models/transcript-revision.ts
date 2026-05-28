@@ -49,12 +49,11 @@ export const TranscriptRevision = a
     // `createTranscriptRevision` live would let a client supply
     // proposedBy + bypass the gate.
     allow.authenticated().to(['read']),
-    // #430 Cognito-group sweep: authenticated users in a Cognito
-    // group route to a per-group IAM role that does NOT inherit the
-    // generic `authenticated` grant. Enumerate every named group
-    // with matching actions so the read works regardless of which
-    // group placed the caller.
-    allow.groups(['admin', 'moderator', 'member']).to(['read']),
+    // #430 Cognito-group sweep — only `member` here; admin + moderator
+    // already covered by the elevated rule below (Amplify @auth
+    // rejects the same group in two `allow.groups(...)` rules per
+    // model).
+    allow.groups(['member']).to(['read']),
     allow.groups(['moderator', 'admin']).to(['read', 'update']),
   ]);
 

@@ -76,10 +76,11 @@ export const Message = a
   .authorization((allow) => [
     allow.guest().to(['read']),
     allow.authenticated().to(['read', 'create']),
-    // #430 Cognito-group sweep: authenticated users in a Cognito
-    // group route to a per-group IAM role that does NOT inherit the
-    // generic `authenticated` grant.
-    allow.groups(['admin', 'moderator', 'member']).to(['read', 'create']),
+    // #430 Cognito-group sweep — only `member` here; admin + moderator
+    // already covered by the elevated rule below (Amplify @auth
+    // rejects the same group in two `allow.groups(...)` rules per
+    // model).
+    allow.groups(['member']).to(['read', 'create']),
     allow.groups(['moderator', 'admin']).to(['read', 'create', 'update', 'delete']),
   ]);
 
