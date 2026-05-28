@@ -42,6 +42,7 @@ vi.mock('@/lib/messages/recordings', () => ({
       broadcastedAt: '2026-05-27T12:00:00Z',
       transcript: 'PT3 14 AB',
       transcriptionStatus: 'PUBLISHED',
+      transcriptionFailed: false,
       durationMs: 4200,
       sdrId: null,
       automated: true,
@@ -54,6 +55,14 @@ vi.mock('@/lib/messages/recordings', () => ({
 
 vi.mock('@/components/player/AudioPlayer', () => ({
   AudioPlayer: () => <div data-testid="audio-player" />,
+}));
+
+vi.mock('@/components/validation/RevisionPanel', () => ({
+  RevisionPanel: () => <div data-testid="revision-panel" />,
+}));
+
+vi.mock('@/components/account/SessionGreeting', () => ({
+  useSessionState: () => ({ loading: false, signedIn: false, username: null }),
 }));
 
 describe('MessageDetailRoute', () => {
