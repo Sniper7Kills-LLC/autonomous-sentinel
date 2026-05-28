@@ -89,7 +89,8 @@ export const getMyNotificationPreference = a
   .query()
   .arguments({ userId: a.id() })
   .returns(a.ref('NotificationPreferenceView'))
-  .authorization((allow) => [allow.authenticated()])
+  // #430: authenticated + group-paired.
+  .authorization((allow) => [allow.authenticated(), allow.groups(['admin', 'moderator', 'member'])])
   .handler(a.handler.function(notificationPreferenceMutations));
 
 /**
@@ -110,5 +111,6 @@ export const setNotificationPreference = a
     weeklyDigest: a.boolean(),
   })
   .returns(a.ref('NotificationPreferenceView'))
-  .authorization((allow) => [allow.authenticated()])
+  // #430: authenticated + group-paired.
+  .authorization((allow) => [allow.authenticated(), allow.groups(['admin', 'moderator', 'member'])])
   .handler(a.handler.function(notificationPreferenceMutations));

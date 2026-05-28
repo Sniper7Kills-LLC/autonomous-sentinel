@@ -149,11 +149,16 @@ describe('AbuseReport model — authorization (#37)', () => {
   });
 
   it('grants moderators + admins read + update on the queue', () => {
+    // The #430 sweep adds a `['admin','moderator','member'].to(['create'])`
+    // rule alongside the existing mod+admin write rule. Filter
+    // explicitly to the rule that does NOT include `member` so we land
+    // on the elevated read+update grant.
     const mod = rules.find(
       (r) =>
         r.strategy === 'groups' &&
         (r.groups ?? []).includes('moderator') &&
-        (r.groups ?? []).includes('admin'),
+        (r.groups ?? []).includes('admin') &&
+        !(r.groups ?? []).includes('member'),
     );
     expect(mod).toBeDefined();
     expect(mod?.operations).toEqual(expect.arrayContaining(['read', 'update']));

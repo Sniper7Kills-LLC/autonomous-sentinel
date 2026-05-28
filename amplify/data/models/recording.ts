@@ -129,6 +129,10 @@ export const Recording = a
     // generated `createRecording` mutation would let a mod account
     // bypass uniqueness enforcement.
     allow.authenticated().to(['read']),
+    // #430 Cognito-group sweep: authenticated users in a Cognito
+    // group route to a per-group IAM role that does NOT inherit the
+    // generic `authenticated` grant.
+    allow.groups(['admin', 'moderator', 'member']).to(['read']),
     allow.groups(['moderator', 'admin']).to(['read', 'update', 'delete']),
   ]);
 

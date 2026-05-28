@@ -83,13 +83,23 @@ describe('listSdrPublic query (#286)', () => {
     expect(ret.data?.array).toBe(true);
   });
 
-  it('is callable by guests + authenticated users (no group gate)', () => {
+  it('is callable by guests + authenticated users (no role gate beyond Cognito-group sweep)', () => {
     const auth = listOp.data.authorization;
     expect(auth.length).toBeGreaterThanOrEqual(2);
     const rules = auth.map((a) => symbolData<AuthData>(a as object));
     expect(rules.some((r) => r.strategy === 'public')).toBe(true);
     expect(rules.some((r) => r.strategy === 'private')).toBe(true);
-    expect(rules.some((r) => r.strategy === 'groups')).toBe(false);
+    // Per #430: every named Cognito group is enumerated alongside the
+    // `private` rule so signed-in users in a group reach the query
+    // through their per-group IAM role.
+    const sweep = rules.find(
+      (r) =>
+        r.strategy === 'groups' &&
+        (r.groups ?? []).includes('admin') &&
+        (r.groups ?? []).includes('moderator') &&
+        (r.groups ?? []).includes('member'),
+    );
+    expect(sweep).toBeDefined();
   });
 
   it('wires the listSdrPublicLambda as the handler', () => {

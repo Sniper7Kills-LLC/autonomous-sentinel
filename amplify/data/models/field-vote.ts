@@ -80,6 +80,10 @@ export const FieldVote = a
     // accept an attacker-supplied `voterId` argument and defeat that
     // invariant.
     allow.authenticated().to(['read']),
+    // #430 Cognito-group sweep: authenticated users in a Cognito
+    // group route to a per-group IAM role that does NOT inherit the
+    // generic `authenticated` grant.
+    allow.groups(['admin', 'moderator', 'member']).to(['read']),
     // No owner write surface (#312). `castFieldVote` is the sole
     // authoritative write path so the resolver can enforce
     // `voterId = ctx.identity.sub` (#259) AND the `weightAtVoteTime`
@@ -131,7 +135,8 @@ export const castFieldVote = a
     value: a.string().required(),
   })
   .returns(a.ref('FieldVote'))
-  .authorization((allow) => allow.authenticated())
+  // #430: authenticated + group-paired.
+  .authorization((allow) => [allow.authenticated(), allow.groups(['admin', 'moderator', 'member'])])
   .handler([
     a.handler.custom({
       dataSource: a.ref('Reputation'),

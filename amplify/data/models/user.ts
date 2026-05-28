@@ -142,7 +142,8 @@ export const selfDelete = a
   .mutation()
   .arguments({})
   .returns(a.ref('User'))
-  .authorization((allow) => allow.authenticated())
+  // #430: authenticated + group-paired.
+  .authorization((allow) => [allow.authenticated(), allow.groups(['admin', 'moderator', 'member'])])
   .handler(a.handler.function(userMutations));
 
 /**
@@ -193,5 +194,11 @@ export const getUserPublic = a
   // couldn't carry `allow.guest()` under the `identityPool` default
   // auth mode — that limitation does not apply to
   // `a.handler.function`, so guest profile browse is restored.
-  .authorization((allow) => [allow.guest(), allow.authenticated()])
+  // #430: pair authenticated with every named group so members /
+  // moderators / admins reach the query through their group IAM role.
+  .authorization((allow) => [
+    allow.guest(),
+    allow.authenticated(),
+    allow.groups(['admin', 'moderator', 'member']),
+  ])
   .handler(a.handler.function(getUserPublicLambda));
