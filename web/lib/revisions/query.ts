@@ -1,6 +1,7 @@
 'use client';
 
 import { getDataClient } from '@/lib/amplifyClient';
+import { resolveAuthMode } from '@/lib/auth/mode';
 
 export type RevisionSource = 'MACHINE' | 'MANUAL' | 'CORRECTION';
 export type RevisionVoteValue = 'UP' | 'DOWN';
@@ -60,9 +61,10 @@ export async function listRevisionsForRecording(recordingId: string): Promise<Di
   const listFn = client.models.TranscriptRevision.list as unknown as (
     input: Record<string, unknown>,
   ) => Promise<RawRevisionList>;
+  const authMode = await resolveAuthMode();
   const raw = await listFn({
     filter: { recordingId: { eq: recordingId } },
-    authMode: 'identityPool',
+    authMode,
   });
   if (raw.errors?.length) {
     throw new Error(raw.errors.map((e) => e.message).join('; '));

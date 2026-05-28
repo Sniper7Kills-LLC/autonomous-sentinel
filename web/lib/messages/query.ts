@@ -1,6 +1,7 @@
 'use client';
 
 import { getDataClient } from '@/lib/amplifyClient';
+import { resolveAuthMode } from '@/lib/auth/mode';
 import {
   filtersToAppSyncFilter,
   type MessageFilters,
@@ -96,7 +97,8 @@ export async function listMessages(opts: ListMessagesOptions = {}): Promise<List
   const listFn = client.models.Message.list as unknown as (
     input: Record<string, unknown>,
   ) => Promise<RawListResult>;
-  const raw = await listFn({ ...args, authMode: 'identityPool' });
+  const authMode = await resolveAuthMode();
+  const raw = await listFn({ ...args, authMode });
   if (raw.errors?.length) {
     throw new Error(raw.errors.map((e) => e.message).join('; '));
   }
@@ -113,7 +115,8 @@ export async function getMessage(id: string): Promise<DisplayMessage | null> {
     input: Record<string, unknown>,
     opts: Record<string, unknown>,
   ) => Promise<RawGetResult>;
-  const raw = await getFn({ id }, { authMode: 'identityPool' });
+  const authMode = await resolveAuthMode();
+  const raw = await getFn({ id }, { authMode });
   if (raw.errors?.length) {
     throw new Error(raw.errors.map((e) => e.message).join('; '));
   }
