@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Badge, MessageTypeBadge } from '@/components/ui/Badge';
 import { AudioPlayer } from '@/components/player/AudioPlayer';
 import { RevisionPanel } from '@/components/validation/RevisionPanel';
+import { FieldVoteAffordance } from '@/components/validation/FieldVoteAffordance';
 import { useSessionState } from '@/components/account/SessionGreeting';
 import { getMessage } from '@/lib/messages/query';
 import { listRecordingsForMessage, type DisplayRecording } from '@/lib/messages/recordings';
@@ -68,6 +69,12 @@ export function MessageDetailView({ messageId }: MessageDetailViewProps) {
       <section className={styles.metaCard} aria-labelledby="msg-title">
         <div className={styles.metaTop}>
           <MessageTypeBadge type={message.type} />
+          <FieldVoteAffordance
+            messageId={message.id}
+            field="TYPE"
+            currentValue={message.type}
+            signedIn={session.signedIn}
+          />
           <span style={{ fontFamily: 'var(--font-jb-mono)', fontSize: '0.85rem' }}>
             {formatTs(message.broadcastTs)}
           </span>
@@ -81,14 +88,34 @@ export function MessageDetailView({ messageId }: MessageDetailViewProps) {
         </div>
         <h2 id="msg-title" className={styles.metaCallsigns}>
           {message.sender && <span className={styles.callsign}>{message.sender}</span>}
+          <FieldVoteAffordance
+            messageId={message.id}
+            field="SENDER"
+            currentValue={message.sender}
+            signedIn={session.signedIn}
+          />
           {message.sender && message.receiver && (
             <span className={styles.arrow} aria-hidden>
               →
             </span>
           )}
           {message.receiver && <span className={styles.callsign}>{message.receiver}</span>}
+          <FieldVoteAffordance
+            messageId={message.id}
+            field="RECEIVER"
+            currentValue={message.receiver}
+            signedIn={session.signedIn}
+          />
         </h2>
         {message.body && <pre className={styles.body}>{message.body}</pre>}
+        <div>
+          <FieldVoteAffordance
+            messageId={message.id}
+            field="BODY"
+            currentValue={message.body}
+            signedIn={session.signedIn}
+          />
+        </div>
       </section>
 
       <section aria-labelledby="recs-title">

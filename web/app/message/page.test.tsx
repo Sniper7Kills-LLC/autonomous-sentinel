@@ -61,6 +61,10 @@ vi.mock('@/components/validation/RevisionPanel', () => ({
   RevisionPanel: () => <div data-testid="revision-panel" />,
 }));
 
+vi.mock('@/components/validation/FieldVoteAffordance', () => ({
+  FieldVoteAffordance: () => <div data-testid="field-vote-affordance" />,
+}));
+
 vi.mock('@/components/account/SessionGreeting', () => ({
   useSessionState: () => ({ loading: false, signedIn: false, username: null }),
 }));
