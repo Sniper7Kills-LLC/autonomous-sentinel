@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { Badge, MessageTypeBadge } from '@/components/ui/Badge';
 import { AudioPlayer } from '@/components/player/AudioPlayer';
+import { RevisionPanel } from '@/components/validation/RevisionPanel';
+import { useSessionState } from '@/components/account/SessionGreeting';
 import { getMessage } from '@/lib/messages/query';
 import { listRecordingsForMessage, type DisplayRecording } from '@/lib/messages/recordings';
 import type { DisplayMessage } from '@/lib/messages/types';
@@ -17,6 +19,7 @@ export function MessageDetailView({ messageId }: MessageDetailViewProps) {
   const [recordings, setRecordings] = useState<DisplayRecording[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const session = useSessionState();
 
   useEffect(() => {
     let cancelled = false;
@@ -140,6 +143,11 @@ export function MessageDetailView({ messageId }: MessageDetailViewProps) {
                     Audio still processing — check back after the pipeline finishes.
                   </div>
                 )}
+                <RevisionPanel
+                  recordingId={r.id}
+                  transcriptionFailed={r.transcriptionFailed}
+                  signedIn={session.signedIn}
+                />
               </article>
             ))}
           </div>

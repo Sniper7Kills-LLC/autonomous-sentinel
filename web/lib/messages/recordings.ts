@@ -9,6 +9,7 @@ export type DisplayRecording = {
   broadcastedAt: string | null;
   transcript: string | null;
   transcriptionStatus: string | null;
+  transcriptionFailed: boolean;
   durationMs: number | null;
   sdrId: string | null;
   automated: boolean;
@@ -24,6 +25,7 @@ type RawRecording = {
   broadcastedAt?: string | null;
   transcript?: string | null;
   transcriptionStatus?: string | null;
+  transcriptionFailed?: boolean | null;
   durationMs?: number | null;
   sdrId?: string | null;
   automated?: boolean | null;
@@ -40,6 +42,7 @@ function toDisplay(r: RawRecording): DisplayRecording {
     broadcastedAt: r.broadcastedAt ?? null,
     transcript: r.transcript ?? null,
     transcriptionStatus: r.transcriptionStatus ?? null,
+    transcriptionFailed: Boolean(r.transcriptionFailed),
     durationMs: typeof r.durationMs === 'number' ? r.durationMs : null,
     sdrId: r.sdrId ?? null,
     automated: Boolean(r.automated),
