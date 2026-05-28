@@ -29,9 +29,11 @@ export function MessageCard({ message }: MessageCardProps) {
         {(message.sender || message.receiver) && (
           <div className={styles.callsigns}>
             {message.sender && <span className={styles.callsign}>{message.sender}</span>}
-            <span className={styles.arrow} aria-hidden>
-              →
-            </span>
+            {message.sender && message.receiver && (
+              <span className={styles.arrow} aria-hidden>
+                →
+              </span>
+            )}
             {message.receiver && <span className={styles.callsign}>{message.receiver}</span>}
           </div>
         )}

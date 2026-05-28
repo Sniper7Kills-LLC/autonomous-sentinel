@@ -49,14 +49,15 @@ export function MessagesList({ forcedType, limit, hideLoadMore }: MessagesListPr
           pageSize: PAGE_SIZE,
         });
         setItems((prev) => {
-          const merged = token ? [...prev, ...result.items] : result.items;
-          return limit ? merged.slice(0, limit) : merged;
+          const mergedFull = token ? [...prev, ...result.items] : result.items;
+          const next = limit ? mergedFull.slice(0, limit) : mergedFull;
+          // Decide pagination cap from the same merged length the
+          // list will display — using a closure-captured `items.length`
+          // would compute against the pre-merge snapshot and overshoot
+          // / undershoot the limit on consecutive `Load more` calls.
+          setNextToken(limit && mergedFull.length >= limit ? null : result.nextToken);
+          return next;
         });
-        setNextToken(
-          limit && (token ? items.length + result.items.length : result.items.length) >= limit
-            ? null
-            : result.nextToken,
-        );
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -64,7 +65,7 @@ export function MessagesList({ forcedType, limit, hideLoadMore }: MessagesListPr
         setLoadingMore(false);
       }
     },
-    [filters, limit, items.length],
+    [filters, limit],
   );
 
   useEffect(() => {
