@@ -43,10 +43,10 @@ export const Sdr = a
   ])
   .authorization((allow) => [
     allow.authenticated().to(['read']),
-    // #430 Cognito-group sweep: authenticated users in a Cognito
-    // group route to a per-group IAM role that does NOT inherit the
-    // generic `authenticated` grant.
-    allow.groups(['admin', 'moderator', 'member']).to(['read']),
+    // #430 Cognito-group sweep — admin already covered by the
+    // elevated rule below; Amplify @auth rejects the same group in
+    // two `allow.groups(...)` rules per model.
+    allow.groups(['moderator', 'member']).to(['read']),
     // Owner = the Cognito sub stored in `ownerId`. Explicit binding required
     // because `allow.owner()` defaults to a field literally named `owner`.
     allow.ownerDefinedIn('ownerId').identityClaim('sub').to(['read', 'create', 'update', 'delete']),

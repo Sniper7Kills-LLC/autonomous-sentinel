@@ -47,10 +47,11 @@ export const RevisionVote = a
     // would accept an attacker-supplied `voterId` argument and
     // defeat the snapshot invariant.
     allow.authenticated().to(['read']),
-    // #430 Cognito-group sweep: authenticated users in a Cognito
-    // group route to a per-group IAM role that does NOT inherit the
-    // generic `authenticated` grant.
-    allow.groups(['admin', 'moderator', 'member']).to(['read']),
+    // #430 Cognito-group sweep — only `member` here; admin + moderator
+    // already covered by the elevated rule below (Amplify @auth
+    // rejects the same group in two `allow.groups(...)` rules per
+    // model).
+    allow.groups(['member']).to(['read']),
     // No owner write surface (#312). `castRevisionVote` is the sole
     // authoritative write path so the resolver can enforce
     // `voterId = ctx.identity.sub` (#259) AND the `weightAtVoteTime`

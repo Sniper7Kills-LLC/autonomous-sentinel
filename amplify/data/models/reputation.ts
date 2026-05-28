@@ -31,7 +31,9 @@ export const Reputation = a
     // Weight is public (drives vote-tally display).
     allow.guest().to(['read']),
     allow.authenticated().to(['read']),
-    // #430 Cognito-group sweep.
-    allow.groups(['admin', 'moderator', 'member']).to(['read']),
+    // #430 Cognito-group sweep — admin already covered by the
+    // elevated rule below; Amplify @auth rejects the same group in
+    // two `allow.groups(...)` rules per model.
+    allow.groups(['moderator', 'member']).to(['read']),
     allow.groups(['admin']).to(['read', 'update']),
   ]);
