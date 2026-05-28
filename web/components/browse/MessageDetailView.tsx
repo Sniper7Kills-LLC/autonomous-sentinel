@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Badge, MessageTypeBadge } from '@/components/ui/Badge';
+import { AudioPlayer } from '@/components/player/AudioPlayer';
 import { getMessage } from '@/lib/messages/query';
 import { listRecordingsForMessage, type DisplayRecording } from '@/lib/messages/recordings';
 import type { DisplayMessage } from '@/lib/messages/types';
@@ -126,10 +127,19 @@ export function MessageDetailView({ messageId }: MessageDetailViewProps) {
                     </Badge>
                   )}
                 </div>
-                <div className={styles.playerPlaceholder} aria-label="Audio player placeholder">
-                  Audio player — #88 deferred
-                </div>
-                {r.transcript && <p className={styles.recTranscript}>{r.transcript}</p>}
+                {r.webCanonicalKey ? (
+                  <AudioPlayer
+                    recordingId={r.id}
+                    webCanonicalKey={r.webCanonicalKey}
+                    peaksJsonKey={r.peaksJsonKey}
+                    wordTimestampsKey={r.wordTimestampsKey}
+                    transcript={r.transcript}
+                  />
+                ) : (
+                  <div className={styles.playerPlaceholder} aria-label="Audio not yet ready">
+                    Audio still processing — check back after the pipeline finishes.
+                  </div>
+                )}
               </article>
             ))}
           </div>
