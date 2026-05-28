@@ -126,7 +126,14 @@ describe('Recording model — authenticated create dropped (#284)', () => {
     const rules = recordingModel.data.authorization.map((r) =>
       symbolData<AuthData & { operations?: string[] }>(r as object),
     );
-    const groupsRule = rules.find((r) => r.strategy === 'groups');
+    // Filter to the moderator+admin write rule (NOT the #430 sweep
+    // rule that grants `read` to admin/moderator/member).
+    const groupsRule = rules.find(
+      (r) =>
+        r.strategy === 'groups' &&
+        (r.groups ?? []).includes('moderator') &&
+        !(r.groups ?? []).includes('member'),
+    );
     expect(groupsRule?.groups ?? []).toEqual(expect.arrayContaining(['moderator', 'admin']));
     expect(groupsRule?.operations ?? []).not.toContain('create');
     expect(groupsRule?.operations ?? []).toEqual(

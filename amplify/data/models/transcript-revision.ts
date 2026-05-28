@@ -49,6 +49,12 @@ export const TranscriptRevision = a
     // `createTranscriptRevision` live would let a client supply
     // proposedBy + bypass the gate.
     allow.authenticated().to(['read']),
+    // #430 Cognito-group sweep: authenticated users in a Cognito
+    // group route to a per-group IAM role that does NOT inherit the
+    // generic `authenticated` grant. Enumerate every named group
+    // with matching actions so the read works regardless of which
+    // group placed the caller.
+    allow.groups(['admin', 'moderator', 'member']).to(['read']),
     allow.groups(['moderator', 'admin']).to(['read', 'update']),
   ]);
 
@@ -68,7 +74,9 @@ export const submitTranscriptRevision = a
     proposedText: a.string().required(),
   })
   .returns(a.ref('TranscriptRevision'))
-  .authorization((allow) => allow.authenticated())
+  // #430: authenticated + group-paired so admin/moderator/member can
+  // call regardless of their per-group IAM role.
+  .authorization((allow) => [allow.authenticated(), allow.groups(['admin', 'moderator', 'member'])])
   .handler(a.handler.function(transcriptRevisionMutations));
 
 /**

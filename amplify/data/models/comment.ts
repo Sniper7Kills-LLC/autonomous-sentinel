@@ -62,6 +62,10 @@ export const Comment = a
     // (and would also have collided with a custom `createComment`
     // at synth — see #314 / the verb-rename rationale at the top).
     allow.authenticated().to(['read']),
+    // #430 Cognito-group sweep: authenticated users in a Cognito
+    // group route to a per-group IAM role that does NOT inherit the
+    // generic `authenticated` grant.
+    allow.groups(['admin', 'moderator', 'member']).to(['read']),
     // Owner = the Cognito sub stored in `authorId` (#259). Kept for
     // direct edit / delete paths if we ever expose them; the soft-
     // delete custom mutation is the recommended route since it
@@ -95,7 +99,8 @@ export const submitComment = a
     parentCommentId: a.id(),
   })
   .returns(a.ref('Comment'))
-  .authorization((allow) => allow.authenticated())
+  // #430: authenticated + group-paired.
+  .authorization((allow) => [allow.authenticated(), allow.groups(['admin', 'moderator', 'member'])])
   .handler(a.handler.function(commentMutations));
 
 /**
@@ -112,5 +117,6 @@ export const softDeleteComment = a
     reason: a.string(),
   })
   .returns(a.ref('Comment'))
-  .authorization((allow) => allow.authenticated())
+  // #430: authenticated + group-paired.
+  .authorization((allow) => [allow.authenticated(), allow.groups(['admin', 'moderator', 'member'])])
   .handler(a.handler.function(commentMutations));

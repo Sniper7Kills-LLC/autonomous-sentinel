@@ -76,6 +76,10 @@ export const Message = a
   .authorization((allow) => [
     allow.guest().to(['read']),
     allow.authenticated().to(['read', 'create']),
+    // #430 Cognito-group sweep: authenticated users in a Cognito
+    // group route to a per-group IAM role that does NOT inherit the
+    // generic `authenticated` grant.
+    allow.groups(['admin', 'moderator', 'member']).to(['read', 'create']),
     allow.groups(['moderator', 'admin']).to(['read', 'create', 'update', 'delete']),
   ]);
 
@@ -152,5 +156,6 @@ export const submitRecordingLessMessage = a
     body: a.string(),
   })
   .returns(a.ref('Message'))
-  .authorization((allow) => allow.authenticated())
+  // #430: authenticated + group-paired.
+  .authorization((allow) => [allow.authenticated(), allow.groups(['admin', 'moderator', 'member'])])
   .handler(a.handler.function(messageMutations));

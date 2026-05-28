@@ -145,5 +145,11 @@ export const listAuditLogPublic = a
     nextToken: a.string(),
   })
   .returns(a.json())
-  .authorization((allow) => [allow.guest(), allow.authenticated()])
+  // #430: pair authenticated with every named group so group members
+  // reach the public-filtered audit log through their group IAM role.
+  .authorization((allow) => [
+    allow.guest(),
+    allow.authenticated(),
+    allow.groups(['admin', 'moderator', 'member']),
+  ])
   .handler(a.handler.function(listAuditLogPublicFn));

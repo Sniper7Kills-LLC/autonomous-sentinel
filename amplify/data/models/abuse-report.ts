@@ -39,6 +39,10 @@ export const AbuseReport = a
   ])
   .authorization((allow) => [
     allow.authenticated().to(['create']),
+    // #430 Cognito-group sweep: authenticated users in a Cognito
+    // group route to a per-group IAM role that does NOT inherit the
+    // generic `authenticated` grant.
+    allow.groups(['admin', 'moderator', 'member']).to(['create']),
     // Reporter = the Cognito sub stored in `reporterId` (#259).
     allow.ownerDefinedIn('reporterId').identityClaim('sub').to(['read']),
     allow.groups(['moderator', 'admin']).to(['read', 'update']),
