@@ -45,8 +45,15 @@ vi.mock('@/lib/messages/recordings', () => ({
       durationMs: 4200,
       sdrId: null,
       automated: true,
+      webCanonicalKey: null,
+      wordTimestampsKey: null,
+      peaksJsonKey: null,
     },
   ]),
+}));
+
+vi.mock('@/components/player/AudioPlayer', () => ({
+  AudioPlayer: () => <div data-testid="audio-player" />,
 }));
 
 describe('MessageDetailRoute', () => {
@@ -79,11 +86,11 @@ describe('MessageDetailRoute', () => {
     });
   });
 
-  it('renders an audio player placeholder per recording', async () => {
+  it('shows an audio-not-ready placeholder when webCanonicalKey is null', async () => {
     searchParams.set('id', 'm-1');
     render(<MessageDetailRoute />);
     await waitFor(() => {
-      expect(screen.getByLabelText('Audio player placeholder')).toBeInTheDocument();
+      expect(screen.getByLabelText('Audio not yet ready')).toBeInTheDocument();
     });
   });
 });

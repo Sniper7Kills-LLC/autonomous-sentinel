@@ -12,6 +12,9 @@ export type DisplayRecording = {
   durationMs: number | null;
   sdrId: string | null;
   automated: boolean;
+  webCanonicalKey: string | null;
+  wordTimestampsKey: string | null;
+  peaksJsonKey: string | null;
 };
 
 type RawRecording = {
@@ -24,6 +27,9 @@ type RawRecording = {
   durationMs?: number | null;
   sdrId?: string | null;
   automated?: boolean | null;
+  webCanonicalKey?: string | null;
+  wordTimestampsKey?: string | null;
+  peaksJsonKey?: string | null;
 };
 
 function toDisplay(r: RawRecording): DisplayRecording {
@@ -37,6 +43,9 @@ function toDisplay(r: RawRecording): DisplayRecording {
     durationMs: typeof r.durationMs === 'number' ? r.durationMs : null,
     sdrId: r.sdrId ?? null,
     automated: Boolean(r.automated),
+    webCanonicalKey: r.webCanonicalKey ?? null,
+    wordTimestampsKey: r.wordTimestampsKey ?? null,
+    peaksJsonKey: r.peaksJsonKey ?? null,
   };
 }
 
