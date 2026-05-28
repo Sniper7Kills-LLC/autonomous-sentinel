@@ -51,8 +51,10 @@ npm run client:dev        # start Electron client in dev mode
 
 On `npm install`, husky installs a `pre-commit` hook that runs `lint-staged`:
 
-- `*.{ts,tsx,js,jsx,mjs,cjs}` → `eslint --fix` + `prettier --write`
+- `*.{ts,tsx,js,jsx,mjs,cjs}` → `eslint --fix --cache` + `prettier --write`
 - `*.{json,md,yml,yaml,css}` → `prettier --write`
+
+**First commit is slow** (5–15 minutes) because typescript-eslint cold-loads the TS project graph — Amplify Gen 2's generated Schema types are large. **Subsequent commits are fast** (seconds) thanks to ESLint's per-file cache stored at `node_modules/.cache/eslint/`. Don't delete the cache directory unless you're chasing a phantom lint regression.
 
 If you need to bypass for a quick fix, `git commit --no-verify` skips the hook. Don't make a habit of it — CI will catch what the hook would have.
 

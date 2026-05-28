@@ -52,6 +52,15 @@ coverage/
 .cache/
 .turbo/
 
+# ESLint cache — populated by the husky pre-commit hook
+# (`--cache --cache-location node_modules/.cache/eslint/`).
+# `node_modules/.cache/` is already covered by `.cache/` above when
+# nested at the root, but workspace-local node_modules need the
+# explicit pattern.
+.eslintcache
+**/.eslintcache
+**/node_modules/.cache/eslint/
+
 # Claude Code per-developer overrides
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
