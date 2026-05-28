@@ -1,6 +1,7 @@
 'use client';
 
 import { getDataClient } from '@/lib/amplifyClient';
+import { resolveAuthMode } from '@/lib/auth/mode';
 
 export type DisplayRecording = {
   id: string;
@@ -67,11 +68,12 @@ export async function listRecordingsForMessage(messageId: string): Promise<Displ
   const listFn = client.models.Recording.list as unknown as (
     input: Record<string, unknown>,
   ) => Promise<RawRecordingListResult>;
+  const authMode = await resolveAuthMode();
   const raw = await listFn({
     filter: {
       and: [{ messageId: { eq: messageId } }, { deletedAt: { attributeExists: false } }],
     },
-    authMode: 'identityPool',
+    authMode,
   });
   if (raw.errors?.length) {
     throw new Error(raw.errors.map((e) => e.message).join('; '));
