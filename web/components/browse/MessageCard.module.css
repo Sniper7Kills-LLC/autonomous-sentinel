@@ -1,0 +1,81 @@
+.card {
+  display: grid;
+  gap: 0.5rem;
+  padding: 1rem 1.25rem;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  transition: border-color 120ms ease-out;
+}
+
+.card:hover,
+.card:focus-within {
+  border-color: var(--border-accent);
+}
+
+.top {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+  font-family: var(--font-jb-mono);
+  font-size: 0.78rem;
+  color: var(--text-2);
+}
+
+.ts {
+  letter-spacing: 0.04em;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.callsigns {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  font-family: var(--font-jb-mono);
+  font-size: 0.92rem;
+  color: var(--text-1);
+}
+
+.callsign {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.arrow {
+  color: var(--text-2);
+}
+
+.body {
+  font-family: var(--font-jb-mono);
+  font-size: 0.88rem;
+  color: var(--text-1);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 4.5rem;
+  overflow: hidden;
+  position: relative;
+}
+
+.bodyFade::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 1.5rem;
+  background: linear-gradient(to bottom, transparent, var(--surface-1));
+  pointer-events: none;
+}
+
+.link {
+  color: inherit;
+  text-decoration: none;
+  display: block;
+}
+
+.link:focus-visible .card {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

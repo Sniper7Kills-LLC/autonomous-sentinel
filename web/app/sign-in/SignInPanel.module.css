@@ -1,0 +1,48 @@
+.shell {
+  display: grid;
+  gap: 1.5rem;
+  max-width: 32rem;
+  width: 100%;
+  margin: 0 auto;
+  padding: 2rem;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+}
+
+.note {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+.signedIn {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.signedInLine {
+  font-family: var(--font-jb-mono);
+  font-size: 0.95rem;
+  color: var(--text-1);
+}
+
+.federatedDefer {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  border-top: 1px solid var(--border-1);
+  padding-top: 0.75rem;
+}
+
+/* Hide the Amplify Authenticator's federated providers — issue #336
+   tracks the styled Google/Discord buttons. v1 ships email/password
+   only, and the hidden buttons would otherwise flash on load. */
+.shell :global([data-amplify-authenticator] [data-amplify-federated-sign-in-container]),
+.shell :global([data-amplify-authenticator] [data-amplify-router-content] [class*='federated']) {
+  display: none !important;
+}

@@ -1,0 +1,52 @@
+.indexGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+}
+
+.indexFootnote {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-2);
+  letter-spacing: 0.06em;
+}
+
+.deepNav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+}
+
+.deepNavLink {
+  text-decoration: none;
+  color: var(--text-2);
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--border-1);
+  border-radius: 999px;
+  background: var(--surface-1);
+  transition: border-color 120ms ease-out;
+}
+
+.deepNavLink:hover,
+.deepNavLink:focus-visible {
+  color: var(--text-1);
+  border-color: var(--color-accent);
+  outline: none;
+}
+
+.deepNavActive {
+  color: var(--text-1);
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+}
+
+.statusLine {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+}

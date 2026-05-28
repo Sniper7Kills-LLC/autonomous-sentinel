@@ -18,7 +18,9 @@
     "aws-amplify": "^6.6.0",
     "next": "^16.2.6",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "recharts": "^3.8.1",
+    "zod": "^3.25.17"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
