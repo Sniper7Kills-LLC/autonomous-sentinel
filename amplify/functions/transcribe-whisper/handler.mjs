@@ -47,6 +47,7 @@ import { readWhisperConfig, runWhisper, WhisperError } from './run-whisper.mjs';
 
 const RECORDINGS_BUCKET = process.env.RECORDINGS_BUCKET ?? '';
 const PIPELINE_TEMP_PREFIX = process.env.PIPELINE_TEMP_PREFIX ?? 'pipeline-temp';
+const RECORDINGS_WEB_PREFIX = process.env.RECORDINGS_WEB_PREFIX ?? 'recordings/web';
 const LINGUISTIC_QUEUE_URL = process.env.LINGUISTIC_QUEUE_URL ?? '';
 
 // Build identity baked into the image at `docker build` time
@@ -155,7 +156,24 @@ async function processOne(body) {
     const transcriptJson = await readFile(result.jsonOutputPath, 'utf8');
     const transcriptText = extractTranscriptText(transcriptJson);
 
-    // Stage the raw whisper JSON for future word-timestamp use.
+    // Persist the whisper JSON as the canonical word-timestamps
+    // sidecar (#92). Lands at `recordings/web/<id>.words.json` so
+    // the web `<AudioPlayer>` can fetch it via Amplify Storage
+    // without a signed-URL Lambda (the `recordings/web/*` prefix
+    // already grants `allow.guest.to(['read'])`).
+    const wordTimestampsKey = `${RECORDINGS_WEB_PREFIX}/${recordingId}.words.json`;
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: RECORDINGS_BUCKET,
+        Key: wordTimestampsKey,
+        Body: transcriptJson,
+        ContentType: 'application/json',
+      }),
+    );
+
+    // Pipeline-temp duplicate kept as a short-lived debugging copy.
+    // Lifecycle policy expires this prefix after 7 days; the canonical
+    // copy at `recordings/web/*` is the long-lived asset.
     await s3.send(
       new PutObjectCommand({
         Bucket: RECORDINGS_BUCKET,
@@ -166,7 +184,8 @@ async function processOne(body) {
     );
 
     // Publish onto the linguistic queue. Linguistic owns the
-    // Recording.update for `transcript` + status (#452).
+    // Recording.update for `transcript` + status + the new
+    // `wordTimestampsKey` field (#452 + #92).
     const ts = new Date().toISOString();
     await sqs.send(
       new SendMessageCommand({
@@ -175,6 +194,7 @@ async function processOne(body) {
           kind: 'transcript',
           recordingId,
           transcript: transcriptText,
+          wordTimestampsKey,
           enqueuedAt: ts,
         }),
       }),
@@ -183,6 +203,7 @@ async function processOne(body) {
     console.info('whisper-handler: published transcript to linguistic queue', {
       recordingId,
       transcriptLen: transcriptText.length,
+      wordTimestampsKey,
       stderrTail: result.stderrTail.slice(-256),
       gitSha: IMAGE_GIT_SHA,
       buildId: IMAGE_BUILD_ID,

@@ -36,6 +36,20 @@ describe('parseWordTimestamps', () => {
     ]);
   });
 
+  it('accepts whisper.cpp `transcription` w/ offsets in ms', () => {
+    expect(
+      parseWordTimestamps({
+        transcription: [
+          { text: ' SKYKING', offsets: { from: 0, to: 600 } },
+          { text: ' PT3', offsets: { from: 700, to: 1000 } },
+        ],
+      }),
+    ).toEqual([
+      { word: 'SKYKING', start: 0, end: 0.6 },
+      { word: 'PT3', start: 0.7, end: 1.0 },
+    ]);
+  });
+
   it('coerces string timestamps + alternate keys (text/t0/t1)', () => {
     expect(parseWordTimestamps([{ text: 'hello', t0: '0.1', t1: '0.4' }])).toEqual([
       { word: 'hello', start: 0.1, end: 0.4 },

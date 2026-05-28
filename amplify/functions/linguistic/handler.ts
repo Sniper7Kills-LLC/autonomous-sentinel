@@ -55,6 +55,8 @@ interface TranscriptQueueMessage {
   kind: 'transcript';
   recordingId: string;
   transcript: string;
+  /** S3 key of the per-word timestamps JSON sidecar (#92). */
+  wordTimestampsKey?: string;
   enqueuedAt: string;
 }
 
@@ -95,6 +97,7 @@ export interface LinguisticDataClient {
         transcriptionStatusUpdatedAt?: string;
         transcriptionFailed?: boolean;
         failedReason?: string | null;
+        wordTimestampsKey?: string | null;
       }) => Promise<{ data: unknown; errors?: unknown }>;
     };
   };
@@ -174,6 +177,7 @@ interface RawLinguisticMessage {
   kind?: 'transcript' | 'transcribe-failure';
   recordingId?: string;
   transcript?: string;
+  wordTimestampsKey?: string;
   reason?: string;
   enqueuedAt?: string;
 }
@@ -205,6 +209,10 @@ export function parseMessage(body: string): LinguisticQueueMessage {
     kind: 'transcript',
     recordingId: parsed.recordingId,
     transcript: parsed.transcript,
+    wordTimestampsKey:
+      typeof parsed.wordTimestampsKey === 'string' && parsed.wordTimestampsKey.length > 0
+        ? parsed.wordTimestampsKey
+        : undefined,
     enqueuedAt: parsed.enqueuedAt ?? nowDate().toISOString(),
   };
 }
@@ -234,15 +242,17 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   }
   const newMessageId = created.data?.id ?? messageId;
 
-  // Single Recording.update writes transcript + advances state to
-  // PUBLISHED in one round-trip; intermediate PARSING state is
-  // collapsed since linguistic finishes the work synchronously.
+  // Single Recording.update writes transcript + sidecar key +
+  // advances state to PUBLISHED in one round-trip; intermediate
+  // PARSING state is collapsed since linguistic finishes the work
+  // synchronously.
   const updated = await client.models.Recording.update({
     id: msg.recordingId,
     messageId: newMessageId,
     transcript: msg.transcript,
     transcriptionStatus: 'PUBLISHED',
     transcriptionStatusUpdatedAt: ts,
+    ...(msg.wordTimestampsKey ? { wordTimestampsKey: msg.wordTimestampsKey } : {}),
   });
   if (updated.errors) {
     throw new Error(

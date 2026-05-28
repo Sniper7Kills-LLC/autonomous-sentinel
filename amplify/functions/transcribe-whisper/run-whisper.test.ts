@@ -52,10 +52,27 @@ describe('buildArgs', () => {
       'en',
       '-t',
       '4',
+      '-ml',
+      '1',
       '-oj',
       '-of',
       '/tmp/out',
     ]);
+  });
+
+  it('emits -ml 1 so each JSON segment is a single token for per-word timestamps (#92)', () => {
+    const args = buildArgs({
+      inputPath: '/tmp/in.opus',
+      outputPrefix: '/tmp/out',
+      language: 'en',
+      threads: 4,
+      modelPath: '/opt/models/medium.en.bin',
+    });
+    expect(args).toContain('-ml');
+    // The arg after `-ml` is the max length in tokens; `1` means each
+    // emitted segment is exactly one word, which is what makes the
+    // `offsets.from/to` pair land per-word.
+    expect(args[args.indexOf('-ml') + 1]).toBe('1');
   });
 
   it('always emits -ng so whisper.cpp does not probe a non-existent GPU on Lambda (#455)', () => {

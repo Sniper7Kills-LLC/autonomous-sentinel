@@ -38,6 +38,8 @@ export interface PeaksData {
  *   - `[{word, start, end}, ...]`
  *   - `{ words: [{word, start, end}, ...] }`
  *   - `{ segments: [{ words: [...] }, ...] }` (whisper-style nested)
+ *   - `{ transcription: [{ text, offsets: { from, to } }, ...] }`
+ *     (whisper.cpp `-oj` with `-ml 1` — offsets are ms)
  */
 export function parseWordTimestamps(raw: unknown): WordTimestamp[] {
   if (Array.isArray(raw)) return raw.map(normalizeWord).filter(isValidWord);
@@ -58,6 +60,26 @@ export function parseWordTimestamps(raw: unknown): WordTimestamp[] {
             }
           }
         }
+      }
+      return out;
+    }
+    if (Array.isArray(obj.transcription)) {
+      const out: WordTimestamp[] = [];
+      for (const seg of obj.transcription as unknown[]) {
+        if (!seg || typeof seg !== 'object') continue;
+        const segObj = seg as Record<string, unknown>;
+        const text = typeof segObj.text === 'string' ? segObj.text.trim() : '';
+        if (!text) continue;
+        const offsets =
+          segObj.offsets && typeof segObj.offsets === 'object'
+            ? (segObj.offsets as Record<string, unknown>)
+            : null;
+        if (!offsets) continue;
+        // whisper.cpp emits offsets in MILLISECONDS — divide.
+        const start = numberOrZero(offsets.from) / 1000;
+        const end = numberOrZero(offsets.to) / 1000;
+        const w = { word: text, start, end };
+        if (isValidWord(w)) out.push(w);
       }
       return out;
     }

@@ -759,6 +759,16 @@ whisperFn.addToRolePolicy(
     resources: [`${mediaBucket.bucketArn}/pipeline-temp/*`],
   }),
 );
+// Word-timestamps sidecar (#92) is written under
+// `recordings/web/<id>.words.json` so the web audio player can
+// fetch it via the same `allow.guest.to(['read'])` prefix as the
+// canonical Opus.
+whisperFn.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['s3:PutObject', 's3:DeleteObject', 's3:AbortMultipartUpload'],
+    resources: [`${mediaBucket.bucketArn}/recordings/web/*`],
+  }),
+);
 // #452 — DDB `Recording.UpdateItem` grant removed; Whisper now
 // publishes both success + failure to the linguistic queue and
 // the linguistic Lambda owns all Recording.update calls via

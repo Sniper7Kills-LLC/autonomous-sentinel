@@ -173,6 +173,37 @@ describe('linguistic — parseMessage', () => {
       parseMessage(JSON.stringify({ kind: 'transcribe-failure', recordingId: 'r-fail' })),
     ).toThrow(/reason/);
   });
+
+  it('round-trips a transcript body carrying wordTimestampsKey (#92)', () => {
+    const out = parseMessage(
+      JSON.stringify({
+        kind: 'transcript',
+        recordingId: 'r-1',
+        transcript: 'skyking',
+        wordTimestampsKey: 'recordings/web/r-1.words.json',
+        enqueuedAt: '2026-05-24T18:00:00Z',
+      }),
+    );
+    expect(out.kind).toBe('transcript');
+    if (out.kind === 'transcript') {
+      expect(out.wordTimestampsKey).toBe('recordings/web/r-1.words.json');
+    }
+  });
+
+  it('drops empty wordTimestampsKey field (#92)', () => {
+    const out = parseMessage(
+      JSON.stringify({
+        kind: 'transcript',
+        recordingId: 'r-1',
+        transcript: 'skyking',
+        wordTimestampsKey: '',
+        enqueuedAt: '2026-05-24T18:00:00Z',
+      }),
+    );
+    if (out.kind === 'transcript') {
+      expect(out.wordTimestampsKey).toBeUndefined();
+    }
+  });
 });
 
 describe('linguistic — handler happy path', () => {
