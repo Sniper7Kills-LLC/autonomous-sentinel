@@ -126,6 +126,9 @@ export function tallyFieldVotes(votes: DisplayFieldVote[]): FieldVoteTally {
   }
   const entries = [...buckets.entries()]
     .map(([value, agg]) => ({ value, weight: agg.weight, voterCount: agg.voterCount }))
-    .sort((a, b) => b.weight - a.weight);
+    // Secondary key on `value` (alphabetic) keeps the order
+    // deterministic when two values tie on weight — important for
+    // snapshot-style tests + stable UI across re-renders.
+    .sort((a, b) => b.weight - a.weight || a.value.localeCompare(b.value));
   return { entries, total };
 }

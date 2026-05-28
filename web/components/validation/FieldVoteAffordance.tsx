@@ -69,8 +69,14 @@ export function FieldVoteAffordance({
   }, [messageId, field]);
 
   useEffect(() => {
-    if (open && signedIn) void refresh();
-  }, [open, signedIn, refresh]);
+    if (!open || !signedIn) return;
+    void refresh();
+    // Re-sync the form draft to the current parsed value each time
+    // the popover opens — keeps a stale typed value from a prior
+    // open out of view (the post-cast reset path uses the same
+    // baseline).
+    setDraft(currentValue ?? '');
+  }, [open, signedIn, refresh, currentValue]);
 
   // Close on outside click for tidy popover semantics.
   useEffect(() => {
@@ -94,12 +100,15 @@ export function FieldVoteAffordance({
     try {
       await castFieldVote(messageId, field, value);
       await refresh();
+      // Reset the draft to the canonical baseline so a re-cast
+      // starts fresh rather than from the last-typed text.
+      setDraft(currentValue ?? '');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setVoting(false);
     }
-  }, [draft, field, messageId, refresh, voting]);
+  }, [currentValue, draft, field, messageId, refresh, voting]);
 
   return (
     <span className={styles.wrap} ref={wrapRef}>
@@ -114,7 +123,15 @@ export function FieldVoteAffordance({
         Vote {FIELD_LABELS[field]}
       </button>
       {open && (
-        <div role="dialog" aria-label={`Vote on ${FIELD_LABELS[field]}`} className={styles.popover}>
+        <div
+          // Non-modal popover — background interaction stays live, so
+          // signal non-modality explicitly. Full focus-trap modal
+          // semantics are a deliberate non-goal at v1.
+          role="dialog"
+          aria-modal="false"
+          aria-label={`Vote on ${FIELD_LABELS[field]}`}
+          className={styles.popover}
+        >
           <div className={styles.popHead}>
             <span>{FIELD_LABELS[field]}</span>
             <button
