@@ -89,10 +89,14 @@ export async function listMessages(opts: ListMessagesOptions = {}): Promise<List
     limit: opts.pageSize ?? DEFAULT_PAGE_SIZE,
   };
   if (opts.nextToken) args.nextToken = opts.nextToken;
-  const raw = (await client.models.Message.list({
-    ...(args as Parameters<typeof client.models.Message.list>[0]),
-    authMode: 'identityPool',
-  })) as unknown as RawListResult;
+  // Cast the model accessor to `unknown` first so the type-aware
+  // checker does not chase the Schema's recursive filter generics
+  // (TS2589 "excessively deep" on `Parameters<...>[0]`). Response
+  // shape is structurally validated via `RawListResult`.
+  const listFn = client.models.Message.list as unknown as (
+    input: Record<string, unknown>,
+  ) => Promise<RawListResult>;
+  const raw = await listFn({ ...args, authMode: 'identityPool' });
   if (raw.errors?.length) {
     throw new Error(raw.errors.map((e) => e.message).join('; '));
   }
@@ -105,10 +109,11 @@ export async function listMessages(opts: ListMessagesOptions = {}): Promise<List
 
 export async function getMessage(id: string): Promise<DisplayMessage | null> {
   const client = getDataClient();
-  const raw = (await client.models.Message.get(
-    { id },
-    { authMode: 'identityPool' },
-  )) as unknown as RawGetResult;
+  const getFn = client.models.Message.get as unknown as (
+    input: Record<string, unknown>,
+    opts: Record<string, unknown>,
+  ) => Promise<RawGetResult>;
+  const raw = await getFn({ id }, { authMode: 'identityPool' });
   if (raw.errors?.length) {
     throw new Error(raw.errors.map((e) => e.message).join('; '));
   }

@@ -49,12 +49,18 @@ type RawRecordingListResult = {
 
 export async function listRecordingsForMessage(messageId: string): Promise<DisplayRecording[]> {
   const client = getDataClient();
-  const raw = (await client.models.Recording.list({
+  // Cast through `unknown` so the type-aware checker skips the
+  // Schema's recursive filter generics (TS2589 surfaced in the
+  // matching Message.list path).
+  const listFn = client.models.Recording.list as unknown as (
+    input: Record<string, unknown>,
+  ) => Promise<RawRecordingListResult>;
+  const raw = await listFn({
     filter: {
       and: [{ messageId: { eq: messageId } }, { deletedAt: { attributeExists: false } }],
     },
     authMode: 'identityPool',
-  })) as unknown as RawRecordingListResult;
+  });
   if (raw.errors?.length) {
     throw new Error(raw.errors.map((e) => e.message).join('; '));
   }

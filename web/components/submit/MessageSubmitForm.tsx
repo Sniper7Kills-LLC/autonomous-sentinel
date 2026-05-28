@@ -66,16 +66,21 @@ export function MessageSubmitForm() {
       if (form.sender.trim()) args.sender = form.sender.trim();
       if (form.receiver.trim()) args.receiver = form.receiver.trim();
       if (form.body.trim()) args.body = form.body.trim();
-      const raw = (await client.mutations.submitRecordingLessMessage(args, {
-        authMode: 'userPool',
-      })) as unknown as {
+      // Cast the mutation accessor itself so the type-aware checker
+      // does not unfold the recursive Schema-derived argument generics
+      // (matches the TS2589 workaround in `lib/messages/query.ts`).
+      const submitFn = client.mutations.submitRecordingLessMessage as unknown as (
+        input: Record<string, unknown>,
+        opts: Record<string, unknown>,
+      ) => Promise<{
         data?: {
           id?: string;
           publishedAt?: string | null;
           flaggedForReview?: boolean | null;
         } | null;
         errors?: { message: string }[] | null;
-      };
+      }>;
+      const raw = await submitFn(args, { authMode: 'userPool' });
       if (raw.errors?.length) {
         throw new Error(raw.errors.map((e) => e.message).join('; '));
       }
