@@ -94,20 +94,61 @@ export function RevisionPanel({ recordingId, transcriptionFailed, signedIn }: Re
       )}
 
       {revisions.length > 0 && (
-        <div className={styles.list}>
-          {sortRevisions(revisions).map((rev) => (
-            <RevisionRow
-              key={rev.id}
-              revision={rev}
-              canVote={signedIn}
-              onVote={(value) => {
-                void doVote(rev.id, value, refresh, setError);
-              }}
-            />
-          ))}
-        </div>
+        <RevisionRows
+          revisions={revisions}
+          canVote={signedIn}
+          refresh={refresh}
+          setError={setError}
+        />
       )}
     </section>
+  );
+}
+
+interface RevisionRowsProps {
+  revisions: DisplayRevision[];
+  canVote: boolean;
+  refresh: () => Promise<void>;
+  setError: (msg: string | null) => void;
+}
+
+/**
+ * Render-list wrapper that owns the single-flight vote guard. While
+ * `votingId` is non-null, every row's `canVote` flips false so a
+ * rapid second click does not re-submit before the resolver returns
+ * + the refresh fetches the new tally.
+ */
+function RevisionRows({ revisions, canVote, refresh, setError }: RevisionRowsProps) {
+  const [votingId, setVotingId] = useState<string | null>(null);
+  const handleVote = useCallback(
+    async (revisionId: string, value: RevisionVoteValue) => {
+      if (votingId) return;
+      setVotingId(revisionId);
+      try {
+        setError(null);
+        await castRevisionVote(revisionId, value);
+        await refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setVotingId(null);
+      }
+    },
+    [votingId, refresh, setError],
+  );
+  return (
+    <div className={styles.list}>
+      {sortRevisions(revisions).map((rev) => (
+        <RevisionRow
+          key={rev.id}
+          revision={rev}
+          canVote={canVote && votingId === null}
+          onVote={(value) => {
+            void handleVote(rev.id, value);
+          }}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -120,21 +161,6 @@ function sortRevisions(rows: DisplayRevision[]): DisplayRevision[] {
     const bt = b.createdAt ?? '';
     return bt.localeCompare(at);
   });
-}
-
-async function doVote(
-  revisionId: string,
-  value: RevisionVoteValue,
-  refresh: () => Promise<void>,
-  setError: (msg: string | null) => void,
-): Promise<void> {
-  try {
-    setError(null);
-    await castRevisionVote(revisionId, value);
-    await refresh();
-  } catch (err) {
-    setError(err instanceof Error ? err.message : String(err));
-  }
 }
 
 interface RevisionRowProps {
