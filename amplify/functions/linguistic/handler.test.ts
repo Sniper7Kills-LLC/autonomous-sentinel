@@ -28,19 +28,33 @@ interface DataStub {
   createSpy: ReturnType<typeof vi.fn>;
   updateSpy: ReturnType<typeof vi.fn>;
   deleteSpy: ReturnType<typeof vi.fn>;
+  getSpy: ReturnType<typeof vi.fn>;
+  listSpy: ReturnType<typeof vi.fn>;
 }
 
-function makeDataStub(): DataStub {
+/** @param candidates Messages the dedup GSI query returns (default none). */
+function makeDataStub(
+  candidates: Array<{ id: string; type?: string; body?: string | null }> = [],
+): DataStub {
   const createSpy = vi.fn().mockResolvedValue({ data: { id: 'msg-uuid-1' }, errors: null });
   const updateSpy = vi.fn().mockResolvedValue({ data: {}, errors: null });
   const deleteSpy = vi.fn().mockResolvedValue({ data: {}, errors: null });
+  // Recording.get → no broadcastedAt (testing-portal upload) by default.
+  const getSpy = vi
+    .fn()
+    .mockResolvedValue({ data: { id: 'rec', broadcastedAt: null }, errors: null });
+  const listSpy = vi.fn().mockResolvedValue({ data: candidates, errors: null });
   const client: LinguisticDataClient = {
     models: {
-      Message: { create: createSpy as never, delete: deleteSpy as never },
-      Recording: { update: updateSpy as never },
+      Message: {
+        create: createSpy as never,
+        delete: deleteSpy as never,
+        listMessageByType: listSpy as never,
+      },
+      Recording: { get: getSpy as never, update: updateSpy as never },
     },
   };
-  return { client, createSpy, updateSpy, deleteSpy };
+  return { client, createSpy, updateSpy, deleteSpy, getSpy, listSpy };
 }
 
 /** Amplify Data shape for a `.update()` against a deleted row. */
@@ -232,9 +246,10 @@ describe('linguistic — handler happy path', () => {
     await handler(event, {} as never, () => undefined);
 
     expect(createSpy).toHaveBeenCalledOnce();
+    // id is now a deterministic content hash (#454 dedup race guard),
+    // not the injected uuid — assert the rest of the payload.
     expect(createSpy.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({
-        id: 'msg-uuid-1',
         type: 'SKYKING',
         broadcastTs: '2026-05-24T17:55:00Z',
         body: 'Skyking, Skyking, do not answer',
@@ -494,6 +509,63 @@ describe('linguistic — transcribe-failure path (#452)', () => {
   });
 });
 
+describe('linguistic — broadcast dedup (#454)', () => {
+  it('links the Recording to an existing matching Message instead of creating a duplicate', async () => {
+    // A prior SDR already published this SKYKING (same decoded body).
+    const { client, createSpy, updateSpy, listSpy } = makeDataStub([
+      { id: 'existing-msg', type: 'SKYKING', body: 'skyking skyking do not answer' },
+    ]);
+    __setDeps({ dataClient: client, now: () => new Date('2026-05-24T18:00:00Z') });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-2nd-sdr',
+        transcript: 'skyking skyking do not answer',
+        enqueuedAt: '2026-05-24T18:00:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(listSpy).toHaveBeenCalledOnce();
+    // No new Message — the second capture links to the existing one.
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        id: 'rec-2nd-sdr',
+        messageId: 'existing-msg',
+        transcriptionStatus: 'PUBLISHED',
+      }),
+    );
+  });
+
+  it('links when a concurrent create collides on the deterministic id (race guard)', async () => {
+    const { client, createSpy, updateSpy } = makeDataStub();
+    // No candidate found, but the deterministic-id create collides — a
+    // concurrent identical capture won the race.
+    createSpy.mockResolvedValueOnce({ data: null, errors: CONDITIONAL_CHECK_ERRORS });
+    __setDeps({ dataClient: client, now: () => new Date('2026-05-24T18:00:00Z') });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await handler(
+      makeEvent({
+        recordingId: 'rec-race',
+        transcript: 'skyking skyking',
+        enqueuedAt: '2026-05-24T18:00:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    // Recording links to the deterministic id (same as the winner's).
+    const createdId = (createSpy.mock.calls[0]?.[0] as { id?: string } | undefined)?.id;
+    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        id: 'rec-race',
+        messageId: createdId,
+        transcriptionStatus: 'PUBLISHED',
+      }),
+    );
+    warnSpy.mockRestore();
+  });
+});
+
 describe('linguistic — deleted-Recording tombstone (#459)', () => {
   it('drops a transcript message cleanly when the Recording was deleted in flight', async () => {
     const { client, updateSpy, deleteSpy } = makeDataStub();
@@ -501,7 +573,6 @@ describe('linguistic — deleted-Recording tombstone (#459)', () => {
     __setDeps({
       dataClient: client,
       now: () => new Date('2026-05-24T18:00:00Z'),
-      uuid: () => 'msg-orphan-1',
     });
     const event = makeEvent({
       recordingId: 'rec-deleted',
@@ -514,41 +585,10 @@ describe('linguistic — deleted-Recording tombstone (#459)', () => {
     // No throw → SQS deletes the message instead of redriving.
     await expect(handler(event, {} as never, () => undefined)).resolves.not.toThrow();
 
-    // The Recording.update tombstone is the only update — no follow-up
-    // PARSE_FAILED mark (the row is gone, nothing to mark).
+    // Under dedup the Message may be shared by other recordings, so it
+    // is NOT deleted — just drop the SQS message cleanly (#454/#459).
     expect(updateSpy).toHaveBeenCalledOnce();
-    // The orphan Message created moments before is cleaned up so it
-    // never surfaces in the public feed without a Recording.
-    expect(deleteSpy).toHaveBeenCalledOnce();
-    expect(deleteSpy.mock.calls[0]?.[0]).toEqual({ id: 'msg-uuid-1' });
-    expect(warnSpy).toHaveBeenCalled();
-
-    warnSpy.mockRestore();
-    errSpy.mockRestore();
-  });
-
-  it('still drops the message cleanly when orphan-Message cleanup fails', async () => {
-    const { client, updateSpy, deleteSpy } = makeDataStub();
-    updateSpy.mockResolvedValueOnce({ data: null, errors: CONDITIONAL_CHECK_ERRORS });
-    // Cleanup throws — must NOT cause a redrive (would loop, re-creating
-    // a fresh orphan Message each attempt).
-    deleteSpy.mockRejectedValueOnce(new Error('throughput exceeded'));
-    __setDeps({
-      dataClient: client,
-      now: () => new Date('2026-05-24T18:00:00Z'),
-      uuid: () => 'msg-orphan-2',
-    });
-    const event = makeEvent({
-      recordingId: 'rec-deleted-3',
-      transcript: 'skyking skyking',
-      enqueuedAt: '2026-05-24T18:00:00Z',
-    });
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-
-    await expect(handler(event, {} as never, () => undefined)).resolves.not.toThrow();
-    expect(deleteSpy).toHaveBeenCalledOnce();
-    expect(errSpy).toHaveBeenCalled();
+    expect(deleteSpy).not.toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalled();
 
     warnSpy.mockRestore();
