@@ -446,6 +446,22 @@ async function dispatchReprocess(
     );
   }
 
+  // Intentionally NOT blocked on in-flight states. Reprocess is the
+  // recovery tool for STUCK recordings, which usually sit in a
+  // non-terminal state (hung Whisper, lost SQS message); refusing those
+  // would defeat the feature. Re-enqueue regardless, but log when we
+  // override a non-terminal state so a genuinely-concurrent live run
+  // (rare) is visible. Duplicate-Message risk from a truly concurrent
+  // run is tracked separately on #454 (linguistic redrive dedup).
+  const priorStatus = before.transcriptionStatus ?? 'UNKNOWN';
+  const NON_TERMINAL = ['QUEUED', 'PREPROCESSING', 'TRANSCRIBING', 'PARSING'];
+  if (NON_TERMINAL.indexOf(priorStatus) >= 0) {
+    console.warn('reprocessRecording: reprocessing a recording in a non-terminal state', {
+      recordingId: targetId,
+      priorStatus,
+    });
+  }
+
   const ts = deps.now().toISOString();
   const patch: Partial<RecordingRow> & { id: string } = {
     id: targetId,

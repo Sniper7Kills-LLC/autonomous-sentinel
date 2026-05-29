@@ -231,6 +231,22 @@ describe('recordingMutations — reprocessRecording (#505)', () => {
     expect(enqueueSpy).not.toHaveBeenCalled();
   });
 
+  it('allows reprocessing an in-flight (e.g. TRANSCRIBING) recording — recovery of stuck rows', async () => {
+    const stuck: RecordingRow = {
+      ...failedRecording,
+      transcriptionStatus: 'TRANSCRIBING',
+      transcriptionFailed: false,
+      failedReason: null,
+    };
+    const { client, updateSpy, auditSpy } = makeStubs({ existing: stuck });
+    const enqueueSpy = vi.fn((_msg: unknown) => Promise.resolve());
+    __setDeps({ dataClient: client, audit: auditSpy, enqueuePreprocess: enqueueSpy });
+    const out = await handler(modEvent({}), {} as Context, () => undefined);
+    expect(out?.transcriptionStatus).toBe('QUEUED');
+    expect(updateSpy).toHaveBeenCalledOnce();
+    expect(enqueueSpy).toHaveBeenCalledOnce();
+  });
+
   it('rejects a soft-deleted recording', async () => {
     const deleted: RecordingRow = { ...failedRecording, deletedAt: '2026-05-27T00:00:00Z' };
     const { client, auditSpy } = makeStubs({ existing: deleted });
