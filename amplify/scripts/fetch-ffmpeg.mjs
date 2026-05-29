@@ -17,7 +17,9 @@
 // all three constants below.
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, existsSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { createReadStream } from 'node:fs';
+import { mkdir, rm, stat } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -25,41 +27,68 @@ const TAG = 'autobuild-2026-05-28-14-16';
 const ASSET = 'ffmpeg-n8.1.1-9-g58d4114d36-linux64-lgpl-8.1.tar.xz';
 const SHA256 = 'a54b56aab8f28c3af8c8c49bc18926faed1adfe32c15675171ac7d506ae92c5a';
 const URL = `https://github.com/BtbN/FFmpeg-Builds/releases/download/${TAG}/${ASSET}`;
+// Static ffmpeg is well over 100 MB; a much smaller file means a bad
+// extraction. Sanity floor to reject a truncated/partial binary.
+const MIN_BINARY_BYTES = 50_000_000;
 
 const here = dirname(fileURLToPath(import.meta.url));
 const layerDir = join(here, '..', 'layers', 'ffmpeg');
 const binDir = join(layerDir, 'bin');
 const binPath = join(binDir, 'ffmpeg');
-
-if (existsSync(binPath)) {
-  console.log(`fetch-ffmpeg: ${binPath} already present — skipping`);
-  process.exit(0);
-}
-
-mkdirSync(binDir, { recursive: true });
 const tarPath = join(layerDir, '.ffmpeg.tar.xz');
 
-console.log(`fetch-ffmpeg: downloading ${URL}`);
-execFileSync('curl', ['-fsSL', '-o', tarPath, URL], { stdio: 'inherit' });
-
-const actual = createHash('sha256').update(readFileSync(tarPath)).digest('hex');
-if (actual !== SHA256) {
-  rmSync(tarPath, { force: true });
-  throw new Error(`fetch-ffmpeg: SHA-256 mismatch — expected ${SHA256}, got ${actual}`);
+function sha256Stream(path) {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256');
+    const rs = createReadStream(path);
+    rs.on('error', reject);
+    rs.on('data', (chunk) => hash.update(chunk));
+    rs.on('end', () => resolve(hash.digest('hex')));
+  });
 }
-console.log('fetch-ffmpeg: SHA-256 verified');
 
-// Archive layout is `<release>/bin/ffmpeg`; strip both segments so the
-// binary lands directly at `bin/ffmpeg`.
-execFileSync(
-  'tar',
-  ['-xJf', tarPath, '-C', binDir, '--wildcards', '--strip-components=2', '*/bin/ffmpeg'],
-  { stdio: 'inherit' },
-);
-rmSync(tarPath, { force: true });
+async function main() {
+  // Skip only when a fully-valid binary is already present (a complete
+  // extraction is atomic — see the size check + cleanup below — so an
+  // existing binPath of the expected size is trustworthy).
+  if (existsSync(binPath) && (await stat(binPath)).size >= MIN_BINARY_BYTES) {
+    console.log(`fetch-ffmpeg: ${binPath} already present + sized — skipping`);
+    return;
+  }
+  await rm(binPath, { force: true });
+  await mkdir(binDir, { recursive: true });
 
-if (!existsSync(binPath)) {
-  throw new Error('fetch-ffmpeg: ffmpeg binary not found after extraction');
+  try {
+    console.log(`fetch-ffmpeg: downloading ${URL}`);
+    execFileSync('curl', ['-fsSL', '-o', tarPath, URL], { stdio: 'inherit' });
+
+    const actual = await sha256Stream(tarPath);
+    if (actual !== SHA256) {
+      throw new Error(`fetch-ffmpeg: SHA-256 mismatch — expected ${SHA256}, got ${actual}`);
+    }
+    console.log('fetch-ffmpeg: SHA-256 verified');
+
+    // Archive layout is `<release>/bin/ffmpeg`; strip both segments so
+    // the binary lands directly at `bin/ffmpeg`.
+    execFileSync(
+      'tar',
+      ['-xJf', tarPath, '-C', binDir, '--wildcards', '--strip-components=2', '*/bin/ffmpeg'],
+      { stdio: 'inherit' },
+    );
+
+    if (!existsSync(binPath) || (await stat(binPath)).size < MIN_BINARY_BYTES) {
+      throw new Error('fetch-ffmpeg: extracted ffmpeg missing or too small');
+    }
+    execFileSync('chmod', ['+x', binPath]);
+    console.log(`fetch-ffmpeg: ready ${binPath} (${(await stat(binPath)).size} bytes)`);
+  } catch (err) {
+    // Never leave a partial/corrupt binary behind — the next run must
+    // re-fetch rather than skip on a broken file.
+    await rm(binPath, { force: true });
+    throw err;
+  } finally {
+    await rm(tarPath, { force: true });
+  }
 }
-execFileSync('chmod', ['+x', binPath]);
-console.log(`fetch-ffmpeg: ready ${binPath} (${statSync(binPath).size} bytes)`);
+
+await main();
