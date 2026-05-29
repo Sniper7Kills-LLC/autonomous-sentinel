@@ -49,7 +49,7 @@ function makeDataStub(
       Message: {
         create: createSpy as never,
         delete: deleteSpy as never,
-        listMessageByType: listSpy as never,
+        list: listSpy as never,
       },
       Recording: { get: getSpy as never, update: updateSpy as never },
     },
@@ -526,6 +526,18 @@ describe('linguistic — broadcast dedup (#454)', () => {
       () => undefined,
     );
     expect(listSpy).toHaveBeenCalledOnce();
+    // Dedup queries via the generic Message.list filter (no enum-keyed
+    // GSI accessor exists — #524): same type, within the broadcast
+    // window, excluding soft-deleted.
+    expect(listSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        filter: {
+          type: { eq: 'SKYKING' },
+          broadcastTs: { between: [expect.any(String), expect.any(String)] },
+          deletedAt: { attributeExists: false },
+        },
+      }),
+    );
     // No new Message — the second capture links to the existing one.
     expect(createSpy).not.toHaveBeenCalled();
     expect(updateSpy.mock.calls[0]?.[0]).toEqual(

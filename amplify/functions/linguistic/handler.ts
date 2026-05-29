@@ -96,14 +96,20 @@ export interface LinguisticDataClient {
       }) => Promise<{ data: { id?: string } | null; errors?: unknown }>;
       delete: (input: { id: string }) => Promise<{ data: unknown; errors?: unknown }>;
       /**
-       * GSI query (type + broadcastTs) for the dedup candidate lookup
-       * (#454) — finds Messages of the same type within the broadcast
-       * time window.
+       * Dedup candidate lookup (#454) — Messages of the same type within
+       * the broadcast-time window, excluding soft-deleted. Uses the
+       * generic `list` (filter) rather than the type GSI query: Amplify
+       * does not generate a `listMessageByType` accessor for the
+       * enum-keyed index. (A GSI-backed query would be more efficient at
+       * scale — follow-up.)
        */
-      listMessageByType: (input: {
-        type: MessageType;
-        broadcastTs: { between: [string, string] };
-        filter?: { deletedAt: { attributeExists: boolean } };
+      list: (input: {
+        filter: {
+          type: { eq: MessageType };
+          broadcastTs: { between: [string, string] };
+          deletedAt: { attributeExists: boolean };
+        };
+        limit?: number;
       }) => Promise<{
         data: Array<{ id: string; type?: string; body?: string | null }> | null;
         errors?: unknown;
@@ -292,12 +298,14 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   // ALLSTATIONS/SKYKING, token similarity otherwise).
   let targetMessageId: string | undefined;
   const win = dedupWindow(broadcastTime);
-  const candidates = await client.models.Message.listMessageByType({
-    type: result.type,
-    broadcastTs: { between: [win.start, win.end] },
-    // Never link to a soft-deleted Message (the model mandates
-    // deletedAt-null on list/browse).
-    filter: { deletedAt: { attributeExists: false } },
+  const candidates = await client.models.Message.list({
+    filter: {
+      type: { eq: result.type },
+      broadcastTs: { between: [win.start, win.end] },
+      // Never link to a soft-deleted Message (the model mandates
+      // deletedAt-null on list/browse).
+      deletedAt: { attributeExists: false },
+    },
   });
   if (candidates.errors) {
     // Don't block publishing on a dedup-query hiccup — fall through to create.
