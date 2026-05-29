@@ -10,7 +10,9 @@ import { getDataClient } from '@/lib/amplifyClient';
 
 export async function reprocessRecording(recordingId: string): Promise<void> {
   const client = getDataClient();
-  const res = await client.mutations.reprocessRecording({ recordingId });
+  // Group-gated mutation (admin/moderator) — must use the Cognito
+  // userPool token; the default (guest/iam) auth returns Unauthorized.
+  const res = await client.mutations.reprocessRecording({ recordingId }, { authMode: 'userPool' });
   if (res.errors && res.errors.length > 0) {
     throw new Error(`reprocessRecording failed: ${JSON.stringify(res.errors)}`);
   }
