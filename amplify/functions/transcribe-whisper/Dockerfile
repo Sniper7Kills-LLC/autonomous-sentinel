@@ -49,10 +49,12 @@ RUN dnf -y install gcc-c++ make cmake git tar gzip wget xz && dnf clean all
 # To bump: new autobuild tag + asset + recomputed SHA-256.
 ARG FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-05-28-14-16/ffmpeg-n8.1.1-9-g58d4114d36-linux64-lgpl-8.1.tar.xz
 ARG FFMPEG_SHA256=a54b56aab8f28c3af8c8c49bc18926faed1adfe32c15675171ac7d506ae92c5a
-RUN mkdir -p /build && cd /tmp \
+# Extract to a dedicated dir — NOT /build, which the whisper.cpp
+# `git clone . ` step below requires to be empty.
+RUN mkdir -p /ffmpeg && cd /tmp \
  && wget -q -O ffmpeg.tar.xz "${FFMPEG_URL}" \
  && echo "${FFMPEG_SHA256}  ffmpeg.tar.xz" | sha256sum -c - \
- && tar -xJf ffmpeg.tar.xz --wildcards --strip-components=2 -C /build '*/bin/ffmpeg' \
+ && tar -xJf ffmpeg.tar.xz --wildcards --strip-components=2 -C /ffmpeg '*/bin/ffmpeg' \
  && rm ffmpeg.tar.xz
 
 WORKDIR /build
@@ -111,7 +113,7 @@ RUN chmod +x /opt/whisper
 
 # Static ffmpeg for the in-container Opus transcode (#514). The handler
 # reads FFMPEG_PATH (default /usr/local/bin/ffmpeg).
-COPY --from=builder /build/ffmpeg /usr/local/bin/ffmpeg
+COPY --from=builder /ffmpeg/ffmpeg /usr/local/bin/ffmpeg
 RUN chmod +x /usr/local/bin/ffmpeg
 
 # Install handler deps (S3 SDK + Amplify Data client lite). Lambda
