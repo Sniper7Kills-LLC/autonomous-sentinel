@@ -258,7 +258,10 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
     // through (#433 follow-up). `broadcastTs` is .required() on the
     // Message schema, so we MUST emit it.
     broadcastTs: msg.enqueuedAt,
-    body: normalized.body ?? msg.transcript,
+    // `||` not `??`: decodePhonetic returns "" for an ALLSTATIONS body
+    // with no decodable letters (noise / misclassified). Empty body
+    // loses information — fall back to the raw transcript.
+    body: normalized.body || msg.transcript,
     ...(normalized.sender ? { sender: normalized.sender } : {}),
     ...(normalized.receiver ? { receiver: normalized.receiver } : {}),
     confidence: result.confidence,

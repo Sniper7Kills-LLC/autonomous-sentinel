@@ -304,6 +304,25 @@ describe('linguistic — structured Message via normalizeParsed (#506)', () => {
     );
   });
 
+  it('falls back to the raw transcript when an ALLSTATIONS body has no decodable letters', async () => {
+    const { client, createSpy } = makeDataStub();
+    __setDeps({
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-as-empty',
+    });
+    const transcript = 'all stations all stations nothing decodable here';
+    await handler(
+      makeEvent({ recordingId: 'rec-as-e', transcript, enqueuedAt: '2026-05-24T18:00:00Z' }),
+      {} as never,
+      () => undefined,
+    );
+    const arg = createSpy.mock.calls[0]?.[0] as { type: string; body?: string };
+    expect(arg.type).toBe('ALLSTATIONS');
+    // decodePhonetic → "" → fall back to raw transcript, not empty body.
+    expect(arg.body).toBe(transcript);
+  });
+
   it('passes through body for OTHER (no decode) and leaves sender/receiver unset', async () => {
     const { client, createSpy } = makeDataStub();
     __setDeps({
