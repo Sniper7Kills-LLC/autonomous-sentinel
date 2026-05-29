@@ -87,6 +87,7 @@ export interface LinguisticDataClient {
         flaggedForReview?: boolean | null;
         publishedAt?: string | null;
       }) => Promise<{ data: { id?: string } | null; errors?: unknown }>;
+      delete: (input: { id: string }) => Promise<{ data: unknown; errors?: unknown }>;
     };
     Recording: {
       update: (input: {
@@ -138,6 +139,25 @@ function nowDate(): Date {
 
 function uuid(): string {
   return (injected.uuid ?? randomUUID)();
+}
+
+/**
+ * Amplify Data `.update()` is a conditional write gated on
+ * `attribute_exists(id)`. When the Recording row was deleted while a
+ * pipeline message was still in flight (admin delete during
+ * transcription), the update comes back with a
+ * `DynamoDB:ConditionalCheckFailedException` in `errors[]`. That is a
+ * tombstone signal, not a real failure — the caller should drop the
+ * SQS message cleanly instead of throwing + redriving (#459).
+ */
+function isDeletedRowError(errors: unknown): boolean {
+  if (!Array.isArray(errors)) return false;
+  return errors.some(
+    (e) =>
+      e != null &&
+      typeof e === 'object' &&
+      (e as { errorType?: unknown }).errorType === 'DynamoDB:ConditionalCheckFailedException',
+  );
 }
 
 /**
@@ -255,6 +275,19 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
     ...(msg.wordTimestampsKey ? { wordTimestampsKey: msg.wordTimestampsKey } : {}),
   });
   if (updated.errors) {
+    if (isDeletedRowError(updated.errors)) {
+      // Recording was deleted while this message was in flight. Drop
+      // the orphan Message we just created so it never surfaces in the
+      // public feed without a Recording, then return cleanly so SQS
+      // deletes the message instead of redriving (#459).
+      const deleted = await client.models.Message.delete({ id: newMessageId });
+      console.warn('linguistic: Recording deleted in flight, dropping transcript message', {
+        recordingId: msg.recordingId,
+        messageId: newMessageId,
+        orphanMessageDeleted: !deleted.errors,
+      });
+      return;
+    }
     throw new Error(
       `linguistic: Recording.update returned errors: ${JSON.stringify(updated.errors)}`,
     );
@@ -280,6 +313,14 @@ async function processTranscribeFailure(msg: TranscribeFailureQueueMessage): Pro
     transcriptionStatusUpdatedAt: ts,
   });
   if (updated.errors) {
+    if (isDeletedRowError(updated.errors)) {
+      // Recording deleted in flight — nothing to mark, no Message was
+      // created on this path. Drop cleanly so SQS doesn't redrive (#459).
+      console.warn('linguistic: Recording deleted in flight, dropping transcribe-failure message', {
+        recordingId: msg.recordingId,
+      });
+      return;
+    }
     throw new Error(
       `linguistic: Recording.update (TRANSCRIBE_FAILED) returned errors: ${JSON.stringify(
         updated.errors,

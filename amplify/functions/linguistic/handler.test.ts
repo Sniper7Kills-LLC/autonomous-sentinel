@@ -27,19 +27,29 @@ interface DataStub {
   client: LinguisticDataClient;
   createSpy: ReturnType<typeof vi.fn>;
   updateSpy: ReturnType<typeof vi.fn>;
+  deleteSpy: ReturnType<typeof vi.fn>;
 }
 
 function makeDataStub(): DataStub {
   const createSpy = vi.fn().mockResolvedValue({ data: { id: 'msg-uuid-1' }, errors: null });
   const updateSpy = vi.fn().mockResolvedValue({ data: {}, errors: null });
+  const deleteSpy = vi.fn().mockResolvedValue({ data: {}, errors: null });
   const client: LinguisticDataClient = {
     models: {
-      Message: { create: createSpy as never },
+      Message: { create: createSpy as never, delete: deleteSpy as never },
       Recording: { update: updateSpy as never },
     },
   };
-  return { client, createSpy, updateSpy };
+  return { client, createSpy, updateSpy, deleteSpy };
 }
+
+/** Amplify Data shape for a `.update()` against a deleted row. */
+const CONDITIONAL_CHECK_ERRORS = [
+  {
+    errorType: 'DynamoDB:ConditionalCheckFailedException',
+    message: 'The conditional request failed',
+  },
+];
 
 function makeEvent(body: object): SQSEvent {
   return {
@@ -377,6 +387,88 @@ describe('linguistic — transcribe-failure path (#452)', () => {
     // not what happened here.
     expect(updateSpy).toHaveBeenCalledOnce();
     expect(createSpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+});
+
+describe('linguistic — deleted-Recording tombstone (#459)', () => {
+  it('drops a transcript message cleanly when the Recording was deleted in flight', async () => {
+    const { client, updateSpy, deleteSpy } = makeDataStub();
+    updateSpy.mockResolvedValueOnce({ data: null, errors: CONDITIONAL_CHECK_ERRORS });
+    __setDeps({
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-orphan-1',
+    });
+    const event = makeEvent({
+      recordingId: 'rec-deleted',
+      transcript: 'skyking skyking',
+      enqueuedAt: '2026-05-24T18:00:00Z',
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    // No throw → SQS deletes the message instead of redriving.
+    await expect(handler(event, {} as never, () => undefined)).resolves.not.toThrow();
+
+    // The Recording.update tombstone is the only update — no follow-up
+    // PARSE_FAILED mark (the row is gone, nothing to mark).
+    expect(updateSpy).toHaveBeenCalledOnce();
+    // The orphan Message created moments before is cleaned up so it
+    // never surfaces in the public feed without a Recording.
+    expect(deleteSpy).toHaveBeenCalledOnce();
+    expect(deleteSpy.mock.calls[0]?.[0]).toEqual({ id: 'msg-uuid-1' });
+    expect(warnSpy).toHaveBeenCalled();
+
+    warnSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
+  it('drops a transcribe-failure message cleanly when the Recording was deleted in flight', async () => {
+    const { client, createSpy, updateSpy, deleteSpy } = makeDataStub();
+    updateSpy.mockResolvedValueOnce({ data: null, errors: CONDITIONAL_CHECK_ERRORS });
+    __setDeps({
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    const event = makeEvent({
+      kind: 'transcribe-failure',
+      recordingId: 'rec-deleted-2',
+      reason: 'whisper.cpp exit 127',
+      enqueuedAt: '2026-05-24T18:00:00Z',
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await expect(handler(event, {} as never, () => undefined)).resolves.not.toThrow();
+
+    expect(updateSpy).toHaveBeenCalledOnce();
+    expect(createSpy).not.toHaveBeenCalled();
+    // Nothing to delete — no Message is created on the failure path.
+    expect(deleteSpy).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalled();
+
+    warnSpy.mockRestore();
+  });
+
+  it('still throws + redrives on a genuine (non-tombstone) Recording.update error', async () => {
+    const { client, updateSpy } = makeDataStub();
+    updateSpy
+      // first call: the PUBLISHED write fails with a real error
+      .mockResolvedValueOnce({ data: null, errors: [{ message: 'throughput exceeded' }] })
+      // second call: the PARSE_FAILED mark
+      .mockResolvedValueOnce({ data: {}, errors: null });
+    __setDeps({
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-uuid-real',
+    });
+    const event = makeEvent({
+      recordingId: 'rec-real-fail',
+      transcript: 'skyking',
+      enqueuedAt: '2026-05-24T18:00:00Z',
+    });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await expect(handler(event, {} as never, () => undefined)).rejects.toThrow(/throughput/);
     errSpy.mockRestore();
   });
 });
