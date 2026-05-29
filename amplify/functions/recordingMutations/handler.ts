@@ -172,11 +172,19 @@ async function defaultEnqueuePreprocess(msg: PreprocessQueueMessage): Promise<vo
   );
 }
 
-function isAdmin(identity: unknown): boolean {
+function hasGroup(identity: unknown, group: string): boolean {
   if (!identity || typeof identity !== 'object') return false;
   const groups = (identity as { groups?: unknown }).groups;
   if (!Array.isArray(groups)) return false;
-  return groups.indexOf('admin') >= 0;
+  return groups.indexOf(group) >= 0;
+}
+
+function isAdmin(identity: unknown): boolean {
+  return hasGroup(identity, 'admin');
+}
+
+function isModeratorOrAdmin(identity: unknown): boolean {
+  return hasGroup(identity, 'admin') || hasGroup(identity, 'moderator');
 }
 
 function identitySub(identity: unknown): string | null {
@@ -385,6 +393,121 @@ async function dispatchSubmit(
   return row;
 }
 
+/**
+ * `reprocessRecording` — moderator/admin re-runs the pipeline on an
+ * existing recording from its stored original, with no client
+ * re-upload (#505). Resets the Recording to QUEUED, clears the
+ * failure fields, writes a `RECORDING_REPROCESS` audit entry, and
+ * re-enqueues onto the preprocess queue (same path `submitRecording`
+ * uses).
+ *
+ * Guards: caller must be moderator or admin; the Recording must
+ * exist, not be soft-deleted, and carry an `originalKey` (a
+ * recording-less Message has no audio to reprocess).
+ */
+async function dispatchReprocess(
+  event: Parameters<AppSyncResolverHandler<Record<string, unknown>, RecordingRow | null>>[0],
+  deps: {
+    client: RecordingMutationsDataClient;
+    audit: AuditFn;
+    now: () => Date;
+    enqueuePreprocess: EnqueuePreprocessFn;
+  },
+): Promise<RecordingRow | null> {
+  if (!isModeratorOrAdmin(event.identity)) {
+    throw new Error('reprocessRecording: caller is not in the moderator or admin group');
+  }
+  const actorSub = identitySub(event.identity);
+  if (!actorSub) {
+    throw new Error('reprocessRecording: caller has no identity sub');
+  }
+
+  const targetId =
+    typeof event.arguments.recordingId === 'string' ? event.arguments.recordingId : '';
+  const reason = typeof event.arguments.reason === 'string' ? event.arguments.reason : '';
+  if (!targetId) {
+    throw new Error('reprocessRecording: recordingId argument is required');
+  }
+
+  const fetched = await deps.client.models.Recording.get({ id: targetId });
+  const before = fetched.data;
+  if (!before) {
+    throw new Error(`reprocessRecording: Recording row not found for id=${targetId}`);
+  }
+  if (before.deletedAt) {
+    throw new Error(
+      `reprocessRecording: Recording ${targetId} is deleted and cannot be reprocessed`,
+    );
+  }
+  const originalKey = typeof before.originalKey === 'string' ? before.originalKey : '';
+  if (!originalKey) {
+    throw new Error(
+      `reprocessRecording: Recording ${targetId} has no stored audio (originalKey) — recording-less entries cannot be reprocessed`,
+    );
+  }
+
+  // Intentionally NOT blocked on in-flight states. Reprocess is the
+  // recovery tool for STUCK recordings, which usually sit in a
+  // non-terminal state (hung Whisper, lost SQS message); refusing those
+  // would defeat the feature. Re-enqueue regardless, but log when we
+  // override a non-terminal state so a genuinely-concurrent live run
+  // (rare) is visible. Duplicate-Message risk from a truly concurrent
+  // run is tracked separately on #454 (linguistic redrive dedup).
+  const priorStatus = before.transcriptionStatus ?? 'UNKNOWN';
+  const NON_TERMINAL = ['QUEUED', 'PREPROCESSING', 'TRANSCRIBING', 'PARSING'];
+  if (NON_TERMINAL.indexOf(priorStatus) >= 0) {
+    console.warn('reprocessRecording: reprocessing a recording in a non-terminal state', {
+      recordingId: targetId,
+      priorStatus,
+    });
+  }
+
+  const ts = deps.now().toISOString();
+  const patch: Partial<RecordingRow> & { id: string } = {
+    id: targetId,
+    transcriptionStatus: 'QUEUED',
+    transcriptionFailed: false,
+    failedReason: null,
+    transcriptionStatusUpdatedAt: ts,
+  };
+  const updated = await deps.client.models.Recording.update(patch);
+  if (updated.errors) {
+    throw new Error(
+      `reprocessRecording: Recording.update returned errors: ${JSON.stringify(updated.errors)}`,
+    );
+  }
+  const after = updated.data ?? { ...before, ...patch };
+
+  await deps.audit(auditContextFrom(event), {
+    action: 'RECORDING_REPROCESS',
+    targetType: 'Recording',
+    targetId,
+    before: snapshot(before),
+    after: snapshot(after),
+    reason: reason ? reason : null,
+  });
+
+  // Re-enqueue from the stored original — same queue + payload shape
+  // submitRecording publishes, so the full pipeline re-runs with no
+  // client re-upload. Fire-and-forget: a failed enqueue leaves the row
+  // QUEUED for an operator redrive rather than rolling back the reset.
+  try {
+    await deps.enqueuePreprocess({
+      recordingId: targetId,
+      originalKey,
+      contentHash: typeof before.contentHash === 'string' ? before.contentHash : '',
+      enqueuedAt: ts,
+    });
+  } catch (err) {
+    console.error(
+      'reprocessRecording: failed to enqueue preprocess message — Recording reset to QUEUED but pipeline stays idle until operator redrives',
+      { recordingId: targetId, err: String(err) },
+    );
+  }
+
+  return after;
+}
+
 // `_context` / `_callback` are declared explicitly (vs. the
 // shorter `async (event) => …` form) so the test fixtures that
 // pass all three Lambda-runtime arguments don't trip CodeQL's
@@ -413,6 +536,8 @@ export const handler: AppSyncResolverHandler<Record<string, unknown>, RecordingR
       return dispatchSoftDelete(event, deps);
     case 'submitRecording':
       return dispatchSubmit(event, { client, now, enqueuePreprocess });
+    case 'reprocessRecording':
+      return dispatchReprocess(event, { client, audit: auditFn, now, enqueuePreprocess });
     default:
       throw new Error(`recordingMutations: unsupported fieldName "${field}"`);
   }

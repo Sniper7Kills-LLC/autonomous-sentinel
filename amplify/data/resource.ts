@@ -11,7 +11,12 @@ import { legacyClaimWorker } from '../functions/legacyClaimWorker/resource';
 import { getUserPublicLambda } from '../functions/getUserPublicLambda/resource';
 import { listAuditLogPublic } from '../functions/listAuditLogPublic/resource';
 import { Message, softDeleteMessage, submitRecordingLessMessage } from './models/message';
-import { Recording, softDeleteRecording, submitRecording } from './models/recording';
+import {
+  Recording,
+  softDeleteRecording,
+  submitRecording,
+  reprocessRecording,
+} from './models/recording';
 import { Sdr, listSdrPublic } from './models/sdr';
 import { listSdrPublicLambda } from '../functions/listSdrPublicLambda/resource';
 import { Transmitter } from './models/transmitter';
@@ -125,6 +130,9 @@ export const schema = a
 
     // Recording authenticated upload + contentHash uniqueness — issue #284
     submitRecording,
+
+    // Recording moderator/admin reprocess from stored audio — issue #505
+    reprocessRecording,
 
     // Comment submit + soft-delete — issue #32 + #314 (verb rename
     // from `createComment` so it does not collide with the auto-

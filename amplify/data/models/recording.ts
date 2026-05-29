@@ -219,3 +219,24 @@ export const submitRecording = a
   // PR #427.
   .authorization((allow) => [allow.authenticated(), allow.groups(['admin', 'moderator', 'member'])])
   .handler(a.handler.function(recordingMutations));
+
+/**
+ * `reprocessRecording` — moderator/admin re-runs the pipeline on an
+ * existing recording from its stored original, with no client
+ * re-upload (#505). Resets the row to QUEUED, clears the failure
+ * fields, writes a `RECORDING_REPROCESS` AuditLog entry, and
+ * re-enqueues onto the preprocess queue. Guards (in the handler):
+ * recording must exist, not be soft-deleted, and have an
+ * `originalKey` — recording-less Messages have no audio to reprocess.
+ */
+export const reprocessRecording = a
+  .mutation()
+  .arguments({
+    recordingId: a.id().required(),
+    reason: a.string(),
+  })
+  .returns(a.ref('Recording'))
+  // Moderator + admin only. Enumerated per-group for Identity Pool
+  // role routing (same rationale as submitRecording above).
+  .authorization((allow) => allow.groups(['admin', 'moderator']))
+  .handler(a.handler.function(recordingMutations));

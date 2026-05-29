@@ -46,6 +46,7 @@ export const AuditLog = a
       'MESSAGE_SUBMIT_RECORDINGLESS',
       'RECORDING_DELETE',
       'RECORDING_RESTORE',
+      'RECORDING_REPROCESS',
       'COMMENT_DELETE',
       'USER_BAN',
       'USER_UNBAN',
