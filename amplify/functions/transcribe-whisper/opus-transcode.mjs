@@ -73,9 +73,10 @@ export function transcodeToOpus(opts) {
       reject(err);
       return;
     }
+    // Keep only the tail so a noisy ffmpeg can't grow this unbounded.
     let stderr = '';
     child.stderr?.on('data', (chunk) => {
-      stderr += chunk.toString();
+      stderr = (stderr + chunk.toString()).slice(-4096);
     });
     child.on('error', reject);
     child.on('close', (code) => {

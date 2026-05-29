@@ -121,6 +121,7 @@ RUN cd ${LAMBDA_TASK_ROOT} && npm install --omit=dev --no-package-lock
 
 COPY handler.mjs ${LAMBDA_TASK_ROOT}/handler.mjs
 COPY run-whisper.mjs ${LAMBDA_TASK_ROOT}/run-whisper.mjs
+COPY opus-transcode.mjs ${LAMBDA_TASK_ROOT}/opus-transcode.mjs
 
 # Build identity baked into the image so the handler can log which
 # build is actually running (#442 follow-up). Defaults survive a
