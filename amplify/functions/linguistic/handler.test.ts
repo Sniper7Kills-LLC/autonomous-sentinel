@@ -346,6 +346,37 @@ describe('linguistic — structured Message via normalizeParsed (#506)', () => {
   });
 });
 
+describe('linguistic — persists web-canonical key from the container (#514)', () => {
+  it('writes webCanonicalKey + canonicalSizeBytes onto the Recording when present', async () => {
+    const { client, updateSpy } = makeDataStub();
+    __setDeps({
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-wc-1',
+    });
+    await handler(
+      makeEvent({
+        kind: 'transcript',
+        recordingId: 'rec-wc',
+        transcript: 'skyking skyking',
+        webCanonicalKey: 'recordings/web/rec-wc.opus',
+        canonicalSizeBytes: 4096,
+        enqueuedAt: '2026-05-24T18:00:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        id: 'rec-wc',
+        webCanonicalKey: 'recordings/web/rec-wc.opus',
+        canonicalSizeBytes: 4096,
+        transcriptionStatus: 'PUBLISHED',
+      }),
+    );
+  });
+});
+
 describe('linguistic — failure paths', () => {
   it('skips malformed SQS bodies', async () => {
     const { client } = makeDataStub();

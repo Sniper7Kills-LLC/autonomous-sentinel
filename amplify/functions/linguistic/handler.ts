@@ -58,6 +58,10 @@ interface TranscriptQueueMessage {
   transcript: string;
   /** S3 key of the per-word timestamps JSON sidecar (#92). */
   wordTimestampsKey?: string;
+  /** Web-canonical Opus key + size, set when the Whisper container
+   * produced the playback derivative (consolidated transcode, #514). */
+  webCanonicalKey?: string;
+  canonicalSizeBytes?: number;
   enqueuedAt: string;
 }
 
@@ -102,6 +106,8 @@ export interface LinguisticDataClient {
         transcriptionFailed?: boolean;
         failedReason?: string | null;
         wordTimestampsKey?: string | null;
+        webCanonicalKey?: string | null;
+        canonicalSizeBytes?: number | null;
       }) => Promise<{ data: unknown; errors?: unknown }>;
     };
   };
@@ -201,6 +207,8 @@ interface RawLinguisticMessage {
   recordingId?: string;
   transcript?: string;
   wordTimestampsKey?: string;
+  webCanonicalKey?: string;
+  canonicalSizeBytes?: number;
   reason?: string;
   enqueuedAt?: string;
 }
@@ -236,6 +244,12 @@ export function parseMessage(body: string): LinguisticQueueMessage {
       typeof parsed.wordTimestampsKey === 'string' && parsed.wordTimestampsKey.length > 0
         ? parsed.wordTimestampsKey
         : undefined,
+    webCanonicalKey:
+      typeof parsed.webCanonicalKey === 'string' && parsed.webCanonicalKey.length > 0
+        ? parsed.webCanonicalKey
+        : undefined,
+    canonicalSizeBytes:
+      typeof parsed.canonicalSizeBytes === 'number' ? parsed.canonicalSizeBytes : undefined,
     enqueuedAt: parsed.enqueuedAt ?? nowDate().toISOString(),
   };
 }
@@ -286,6 +300,11 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
     transcriptionStatus: 'PUBLISHED',
     transcriptionStatusUpdatedAt: ts,
     ...(msg.wordTimestampsKey ? { wordTimestampsKey: msg.wordTimestampsKey } : {}),
+    // Web-canonical Opus produced by the Whisper container (#514).
+    ...(msg.webCanonicalKey ? { webCanonicalKey: msg.webCanonicalKey } : {}),
+    ...(typeof msg.canonicalSizeBytes === 'number'
+      ? { canonicalSizeBytes: msg.canonicalSizeBytes }
+      : {}),
   });
   if (updated.errors) {
     if (isDeletedRowError(updated.errors)) {

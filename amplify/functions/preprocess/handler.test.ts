@@ -1,12 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { SQSEvent } from 'aws-lambda';
 import { mockClient } from 'aws-sdk-client-mock';
-import { CopyObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 
 import {
   handler,
-  buildWebKey,
   parseMessage,
   __setDeps,
   __resetDeps,
@@ -76,11 +75,8 @@ beforeEach(() => {
   sqsMock.reset();
   process.env.RECORDINGS_BUCKET = 'test-bucket';
   process.env.TRANSCRIBE_QUEUE_URL = 'https://sqs.us-east-1.amazonaws.com/0/transcribe';
-  // Default: ffmpeg layer not present → byte-copy fallback path.
-  delete process.env.FFMPEG_PATH;
 
   s3Mock.on(HeadObjectCommand).resolves({ ContentLength: 1234 });
-  s3Mock.on(CopyObjectCommand).resolves({});
   sqsMock.on(SendMessageCommand).resolves({ MessageId: 'sqs-1' });
 });
 
@@ -89,12 +85,6 @@ afterEach(() => {
 });
 
 describe('preprocess — helpers', () => {
-  it('buildWebKey preserves the original extension', () => {
-    expect(buildWebKey('rec-1', 'recordings/originals/abc.wav')).toBe('recordings/web/rec-1.wav');
-    expect(buildWebKey('rec-2', 'recordings/originals/abc.mp3')).toBe('recordings/web/rec-2.mp3');
-    expect(buildWebKey('rec-3', 'recordings/originals/abc')).toBe('recordings/web/rec-3');
-  });
-
   it('parseMessage rejects messages missing required fields', () => {
     expect(() => parseMessage('{}')).toThrow(/missing required fields/);
     expect(() => parseMessage(JSON.stringify({ recordingId: 'r', originalKey: 'k' }))).toThrow(
@@ -116,8 +106,8 @@ describe('preprocess — helpers', () => {
   });
 });
 
-describe('preprocess — happy path', () => {
-  it('copies the original to the web key, advances Recording via Amplify Data, publishes transcribe message', async () => {
+describe('preprocess — happy path (consolidated #514)', () => {
+  it('validates the original, advances Recording to TRANSCRIBING, publishes originalKey to transcribe', async () => {
     const { client, updateSpy } = makeDataStub();
     __setDeps({
       s3: new S3Client({}),
@@ -134,53 +124,32 @@ describe('preprocess — happy path', () => {
 
     await handler(event, {} as never, () => undefined);
 
-    const copyCalls = s3Mock.commandCalls(CopyObjectCommand);
-    expect(copyCalls).toHaveLength(1);
-    expect(copyCalls[0]?.args[0].input.Key).toBe('recordings/web/rec-42.wav');
-    expect(copyCalls[0]?.args[0].input.CopySource).toBe(
-      'test-bucket/recordings%2Foriginals%2Fabc.wav',
-    );
+    // HEAD validates existence; no copy/transcode in preprocess anymore.
+    expect(s3Mock.commandCalls(HeadObjectCommand)).toHaveLength(1);
 
+    // Status advances; webCanonicalKey is NOT set here (the container sets it later).
     expect(updateSpy).toHaveBeenCalledOnce();
-    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+    const upd = updateSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(upd).toEqual(
       expect.objectContaining({
         id: 'rec-42',
-        webCanonicalKey: 'recordings/web/rec-42.wav',
-        canonicalSizeBytes: 1234,
         transcriptionStatus: 'TRANSCRIBING',
         transcriptionStatusUpdatedAt: '2026-05-24T18:00:00.000Z',
       }),
     );
+    expect(upd.webCanonicalKey).toBeUndefined();
 
+    // Transcribe message carries the ORIGINAL key + contentHash.
     const sqsCalls = sqsMock.commandCalls(SendMessageCommand);
     expect(sqsCalls).toHaveLength(1);
     const sentBody = JSON.parse(sqsCalls[0]?.args[0].input.MessageBody ?? '{}') as {
       recordingId: string;
-      audioKey: string;
+      originalKey: string;
+      contentHash: string;
     };
     expect(sentBody.recordingId).toBe('rec-42');
-    expect(sentBody.audioKey).toBe('recordings/web/rec-42.wav');
-  });
-
-  it('URL-encodes only the key portion of CopySource — preserves the bucket/slash delimiter', async () => {
-    const { client } = makeDataStub();
-    __setDeps({
-      s3: new S3Client({}),
-      sqs: new SQSClient({}),
-      dataClient: client,
-      now: () => new Date('2026-05-24T18:00:00Z'),
-    });
-    const event = makeEvent({
-      recordingId: 'rec-encode',
-      originalKey: 'recordings/originals/hash (1).wav',
-      contentHash: 'h-encode',
-      enqueuedAt: '2026-05-24T17:55:00Z',
-    });
-    await handler(event, {} as never, () => undefined);
-    const copyCalls = s3Mock.commandCalls(CopyObjectCommand);
-    expect(copyCalls[0]?.args[0].input.CopySource).toBe(
-      'test-bucket/recordings%2Foriginals%2Fhash%20(1).wav',
-    );
+    expect(sentBody.originalKey).toBe('recordings/originals/abc.wav');
+    expect(sentBody.contentHash).toBe('h-42');
   });
 });
 
@@ -218,8 +187,8 @@ describe('preprocess — failure paths', () => {
     errSpy.mockRestore();
   });
 
-  it('marks Recording PREPROCESS_FAILED + rethrows when CopyObject fails', async () => {
-    s3Mock.on(CopyObjectCommand).rejects(new Error('AccessDenied'));
+  it('marks Recording PREPROCESS_FAILED + rethrows when the original HEAD fails', async () => {
+    s3Mock.on(HeadObjectCommand).rejects(new Error('AccessDenied'));
     const { client, updateSpy } = makeDataStub();
     __setDeps({
       s3: new S3Client({}),
@@ -242,85 +211,6 @@ describe('preprocess — failure paths', () => {
         transcriptionStatus: 'PREPROCESS_FAILED',
         transcriptionFailed: true,
         failedReason: 'AccessDenied',
-      }),
-    );
-    errSpy.mockRestore();
-  });
-});
-
-describe('preprocess — ffmpeg transcode path (#503, FFMPEG_PATH set)', () => {
-  it('transcodes to the .opus web key, advances Recording, publishes transcribe message', async () => {
-    process.env.FFMPEG_PATH = '/opt/bin/ffmpeg';
-    const { client, updateSpy } = makeDataStub();
-    const transcodeWeb = vi.fn().mockResolvedValue({
-      webKey: 'recordings/web/rec-77.opus',
-      sizeBytes: 4096,
-    });
-    __setDeps({
-      s3: new S3Client({}),
-      sqs: new SQSClient({}),
-      dataClient: client,
-      now: () => new Date('2026-05-24T18:00:00Z'),
-      transcodeWeb,
-    });
-    const event = makeEvent({
-      recordingId: 'rec-77',
-      originalKey: 'recordings/originals/abc.wav',
-      contentHash: 'h-77',
-      enqueuedAt: '2026-05-24T17:55:00Z',
-    });
-
-    await handler(event, {} as never, () => undefined);
-
-    // ffmpeg orchestration called with the configured binary path; no
-    // byte-copy on this path.
-    expect(transcodeWeb).toHaveBeenCalledOnce();
-    expect(transcodeWeb.mock.calls[0]?.[1]).toEqual(
-      expect.objectContaining({ ffmpegBinary: '/opt/bin/ffmpeg' }),
-    );
-    expect(s3Mock.commandCalls(CopyObjectCommand)).toHaveLength(0);
-
-    // Recording advanced with the .opus key + transcoded size.
-    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
-      expect.objectContaining({
-        id: 'rec-77',
-        webCanonicalKey: 'recordings/web/rec-77.opus',
-        canonicalSizeBytes: 4096,
-        transcriptionStatus: 'TRANSCRIBING',
-      }),
-    );
-
-    // Transcribe message carries the .opus key.
-    const sent = sqsMock.commandCalls(SendMessageCommand);
-    expect(sent).toHaveLength(1);
-    const body = JSON.parse(sent[0]?.args[0].input.MessageBody as string) as { audioKey: string };
-    expect(body.audioKey).toBe('recordings/web/rec-77.opus');
-  });
-
-  it('marks PREPROCESS_FAILED + rethrows when the transcode throws', async () => {
-    process.env.FFMPEG_PATH = '/opt/bin/ffmpeg';
-    const { client, updateSpy } = makeDataStub();
-    const transcodeWeb = vi.fn().mockRejectedValue(new Error('ffmpeg exit 1'));
-    __setDeps({
-      s3: new S3Client({}),
-      sqs: new SQSClient({}),
-      dataClient: client,
-      now: () => new Date('2026-05-24T18:00:00Z'),
-      transcodeWeb,
-    });
-    const event = makeEvent({
-      recordingId: 'rec-78',
-      originalKey: 'recordings/originals/abc.wav',
-      contentHash: 'h-78',
-      enqueuedAt: '2026-05-24T18:00:00Z',
-    });
-    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    await expect(handler(event, {} as never, () => undefined)).rejects.toThrow(/ffmpeg exit 1/);
-    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
-      expect.objectContaining({
-        id: 'rec-78',
-        transcriptionStatus: 'PREPROCESS_FAILED',
-        transcriptionFailed: true,
       }),
     );
     errSpy.mockRestore();
