@@ -44,7 +44,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readWhisperConfig, runWhisper, WhisperError } from './run-whisper.mjs';
-import { transcodeToOpus } from './opus-transcode.mjs';
+import { transcodeToOpus, transcodeToWav } from './opus-transcode.mjs';
 
 const RECORDINGS_BUCKET = process.env.RECORDINGS_BUCKET ?? '';
 const PIPELINE_TEMP_PREFIX = process.env.PIPELINE_TEMP_PREFIX ?? 'pipeline-temp';
@@ -159,8 +159,17 @@ async function processOne(body) {
       const origExt = extensionOf(body.originalKey);
       const origPath = join(tmpDir, `original${origExt}`);
       const opusPath = join(tmpDir, `${recordingId}.opus`);
+      const wavPath = join(tmpDir, `${recordingId}.16k.wav`);
       await downloadFromS3(RECORDINGS_BUCKET, body.originalKey, origPath);
+
+      // Two derivatives from the original:
+      //   - Opus 32k mono → the browser-playback canonical (uploaded).
+      //   - 16 kHz mono PCM WAV → whisper.cpp's required input (the
+      //     static build can't decode Opus; feeding it Opus produces no
+      //     transcript — the bug this fixes).
       await transcodeToOpus({ inputPath: origPath, outputPath: opusPath, ffmpegPath: FFMPEG_PATH });
+      await transcodeToWav({ inputPath: origPath, outputPath: wavPath, ffmpegPath: FFMPEG_PATH });
+
       const opusBuf = await readFile(opusPath);
       webCanonicalKey = `${RECORDINGS_WEB_PREFIX}/${recordingId}.opus`;
       canonicalSizeBytes = opusBuf.length;
@@ -174,8 +183,8 @@ async function processOne(body) {
           Metadata: { 'recording-id': recordingId },
         }),
       );
-      whisperInputPath = opusPath;
-      cleanupPaths.push(origPath, opusPath);
+      whisperInputPath = wavPath;
+      cleanupPaths.push(origPath, opusPath, wavPath);
     } else {
       const audioKey = audioKeyFor(body);
       const inputExt = extensionOf(audioKey) || '.opus';

@@ -19,18 +19,22 @@ export class TranscodeError extends Error {
   constructor(message: string, code: number | null, stderr: string);
 }
 
-export function buildFfmpegArgs(inputPath: string, outputPath: string): string[];
+export const WHISPER_SAMPLE_RATE_HZ: number;
 
-export interface TranscodeToOpusOpts {
+export function buildFfmpegArgs(inputPath: string, outputPath: string): string[];
+export function buildWavArgs(inputPath: string, outputPath: string): string[];
+
+export interface TranscodeOpts {
   inputPath: string;
   outputPath: string;
   ffmpegPath?: string;
   spawnFn?: typeof spawn;
 }
 
-export interface TranscodeToOpusResult {
+export interface TranscodeResult {
   outputPath: string;
   stderrTail: string;
 }
 
-export function transcodeToOpus(opts: TranscodeToOpusOpts): Promise<TranscodeToOpusResult>;
+export function transcodeToOpus(opts: TranscodeOpts): Promise<TranscodeResult>;
+export function transcodeToWav(opts: TranscodeOpts): Promise<TranscodeResult>;

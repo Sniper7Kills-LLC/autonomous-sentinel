@@ -1,6 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { buildFfmpegArgs, transcodeToOpus, TranscodeError } from './opus-transcode.mjs';
+import {
+  buildFfmpegArgs,
+  buildWavArgs,
+  transcodeToOpus,
+  transcodeToWav,
+  TranscodeError,
+} from './opus-transcode.mjs';
 
 /**
  * Behaviour tests for the in-container ffmpeg → Opus helper (#514).
@@ -36,6 +42,43 @@ describe('buildFfmpegArgs', () => {
       'on',
       '/tmp/out.opus',
     ]);
+  });
+});
+
+describe('buildWavArgs', () => {
+  it('produces 16 kHz mono pcm_s16le argv (whisper.cpp input)', () => {
+    expect(buildWavArgs('/tmp/in.mp3', '/tmp/out.wav')).toEqual([
+      '-y',
+      '-loglevel',
+      'error',
+      '-i',
+      '/tmp/in.mp3',
+      '-ac',
+      '1',
+      '-ar',
+      '16000',
+      '-c:a',
+      'pcm_s16le',
+      '/tmp/out.wav',
+    ]);
+  });
+});
+
+describe('transcodeToWav', () => {
+  it('resolves on exit 0', async () => {
+    const proc = makeFakeProc();
+    const spawnFn = vi.fn(() => proc) as never;
+    const p = transcodeToWav({ inputPath: '/tmp/in.mp3', outputPath: '/tmp/out.wav', spawnFn });
+    proc.emit('close', 0);
+    await expect(p).resolves.toEqual(expect.objectContaining({ outputPath: '/tmp/out.wav' }));
+  });
+
+  it('rejects with TranscodeError on non-zero exit', async () => {
+    const proc = makeFakeProc();
+    const spawnFn = vi.fn(() => proc) as never;
+    const p = transcodeToWav({ inputPath: '/tmp/in.mp3', outputPath: '/tmp/out.wav', spawnFn });
+    proc.emit('close', 1);
+    await expect(p).rejects.toBeInstanceOf(TranscodeError);
   });
 });
 

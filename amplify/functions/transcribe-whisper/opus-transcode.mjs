@@ -27,6 +27,26 @@ export class TranscodeError extends Error {
   }
 }
 
+/** whisper.cpp requires 16 kHz mono signed-16 PCM WAV. */
+export const WHISPER_SAMPLE_RATE_HZ = 16000;
+
+export function buildWavArgs(inputPath, outputPath) {
+  return [
+    '-y',
+    '-loglevel',
+    'error',
+    '-i',
+    inputPath,
+    '-ac',
+    '1',
+    '-ar',
+    String(WHISPER_SAMPLE_RATE_HZ),
+    '-c:a',
+    'pcm_s16le',
+    outputPath,
+  ];
+}
+
 export function buildFfmpegArgs(inputPath, outputPath) {
   return [
     '-y',
@@ -50,17 +70,17 @@ export function buildFfmpegArgs(inputPath, outputPath) {
   ];
 }
 
-export function transcodeToOpus(opts) {
+function runFfmpeg(label, opts, buildArgs) {
   const inputPath = opts?.inputPath;
   const outputPath = opts?.outputPath;
   if (typeof inputPath !== 'string' || inputPath.length === 0) {
-    return Promise.reject(new Error('transcodeToOpus: inputPath required'));
+    return Promise.reject(new Error(`${label}: inputPath required`));
   }
   if (typeof outputPath !== 'string' || outputPath.length === 0) {
-    return Promise.reject(new Error('transcodeToOpus: outputPath required'));
+    return Promise.reject(new Error(`${label}: outputPath required`));
   }
   if (inputPath === outputPath) {
-    return Promise.reject(new Error('transcodeToOpus: inputPath and outputPath must differ'));
+    return Promise.reject(new Error(`${label}: inputPath and outputPath must differ`));
   }
   const ffmpegPath = opts.ffmpegPath || process.env.FFMPEG_PATH || DEFAULT_FFMPEG_PATH;
   const spawnFn = opts.spawnFn || spawn;
@@ -68,7 +88,7 @@ export function transcodeToOpus(opts) {
   return new Promise((resolve, reject) => {
     let child;
     try {
-      child = spawnFn(ffmpegPath, buildFfmpegArgs(inputPath, outputPath));
+      child = spawnFn(ffmpegPath, buildArgs(inputPath, outputPath));
     } catch (err) {
       reject(err);
       return;
@@ -83,10 +103,18 @@ export function transcodeToOpus(opts) {
       if (code === 0) {
         resolve({ outputPath, stderrTail: stderr.slice(-512) });
       } else {
-        reject(
-          new TranscodeError(`transcodeToOpus: ffmpeg exited ${code}`, code, stderr.slice(-512)),
-        );
+        reject(new TranscodeError(`${label}: ffmpeg exited ${code}`, code, stderr.slice(-512)));
       }
     });
   });
+}
+
+/** Transcode to the web-canonical Opus (browser playback). */
+export function transcodeToOpus(opts) {
+  return runFfmpeg('transcodeToOpus', opts, buildFfmpegArgs);
+}
+
+/** Transcode to 16 kHz mono PCM WAV — the input whisper.cpp requires. */
+export function transcodeToWav(opts) {
+  return runFfmpeg('transcodeToWav', opts, buildWavArgs);
 }
