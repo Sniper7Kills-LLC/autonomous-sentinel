@@ -20,13 +20,19 @@ vi.mock('next/navigation', async (importActual) => {
 });
 
 const getCurrentUserMock = vi.fn<() => Promise<unknown>>();
+const fetchAuthSessionMock = vi.fn<() => Promise<unknown>>();
 vi.mock('aws-amplify/auth', () => ({
   getCurrentUser: () => getCurrentUserMock(),
+  fetchAuthSession: () => fetchAuthSessionMock(),
 }));
 
 describe('LandingPage', () => {
   beforeEach(() => {
     getCurrentUserMock.mockReset();
+    fetchAuthSessionMock.mockReset();
+    fetchAuthSessionMock.mockResolvedValue({
+      tokens: { idToken: { payload: { sub: 'sub-123' } } },
+    });
     vi.stubGlobal(
       'matchMedia',
       vi.fn().mockReturnValue({

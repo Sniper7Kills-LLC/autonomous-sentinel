@@ -118,9 +118,13 @@ export function FieldVoteAffordance({
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label={`Vote on ${FIELD_LABELS[field]}`}
+        aria-label={
+          currentValue
+            ? `Vote on ${FIELD_LABELS[field]} (current: ${currentValue})`
+            : `Vote on ${FIELD_LABELS[field]} (currently empty)`
+        }
       >
-        Vote {FIELD_LABELS[field]}
+        {currentValue ? `Vote ${FIELD_LABELS[field]}` : `Vote ${FIELD_LABELS[field]} (empty)`}
       </button>
       {open && (
         <div
@@ -133,7 +137,13 @@ export function FieldVoteAffordance({
           className={styles.popover}
         >
           <div className={styles.popHead}>
-            <span>{FIELD_LABELS[field]}</span>
+            <span>
+              {FIELD_LABELS[field]}
+              {' · '}
+              <em className={styles.popHeadValue}>
+                {currentValue && currentValue.length > 0 ? currentValue : '(empty)'}
+              </em>
+            </span>
             <button
               type="button"
               className={styles.closeBtn}

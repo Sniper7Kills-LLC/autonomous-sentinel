@@ -7,6 +7,10 @@ interface SessionState {
   loading: boolean;
   signedIn: boolean;
   username: string | null;
+  /** Cognito user sub (UUID). Drives every `User.id = cognitoSub`
+   *  query keyed off the caller — `Recording.uploaderId`,
+   *  `Reputation.userId`, etc. */
+  sub: string | null;
 }
 
 /**
@@ -21,6 +25,7 @@ export function useSessionState(): SessionState {
     loading: true,
     signedIn: false,
     username: null,
+    sub: null,
   });
 
   useEffect(() => {
@@ -28,17 +33,22 @@ export function useSessionState(): SessionState {
     configureAmplifyOnce();
     void (async () => {
       try {
-        const { getCurrentUser } = await import('aws-amplify/auth');
+        const { getCurrentUser, fetchAuthSession } = await import('aws-amplify/auth');
         const user = await getCurrentUser();
+        const session = await fetchAuthSession();
+        const idClaims = session.tokens?.idToken?.payload;
+        const sub =
+          (typeof idClaims?.sub === 'string' ? idClaims.sub : null) ?? user?.userId ?? null;
         if (cancelled) return;
         setState({
           loading: false,
           signedIn: true,
           username: user?.signInDetails?.loginId ?? user?.username ?? null,
+          sub,
         });
       } catch {
         if (cancelled) return;
-        setState({ loading: false, signedIn: false, username: null });
+        setState({ loading: false, signedIn: false, username: null, sub: null });
       }
     })();
     return () => {
