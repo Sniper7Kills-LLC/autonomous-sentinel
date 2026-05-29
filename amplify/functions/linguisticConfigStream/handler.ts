@@ -244,7 +244,7 @@ function imageToPlain(
   return unmarshall(image) as LinguisticConfigImage;
 }
 
-export const handler: DynamoDBStreamHandler = async (event) => {
+export const handler: DynamoDBStreamHandler = async (event, _context, _callback) => {
   for (const record of event.Records) {
     const parsed = parseConfigStreamRecord({
       eventName: record.eventName,
