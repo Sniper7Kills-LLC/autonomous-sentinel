@@ -114,16 +114,20 @@ const COLLAPSE_SIMILARITY = 0.8;
  * odd token count, or two unrelated halves are returned unchanged so
  * a legitimately long transmission is never truncated.
  */
-export function collapseDoubleBroadcast(text: string): string {
+export function collapseDoubleBroadcast(text: string, opts: { delimiter?: boolean } = {}): string {
   const normalized = squish(text);
   if (!normalized) return normalized;
 
-  // Prefer an explicit "I say again" delimiter (SKYKING marks its
-  // repeat with it) — reliable, no similarity guessing. Take the head.
-  const sayAgain = /\bi say again\b/i.exec(normalized);
-  if (sayAgain) {
-    const head = normalized.slice(0, sayAgain.index).trim();
-    if (head.length > 0) return head;
+  // SKYKING marks its repeat with an explicit "I say again" delimiter —
+  // reliable, no similarity guessing. Opt-in only: other double-broadcast
+  // types (ALLSTATIONS) use the similarity path below and must not be
+  // truncated by the phrase appearing in their content.
+  if (opts.delimiter) {
+    const sayAgain = /\bi say again\b/i.exec(normalized);
+    if (sayAgain) {
+      const head = normalized.slice(0, sayAgain.index).trim();
+      if (head.length > 0) return head;
+    }
   }
 
   const tokens = normalized.split(' ');
@@ -211,9 +215,14 @@ const DOUBLE_BROADCAST_TYPES = new Set(['ALLSTATIONS', 'SKYKING']);
  * - everything else: passthrough (trimmed body, best-effort extraction).
  */
 export function normalizeParsed(input: NormalizeInput): NormalizeOutput {
-  const collapsed = DOUBLE_BROADCAST_TYPES.has(input.type)
-    ? collapseDoubleBroadcast(input.transcript)
-    : squish(input.transcript);
+  const collapsed =
+    input.type === 'SKYKING'
+      ? // SKYKING uses the explicit "I say again" delimiter (similarity
+        // fallback still applies when the delimiter is absent).
+        collapseDoubleBroadcast(input.transcript, { delimiter: true })
+      : DOUBLE_BROADCAST_TYPES.has(input.type)
+        ? collapseDoubleBroadcast(input.transcript)
+        : squish(input.transcript);
 
   const sender = input.sender ?? extractSender(collapsed);
   const receiver = input.receiver ?? extractReceiver(collapsed);

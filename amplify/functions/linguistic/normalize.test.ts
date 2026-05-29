@@ -71,6 +71,14 @@ describe('normalize — collapseDoubleBroadcast', () => {
     const text = 'alpha charlie delta totally different second message here now';
     expect(collapseDoubleBroadcast(text)).toBe(text);
   });
+
+  it('splits on the "I say again" delimiter only when opted in', () => {
+    const text = 'skyking skyking alpha I say again skyking skyking alpha';
+    // Default (similarity) path: phrase is not a delimiter.
+    expect(collapseDoubleBroadcast(text)).not.toBe('skyking skyking alpha');
+    // Opt-in: delimiter wins, returns the head.
+    expect(collapseDoubleBroadcast(text, { delimiter: true })).toBe('skyking skyking alpha');
+  });
 });
 
 describe('normalize — extractSender', () => {
@@ -175,6 +183,16 @@ describe('normalize — normalizeParsed orchestrator', () => {
     expect(out.sender).toBe('Offutt');
     expect(out.receiver).toBe('Raptor');
     expect(out.body).toBe('ACD');
+  });
+
+  it('ALLSTATIONS: is NOT truncated by an "I say again" phrase in its content', () => {
+    // Delimiter split is SKYKING-only — ALLSTATIONS must decode every
+    // phonetic letter, before and after the phrase.
+    const out = normalizeParsed({
+      type: 'ALLSTATIONS',
+      transcript: 'all stations alpha charlie i say again delta echo',
+    });
+    expect(out.body).toBe('ACDE');
   });
 
   it('OTHER: passthrough — no decode, no collapse forced, body is the trimmed transcript', () => {
