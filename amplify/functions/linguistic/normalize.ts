@@ -142,7 +142,10 @@ export function collapseDoubleBroadcast(text: string): string {
 export function extractSender(transcript: string): string | undefined {
   const m = /\bthis is\s+(.+?)\s+out\b/i.exec(transcript);
   const sender = m?.[1]?.trim();
-  return sender ? sender : undefined;
+  // Guard the degenerate "this is out out" — the lazy capture would
+  // otherwise grab the sign-off word "out" as the callsign.
+  if (!sender || /^out$/i.test(sender)) return undefined;
+  return sender;
 }
 
 /**

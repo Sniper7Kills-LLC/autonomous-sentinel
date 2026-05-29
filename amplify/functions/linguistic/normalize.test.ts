@@ -85,6 +85,10 @@ describe('normalize — extractSender', () => {
   it('returns undefined when no sender pattern present', () => {
     expect(extractSender('all stations alpha charlie delta')).toBeUndefined();
   });
+
+  it('does not capture the sign-off word in the degenerate "this is out out"', () => {
+    expect(extractSender('this is out out')).toBeUndefined();
+  });
 });
 
 describe('normalize — extractReceiver', () => {
@@ -94,6 +98,12 @@ describe('normalize — extractReceiver', () => {
 
   it('is case-insensitive', () => {
     expect(extractReceiver('for raptor for raptor')).toBe('raptor');
+  });
+
+  it('matches the repeat case-insensitively (JS backref honors /i)', () => {
+    // Regression lock: "FOR Raptor FOR raptor" still collapses; the
+    // captured value preserves the first occurrence's casing.
+    expect(extractReceiver('FOR Raptor FOR raptor')).toBe('Raptor');
   });
 
   it('returns undefined when the receiver is not stated twice', () => {
