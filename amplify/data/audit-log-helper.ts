@@ -140,7 +140,11 @@ export interface AuditLogCreateInput {
   targetType: string;
   targetId: string;
   targetMessageId: string | null;
-  diff: Record<string, { before: unknown; after: unknown }> | null;
+  // Serialized to a JSON string for the `diff: a.json()` (AWSJSON)
+  // field. AppSync's AWSJSON scalar rejects a raw object variable
+  // ("Variable 'diff' has an invalid value"); a JSON string is the
+  // scalar's contract.
+  diff: string | null;
   reason: string | null;
   ipAddress: string | null;
   userAgent: string | null;
@@ -224,7 +228,9 @@ export async function audit(
 
   const hasBefore = opts.before !== undefined;
   const hasAfter = opts.after !== undefined;
-  const diff = hasBefore || hasAfter ? diffShallow(opts.before ?? {}, opts.after ?? {}) : null;
+  const diffObj = hasBefore || hasAfter ? diffShallow(opts.before ?? {}, opts.after ?? {}) : null;
+  // Stringify for the AWSJSON field (see AuditLogCreateInput.diff).
+  const diff = diffObj === null ? null : JSON.stringify(diffObj);
 
   const input: AuditLogCreateInput = {
     actorId,

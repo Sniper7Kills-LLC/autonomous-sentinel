@@ -326,7 +326,8 @@ describe('audit helper — diff computation', () => {
     );
 
     const input = fake.createSpy.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(input.diff).toEqual({
+    // diff is serialized to a JSON string for the AWSJSON field.
+    expect(JSON.parse(input.diff as string)).toEqual({
       body: { before: 'old', after: 'new' },
     });
   });
@@ -357,9 +358,10 @@ describe('audit helper — diff computation', () => {
     );
 
     const input = fake.createSpy.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(input.diff).toEqual({
-      name: { before: undefined, after: 'NEW' },
-      siteId: { before: undefined, after: 'X' },
+    // JSON.stringify drops the `before: undefined` entries.
+    expect(JSON.parse(input.diff as string)).toEqual({
+      name: { after: 'NEW' },
+      siteId: { after: 'X' },
     });
   });
 });
