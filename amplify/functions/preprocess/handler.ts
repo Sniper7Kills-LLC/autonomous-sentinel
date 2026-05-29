@@ -1,28 +1,24 @@
 import type { SQSEvent, SQSHandler } from 'aws-lambda';
-import { CopyObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
-import { transcodeWebCanonical, type TranscodeWebResult } from './transcode-web';
 
 /**
- * Pre-process Lambda (#433 stage 2).
+ * Pre-process Lambda (#433 stage 2 / consolidated #514).
  *
  * Triggered by SQS messages on the preprocess queue. Each message
  * carries `{ recordingId, originalKey, contentHash, enqueuedAt }`
  * published by `submitRecording`.
  *
- * v1 behavior (transcoding deferred):
- *   1. Read the SQS message; resolve the original S3 key.
- *   2. HEAD the original to confirm it exists + capture size.
- *   3. Copy the original to `recordings/web/<recordingId><ext>` so the
- *      transcribe stage has a stable web-key. **No ffmpeg transcode
- *      yet** — the v1 canonical is the original bytes.
- *   4. Update the Recording row via the Amplify Data client so the
- *      testing portal's `observeQuery` subscription on Recording
- *      fires. Raw DDB writes would bypass AppSync's subscription
- *      publisher and the portal user would never see the row
- *      advance.
- *   5. Publish a transcribe-queue message `{ recordingId, audioKey }`
- *      so the Whisper container Lambda picks the recording up.
+ * Behavior (the ffmpeg transcode now lives in the Whisper container —
+ * #514 — which produces the web-canonical Opus + the transcript in one
+ * pass; preprocess no longer transcodes or copies):
+ *   1. HEAD the original to confirm it exists.
+ *   2. Advance the Recording to `TRANSCRIBING` via the Amplify Data
+ *      client so the portal `observeQuery` subscription fires (a raw
+ *      DDB write would bypass AppSync's subscription publisher).
+ *   3. Publish a transcribe-queue message `{ recordingId, originalKey,
+ *      contentHash }` — the Whisper container downloads the original,
+ *      transcodes to `recordings/web/<id>.opus`, and transcribes it.
  *
  * Failure paths:
  *   - Malformed SQS body → log + skip (consumed; can't usefully redrive).
@@ -31,11 +27,8 @@ import { transcodeWebCanonical, type TranscodeWebResult } from './transcode-web'
  *     show the stuck state, then rethrow so SQS marks the message
  *     for redrive / eventual DLQ.
  *
- * Idempotency: a redrived SQS message re-runs the full COPY + update
- * + transcribe-queue publish. CopyObject is idempotent, the Amplify
- * Data update is a SET on the same fields, and the downstream
- * transcribe-queue consumer (Whisper) is itself idempotent. A
- * duplicated SQS publish on this stage is harmless.
+ * Idempotency: a redrived SQS message re-runs HEAD + update + publish;
+ * all three are idempotent and the downstream Whisper consumer is too.
  */
 
 interface PreprocessQueueMessage {
@@ -47,7 +40,8 @@ interface PreprocessQueueMessage {
 
 interface TranscribeQueueMessage {
   recordingId: string;
-  audioKey: string;
+  originalKey: string;
+  contentHash: string;
   enqueuedAt: string;
 }
 
@@ -77,11 +71,6 @@ export interface PreprocessDeps {
   sqs?: SQSClient;
   dataClient?: PreprocessDataClient;
   now?: () => Date;
-  /** Override the ffmpeg transcode orchestration in tests. */
-  transcodeWeb?: (
-    input: { bucket: string; originalKey: string; recordingId: string; contentHash?: string },
-    deps: { s3: S3Client; ffmpegBinary?: string },
-  ) => Promise<TranscodeWebResult>;
 }
 
 let injected: PreprocessDeps = {};
@@ -127,15 +116,6 @@ function requiredEnv(name: string): string {
   return v;
 }
 
-function extensionOf(key: string): string {
-  const dot = key.lastIndexOf('.');
-  return dot >= 0 ? key.slice(dot) : '';
-}
-
-export function buildWebKey(recordingId: string, originalKey: string): string {
-  return `recordings/web/${recordingId}${extensionOf(originalKey)}`;
-}
-
 export function parseMessage(body: string): PreprocessQueueMessage {
   const parsed = JSON.parse(body) as Partial<PreprocessQueueMessage>;
   if (!parsed.recordingId || !parsed.originalKey || !parsed.contentHash) {
@@ -150,21 +130,10 @@ export function parseMessage(body: string): PreprocessQueueMessage {
 }
 
 interface ProcessOneResult {
-  /** Source bucket key (what the uploader sent). */
-  inputKey: string;
-  /** Destination bucket key (web canonical). */
-  outputKey: string;
-  /** Original size, and the web-canonical output size. Equal on the
-   * byte-copy fallback; the output shrinks on the transcode path. */
+  /** The original upload key handed to the transcribe stage. */
+  originalKey: string;
+  /** Original size (bytes) for the log. */
   inputSizeBytes: number;
-  outputSizeBytes: number;
-  /** File extensions for the conversion log. On the transcode path the
-   * output is `.opus`; on the byte-copy fallback it mirrors the input. */
-  inputExt: string;
-  outputExt: string;
-  /** True when ffmpeg transcoded to Opus (FFMPEG_PATH set); false on the
-   * byte-for-byte copy fallback used until the ffmpeg layer is wired. */
-  transcoded: boolean;
 }
 
 async function processOne(msg: PreprocessQueueMessage): Promise<ProcessOneResult> {
@@ -172,62 +141,19 @@ async function processOne(msg: PreprocessQueueMessage): Promise<ProcessOneResult
   const transcribeQueueUrl = requiredEnv('TRANSCRIBE_QUEUE_URL');
   const client = await dataClient();
 
-  // Original size is reported either way for the conversion log.
+  // Validate the original exists. The Whisper container does the ffmpeg
+  // transcode now (#514), so preprocess only advances state + hands the
+  // original key to the transcribe queue.
   const head = await s3().send(new HeadObjectCommand({ Bucket: bucket, Key: msg.originalKey }));
   const inputSizeBytes = head.ContentLength ?? 0;
 
-  // ffmpeg transcode is gated on FFMPEG_PATH (the Lambda layer's
-  // `/opt/bin/ffmpeg`, wired once the layer is provisioned). Until
-  // then we fall back to the byte-for-byte copy so the pipeline keeps
-  // flowing — flipping the env on switches to real Opus output with
-  // no code change (#503).
-  const ffmpegPath = process.env.FFMPEG_PATH;
-  let webKey: string;
-  let outputSizeBytes: number;
-  let transcoded: boolean;
-
-  if (ffmpegPath) {
-    const transcodeWeb = injected.transcodeWeb ?? transcodeWebCanonical;
-    const result = await transcodeWeb(
-      {
-        bucket,
-        originalKey: msg.originalKey,
-        recordingId: msg.recordingId,
-        contentHash: msg.contentHash,
-      },
-      { s3: s3(), ffmpegBinary: ffmpegPath },
-    );
-    webKey = result.webKey;
-    outputSizeBytes = result.sizeBytes;
-    transcoded = true;
-  } else {
-    webKey = buildWebKey(msg.recordingId, msg.originalKey);
-    // CopySource format = `${bucket}/${url-encoded-key}` — the slash
-    // is a delimiter and must NOT be encoded, only the key part is
-    // URL-encoded (per AWS S3 docs).
-    await s3().send(
-      new CopyObjectCommand({
-        Bucket: bucket,
-        CopySource: `${bucket}/${encodeURIComponent(msg.originalKey)}`,
-        Key: webKey,
-        MetadataDirective: 'REPLACE',
-        Metadata: {
-          'recording-id': msg.recordingId,
-          'content-hash': msg.contentHash,
-        },
-      }),
-    );
-    outputSizeBytes = inputSizeBytes;
-    transcoded = false;
-  }
-
   const ts = nowIso();
   // Routed through Amplify Data so AppSync's subscription publisher
-  // fires for the portal's observeQuery on Recording.
+  // fires for the portal's observeQuery on Recording. webCanonicalKey
+  // + canonicalSizeBytes are set later by linguistic from the Whisper
+  // container's transcript message (the container produces the Opus).
   const updateResult = await client.models.Recording.update({
     id: msg.recordingId,
-    webCanonicalKey: webKey,
-    canonicalSizeBytes: outputSizeBytes,
     transcriptionStatus: 'TRANSCRIBING',
     transcriptionStatusUpdatedAt: ts,
   });
@@ -239,7 +165,8 @@ async function processOne(msg: PreprocessQueueMessage): Promise<ProcessOneResult
 
   const transcribeMsg: TranscribeQueueMessage = {
     recordingId: msg.recordingId,
-    audioKey: webKey,
+    originalKey: msg.originalKey,
+    contentHash: msg.contentHash,
     enqueuedAt: ts,
   };
   await sqs().send(
@@ -249,17 +176,7 @@ async function processOne(msg: PreprocessQueueMessage): Promise<ProcessOneResult
     }),
   );
 
-  const inputExt = extensionOf(msg.originalKey) || '<none>';
-  const outputExt = extensionOf(webKey) || '<none>';
-  return {
-    inputKey: msg.originalKey,
-    outputKey: webKey,
-    inputSizeBytes,
-    outputSizeBytes,
-    inputExt,
-    outputExt,
-    transcoded,
-  };
+  return { originalKey: msg.originalKey, inputSizeBytes };
 }
 
 async function markFailed(recordingId: string, reason: string): Promise<void> {
@@ -298,21 +215,11 @@ export const handler: SQSHandler = async (event: SQSEvent, _context, _callback) 
     }
     try {
       const result = await processOne(msg);
-      // Detailed conversion summary — owner asked for explicit "what
-      // did preprocess do" visibility. Once ffmpeg lands, `transcoded`
-      // flips to true and the output sizes will diverge from input.
-      console.info('preprocess: converted + advanced to TRANSCRIBING', {
+      console.info('preprocess: validated + advanced to TRANSCRIBING', {
         recordingId: msg.recordingId,
-        inputKey: result.inputKey,
-        outputKey: result.outputKey,
-        inputExt: result.inputExt,
-        outputExt: result.outputExt,
+        originalKey: result.originalKey,
         inputSizeBytes: result.inputSizeBytes,
-        outputSizeBytes: result.outputSizeBytes,
-        transcoded: result.transcoded,
-        note: result.transcoded
-          ? 'transcoded'
-          : 'byte-for-byte copy (ffmpeg transcode deferred — #433 follow-up)',
+        note: 'transcode happens in the Whisper container (#514)',
       });
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
