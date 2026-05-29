@@ -4,6 +4,9 @@ import {
   type Function as LambdaFunction,
   FunctionUrlAuthType,
   InvokeMode,
+  Architecture,
+  Code,
+  LayerVersion,
 } from 'aws-cdk-lib/aws-lambda';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { Policy, PolicyStatement, Role } from 'aws-cdk-lib/aws-iam';
@@ -576,6 +579,22 @@ pipelineQueues.preprocess.main.grantSendMessages(recordingMutationsLambda);
 // the pre-process execution role can publish into this prefix.
 const mediaBucket = backend.storage.resources.bucket;
 const preprocessLambda = backend.preprocess.resources.lambda as LambdaFunction;
+
+// ffmpeg layer for the Opus transcode (#503). The static ffmpeg binary
+// is fetched + SHA-verified into `amplify/layers/ffmpeg/bin/ffmpeg` by
+// `amplify/scripts/fetch-ffmpeg.mjs` (run before synth locally and in
+// the Amplify backend build per `amplify.yml`); the LayerVersion zips
+// it to `/opt/bin/ffmpeg` at runtime. NOTE: `FFMPEG_PATH` is set in a
+// follow-up once the deployed layer is smoke-tested — until then the
+// handler keeps the byte-copy fallback, so attaching the layer here is
+// inert.
+const ffmpegLayer = new LayerVersion(preprocessLambda.stack, 'FfmpegLayer', {
+  code: Code.fromAsset('amplify/layers/ffmpeg'),
+  compatibleArchitectures: [Architecture.X86_64],
+  description: 'Static ffmpeg 8.1.1 (BtbN, LGPL, linux64) for preprocess Opus transcode (#503)',
+});
+preprocessLambda.addLayers(ffmpegLayer);
+
 preprocessLambda.addEnvironment('MEDIA_BUCKET_NAME', mediaBucket.bucketName);
 preprocessLambda.addEnvironment('RECORDINGS_BUCKET', mediaBucket.bucketName);
 preprocessLambda.addToRolePolicy(
