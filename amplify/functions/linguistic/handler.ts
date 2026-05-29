@@ -103,6 +103,7 @@ export interface LinguisticDataClient {
       listMessageByType: (input: {
         type: MessageType;
         broadcastTs: { between: [string, string] };
+        filter?: { deletedAt: { attributeExists: boolean } };
       }) => Promise<{
         data: Array<{ id: string; type?: string; body?: string | null }> | null;
         errors?: unknown;
@@ -163,15 +164,15 @@ function nowDate(): Date {
 }
 
 /**
- * Amplify Data `.update()` is a conditional write gated on
- * `attribute_exists(id)`. When the Recording row was deleted while a
- * pipeline message was still in flight (admin delete during
- * transcription), the update comes back with a
- * `DynamoDB:ConditionalCheckFailedException` in `errors[]`. That is a
- * tombstone signal, not a real failure — the caller should drop the
- * SQS message cleanly instead of throwing + redriving (#459).
+ * Detects a `DynamoDB:ConditionalCheckFailedException` in an Amplify
+ * Data response's `errors[]`. Two callers:
+ *   - `Recording.update` (conditional on `attribute_exists(id)`): the
+ *     row was deleted in flight (#459) — drop the SQS message cleanly.
+ *   - `Message.create` (conditional on `attribute_not_exists(id)`): a
+ *     concurrent identical capture already created the deterministic-id
+ *     Message (#454 dedup race) — link to it instead.
  */
-function isDeletedRowError(errors: unknown): boolean {
+function isConditionalCheckError(errors: unknown): boolean {
   if (!Array.isArray(errors)) return false;
   return errors.some(
     (e) =>
@@ -294,6 +295,9 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   const candidates = await client.models.Message.listMessageByType({
     type: result.type,
     broadcastTs: { between: [win.start, win.end] },
+    // Never link to a soft-deleted Message (the model mandates
+    // deletedAt-null on list/browse).
+    filter: { deletedAt: { attributeExists: false } },
   });
   if (candidates.errors) {
     // Don't block publishing on a dedup-query hiccup — fall through to create.
@@ -330,7 +334,7 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
       publishedAt: ts,
     });
     if (created.errors) {
-      if (isDeletedRowError(created.errors)) {
+      if (isConditionalCheckError(created.errors)) {
         // A Message with this deterministic id already exists (a
         // concurrent identical capture won the race) — link to it.
         targetMessageId = messageId;
@@ -363,7 +367,7 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
       : {}),
   });
   if (updated.errors) {
-    if (isDeletedRowError(updated.errors)) {
+    if (isConditionalCheckError(updated.errors)) {
       // Recording was deleted in flight. Under dedup the Message may be
       // shared by other recordings, so we must NOT delete it (that would
       // orphan their link). Drop the SQS message cleanly; a Message left
@@ -400,7 +404,7 @@ async function processTranscribeFailure(msg: TranscribeFailureQueueMessage): Pro
     transcriptionStatusUpdatedAt: ts,
   });
   if (updated.errors) {
-    if (isDeletedRowError(updated.errors)) {
+    if (isConditionalCheckError(updated.errors)) {
       // Recording deleted in flight — nothing to mark, no Message was
       // created on this path. Drop cleanly so SQS doesn't redrive (#459).
       console.warn('linguistic: Recording deleted in flight, dropping transcribe-failure message', {
