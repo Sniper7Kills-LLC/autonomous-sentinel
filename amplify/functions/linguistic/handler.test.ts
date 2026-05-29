@@ -49,7 +49,7 @@ function makeDataStub(
       Message: {
         create: createSpy as never,
         delete: deleteSpy as never,
-        listMessageByType: listSpy as never,
+        list: listSpy as never,
       },
       Recording: { get: getSpy as never, update: updateSpy as never },
     },
