@@ -69,9 +69,12 @@ function SignedInPanel({ name }: { name: string | null }) {
         Signed in as <code>{name ?? 'member'}</code>. Pick up where you left off.
       </p>
       <div className={styles.personalActions}>
+        <Link href="/uploads">My uploads</Link>
         <Link href="/portal">Open testing portal</Link>
         <Link href="/submit">Submit a recording-less message</Link>
-        <Link href="/sign-in">Account &amp; sign-out</Link>
+        <Link href="/settings/notifications">Notification preferences</Link>
+        <Link href="/settings/delete">Delete my account</Link>
+        <Link href="/sign-in">Sign out</Link>
       </div>
     </aside>
   );

@@ -5,6 +5,7 @@ import { Badge, MessageTypeBadge } from '@/components/ui/Badge';
 import { AudioPlayer } from '@/components/player/AudioPlayer';
 import { RevisionPanel } from '@/components/validation/RevisionPanel';
 import { FieldVoteAffordance } from '@/components/validation/FieldVoteAffordance';
+import { AbuseReportButton } from '@/components/abuse/AbuseReportButton';
 import { useSessionState } from '@/components/account/SessionGreeting';
 import { getMessage } from '@/lib/messages/query';
 import { listRecordingsForMessage, type DisplayRecording } from '@/lib/messages/recordings';
@@ -85,6 +86,7 @@ export function MessageDetailView({ messageId }: MessageDetailViewProps) {
               CONF {message.confidence.toFixed(2)}
             </Badge>
           )}
+          <AbuseReportButton targetType="MESSAGE" targetId={message.id} reporterId={session.sub} />
         </div>
         <h2 id="msg-title" className={styles.metaCallsigns}>
           {message.sender && <span className={styles.callsign}>{message.sender}</span>}
