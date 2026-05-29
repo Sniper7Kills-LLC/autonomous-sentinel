@@ -44,11 +44,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readWhisperConfig, runWhisper, WhisperError } from './run-whisper.mjs';
+import { transcodeToOpus } from './opus-transcode.mjs';
 
 const RECORDINGS_BUCKET = process.env.RECORDINGS_BUCKET ?? '';
 const PIPELINE_TEMP_PREFIX = process.env.PIPELINE_TEMP_PREFIX ?? 'pipeline-temp';
 const RECORDINGS_WEB_PREFIX = process.env.RECORDINGS_WEB_PREFIX ?? 'recordings/web';
 const LINGUISTIC_QUEUE_URL = process.env.LINGUISTIC_QUEUE_URL ?? '';
+const FFMPEG_PATH = process.env.FFMPEG_PATH ?? '/usr/local/bin/ffmpeg';
 
 // Build identity baked into the image at `docker build` time
 // (#442 follow-up). Lets the cold-start log + per-invoke
@@ -132,20 +134,58 @@ async function processOne(body) {
   if (!recordingId || typeof recordingId !== 'string') {
     throw new Error('whisper-handler: SQS body missing recordingId');
   }
-  const audioKey = audioKeyFor(body);
   const config = readWhisperConfig(process.env);
   const tmpDir = join(tmpdir(), `whisper-${randomUUID()}`);
   await mkdir(tmpDir, { recursive: true });
 
-  const inputExt = extensionOf(audioKey) || '.opus';
-  const inputPath = join(tmpDir, `${recordingId}${inputExt}`);
   const outputPrefix = join(tmpDir, recordingId);
+  const cleanupPaths = [`${outputPrefix}.json`];
+
+  // Consolidated path (#514): the message carries the ORIGINAL upload
+  // key. Download it, transcode to the web-canonical Opus (the
+  // browser-playback file), upload it, then run whisper on it — one
+  // image does transcode + transcribe. webCanonicalKey/size ride the
+  // transcript message so the linguistic Lambda persists them.
+  //
+  // Legacy path: the message carries `audioKey` (web Opus already
+  // produced by an older preprocess build still in flight). Download +
+  // transcribe with no transcode. Kept for back-compat during rollout.
+  let whisperInputPath;
+  let webCanonicalKey;
+  let canonicalSizeBytes;
 
   try {
-    await downloadFromS3(RECORDINGS_BUCKET, audioKey, inputPath);
+    if (typeof body.originalKey === 'string' && body.originalKey.length > 0) {
+      const origExt = extensionOf(body.originalKey);
+      const origPath = join(tmpDir, `original${origExt}`);
+      const opusPath = join(tmpDir, `${recordingId}.opus`);
+      await downloadFromS3(RECORDINGS_BUCKET, body.originalKey, origPath);
+      await transcodeToOpus({ inputPath: origPath, outputPath: opusPath, ffmpegPath: FFMPEG_PATH });
+      const opusBuf = await readFile(opusPath);
+      webCanonicalKey = `${RECORDINGS_WEB_PREFIX}/${recordingId}.opus`;
+      canonicalSizeBytes = opusBuf.length;
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: RECORDINGS_BUCKET,
+          Key: webCanonicalKey,
+          Body: opusBuf,
+          ContentType: 'audio/ogg; codecs=opus',
+          CacheControl: 'public, max-age=31536000, immutable',
+          Metadata: { 'recording-id': recordingId },
+        }),
+      );
+      whisperInputPath = opusPath;
+      cleanupPaths.push(origPath, opusPath);
+    } else {
+      const audioKey = audioKeyFor(body);
+      const inputExt = extensionOf(audioKey) || '.opus';
+      whisperInputPath = join(tmpDir, `${recordingId}${inputExt}`);
+      await downloadFromS3(RECORDINGS_BUCKET, audioKey, whisperInputPath);
+      cleanupPaths.push(whisperInputPath);
+    }
 
     const result = await runWhisper({
-      inputPath,
+      inputPath: whisperInputPath,
       outputPrefix,
       language: config.language,
       threads: config.threads,
@@ -195,6 +235,10 @@ async function processOne(body) {
           recordingId,
           transcript: transcriptText,
           wordTimestampsKey,
+          // Only present on the consolidated path — the container
+          // produced the web-canonical Opus, so linguistic persists
+          // its key + size on the Recording.
+          ...(webCanonicalKey ? { webCanonicalKey, canonicalSizeBytes } : {}),
           enqueuedAt: ts,
         }),
       }),
@@ -204,6 +248,7 @@ async function processOne(body) {
       recordingId,
       transcriptLen: transcriptText.length,
       wordTimestampsKey,
+      webCanonicalKey: webCanonicalKey ?? '(legacy audioKey path)',
       stderrTail: result.stderrTail.slice(-256),
       gitSha: IMAGE_GIT_SHA,
       buildId: IMAGE_BUILD_ID,
@@ -244,10 +289,7 @@ async function processOne(body) {
     }
     throw err;
   } finally {
-    await Promise.allSettled([
-      unlink(inputPath).catch(() => undefined),
-      unlink(`${outputPrefix}.json`).catch(() => undefined),
-    ]);
+    await Promise.allSettled(cleanupPaths.map((p) => unlink(p).catch(() => undefined)));
   }
 }
 

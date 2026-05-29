@@ -39,8 +39,21 @@ ARG WHISPER_CPP_VERSION=v1.8.4
 FROM public.ecr.aws/lambda/nodejs:22 AS builder
 ARG WHISPER_CPP_VERSION
 
-# Build tools.
-RUN dnf -y install gcc-c++ make cmake git tar gzip wget && dnf clean all
+# Build tools. `xz` is needed to extract the static ffmpeg tarball (#514).
+RUN dnf -y install gcc-c++ make cmake git tar gzip wget xz && dnf clean all
+
+# Static ffmpeg for the in-container Opus transcode (#514). Pinned to an
+# immutable BtbN FFmpeg-Builds release (ffmpeg 8.1.1, static, LGPL,
+# linux64) + SHA-256 verified. The Docker build env is root and has xz,
+# so the extraction the Amplify Hosting build couldn't do works here.
+# To bump: new autobuild tag + asset + recomputed SHA-256.
+ARG FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-05-28-14-16/ffmpeg-n8.1.1-9-g58d4114d36-linux64-lgpl-8.1.tar.xz
+ARG FFMPEG_SHA256=a54b56aab8f28c3af8c8c49bc18926faed1adfe32c15675171ac7d506ae92c5a
+RUN mkdir -p /build && cd /tmp \
+ && wget -q -O ffmpeg.tar.xz "${FFMPEG_URL}" \
+ && echo "${FFMPEG_SHA256}  ffmpeg.tar.xz" | sha256sum -c - \
+ && tar -xJf ffmpeg.tar.xz --wildcards --strip-components=2 -C /build '*/bin/ffmpeg' \
+ && rm ffmpeg.tar.xz
 
 WORKDIR /build
 # Pin to a release tag so the image is reproducible. Bump the
@@ -96,6 +109,11 @@ COPY --from=builder /build/build/bin/whisper-cli /opt/whisper
 COPY --from=builder /build/models/ggml-medium.en.bin /opt/models/medium.en.bin
 RUN chmod +x /opt/whisper
 
+# Static ffmpeg for the in-container Opus transcode (#514). The handler
+# reads FFMPEG_PATH (default /usr/local/bin/ffmpeg).
+COPY --from=builder /build/ffmpeg /usr/local/bin/ffmpeg
+RUN chmod +x /usr/local/bin/ffmpeg
+
 # Install handler deps (S3 SDK + Amplify Data client lite). Lambda
 # task-root is ${LAMBDA_TASK_ROOT} = /var/task.
 COPY package.json ${LAMBDA_TASK_ROOT}/
@@ -103,6 +121,7 @@ RUN cd ${LAMBDA_TASK_ROOT} && npm install --omit=dev --no-package-lock
 
 COPY handler.mjs ${LAMBDA_TASK_ROOT}/handler.mjs
 COPY run-whisper.mjs ${LAMBDA_TASK_ROOT}/run-whisper.mjs
+COPY opus-transcode.mjs ${LAMBDA_TASK_ROOT}/opus-transcode.mjs
 
 # Build identity baked into the image so the handler can log which
 # build is actually running (#442 follow-up). Defaults survive a
