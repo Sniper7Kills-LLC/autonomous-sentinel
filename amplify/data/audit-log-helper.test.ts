@@ -380,13 +380,13 @@ describe('audit helper — every action enum value works', () => {
   });
 
   it('exports exactly the enum values defined on the AuditLog model', () => {
-    // The #258 issue body referred to "19 enum values"; ships 25 after
+    // The #258 issue body referred to "19 enum values"; ships 26 after
     // #272 (USER_CLAIM) + #273 (USER_CLAIM_FANOUT) + #270
     // (FIELDVOTE_ORPHAN_SWEEP) + #286 (SDR_PII_BLANK) + #285
-    // (MESSAGE_SUBMIT_RECORDINGLESS). Source of truth is
-    // `amplify/data/models/audit-log.ts`.
-    expect(AUDIT_ACTIONS).toHaveLength(25);
-    expect(new Set(AUDIT_ACTIONS).size).toBe(25);
+    // (MESSAGE_SUBMIT_RECORDINGLESS) + #505 (RECORDING_REPROCESS).
+    // Source of truth is `amplify/data/models/audit-log.ts`.
+    expect(AUDIT_ACTIONS).toHaveLength(26);
+    expect(new Set(AUDIT_ACTIONS).size).toBe(26);
   });
 
   it('exports every value defined on the AuditLog.action enum', () => {
@@ -400,6 +400,7 @@ describe('audit helper — every action enum value works', () => {
         'MESSAGE_SUBMIT_RECORDINGLESS',
         'RECORDING_DELETE',
         'RECORDING_RESTORE',
+        'RECORDING_REPROCESS',
         'COMMENT_DELETE',
         'USER_BAN',
         'USER_UNBAN',
