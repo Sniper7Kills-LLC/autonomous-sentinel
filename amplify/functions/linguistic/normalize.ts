@@ -11,18 +11,19 @@
  *                                 emit the preamble + body once
  *   - `extractSender`         — "This is XXX out."  → "XXX"
  *   - `extractReceiver`       — "FOR XXXX FOR XXXX" → "XXXX"
- *   - `countCharacters`       — alphanumeric length of the decoded body
  *   - `normalizeParsed`       — per-type orchestrator
  *
  * Handler wiring (threading these into `processTranscript`) lands with
  * the pipeline-wiring issue #460; this module ships standalone with
  * full unit coverage so it can be reasoned about in isolation.
  *
- * NOT handled here (deferred — see #495 thread):
- *   - `codewordCount`: a flat transcript ("Alpha Charlie Delta") carries
- *     no group delimiters, so codeword grouping isn't recoverable
- *     without an owner grouping spec. Left out until that lands rather
- *     than baked in as a wrong guess.
+ * NOT handled here:
+ *   - `characterCount` / `codewordCount` are NOT per-message outputs of
+ *     this stage — they are aggregate CHART values over the whole corpus
+ *     (owner, 2026-05-28): `characterCount` = how many times each decoded
+ *     character appears across all ALLSTATIONS messages; `codewordCount`
+ *     = how many times a specific codeword was used across the database.
+ *     Both belong to the charts/analytics layer, not the normalizer.
  *   - SKYBIRD / SKYMASTER / RADIOCHECK canonical body formats (owed by
  *     owner) — those types pass through untransformed for now.
  */
@@ -114,9 +115,22 @@ const COLLAPSE_SIMILARITY = 0.8;
  * odd token count, or two unrelated halves are returned unchanged so
  * a legitimately long transmission is never truncated.
  */
-export function collapseDoubleBroadcast(text: string): string {
+export function collapseDoubleBroadcast(text: string, opts: { delimiter?: boolean } = {}): string {
   const normalized = squish(text);
   if (!normalized) return normalized;
+
+  // SKYKING marks its repeat with an explicit "I say again" delimiter —
+  // reliable, no similarity guessing. Opt-in only: other double-broadcast
+  // types (ALLSTATIONS) use the similarity path below and must not be
+  // truncated by the phrase appearing in their content.
+  if (opts.delimiter) {
+    const sayAgain = /\bi say again\b/i.exec(normalized);
+    if (sayAgain) {
+      const head = normalized.slice(0, sayAgain.index).trim();
+      if (head.length > 0) return head;
+    }
+  }
+
   const tokens = normalized.split(' ');
   const n = tokens.length;
   if (n < 2 || n % 2 !== 0) return normalized;
@@ -160,11 +174,6 @@ export function extractReceiver(transcript: string): string | undefined {
   return receiver ? receiver : undefined;
 }
 
-/** Alphanumeric character count of a (decoded) body — whitespace ignored. */
-export function countCharacters(body: string): number {
-  return body.replace(/\s+/g, '').length;
-}
-
 export interface NormalizeInput {
   /** Message type from the rules engine / classifier. */
   type: string;
@@ -181,8 +190,6 @@ export interface NormalizeOutput {
   body?: string;
   sender?: string;
   receiver?: string;
-  /** Set only for types with a decoded alphanumeric body (ALLSTATIONS). */
-  characterCount?: number;
 }
 
 /** Types broadcast twice on air — eligible for double-broadcast collapse. */
@@ -193,31 +200,49 @@ const DOUBLE_BROADCAST_TYPES = new Set(['ALLSTATIONS', 'SKYKING']);
  * engine) win over re-extraction; extraction is the fallback when a
  * field wasn't captured.
  *
- * - ALLSTATIONS: collapse → decode body to alphanumeric → char count.
- * - SKYKING: collapse only (body format owed by owner — no decode).
+ * - ALLSTATIONS: collapse → decode body to alphanumeric.
+ * - SKYKING: collapse (via "I say again") → body kept inline (TIME/AUTH
+ *   stay in the text, no decode). Sender + receiver are both extracted
+ *   (a SKYKING may carry either).
  * - everything else: passthrough (trimmed body, best-effort extraction).
+ *
+ * Note: characterCount / codewordCount are NOT produced here — they are
+ * aggregate chart values computed over the corpus (see header).
  */
 export function normalizeParsed(input: NormalizeInput): NormalizeOutput {
-  const collapsed = DOUBLE_BROADCAST_TYPES.has(input.type)
-    ? collapseDoubleBroadcast(input.transcript)
-    : squish(input.transcript);
+  const collapsed =
+    input.type === 'SKYKING'
+      ? // SKYKING uses the explicit "I say again" delimiter (similarity
+        // fallback still applies when the delimiter is absent).
+        collapseDoubleBroadcast(input.transcript, { delimiter: true })
+      : DOUBLE_BROADCAST_TYPES.has(input.type)
+        ? collapseDoubleBroadcast(input.transcript)
+        : squish(input.transcript);
 
   const sender = input.sender ?? extractSender(collapsed);
   const receiver = input.receiver ?? extractReceiver(collapsed);
 
   if (input.type === 'ALLSTATIONS') {
-    const body = decodePhonetic(input.body ?? collapsed);
     return {
       type: input.type,
-      body,
+      body: decodePhonetic(input.body ?? collapsed),
       sender,
       receiver,
-      characterCount: countCharacters(body),
     };
   }
 
-  // SKYKING + all other types: keep the (collapsed) text as the body,
-  // no phonetic decode.
+  if (input.type === 'SKYKING') {
+    // Body kept inline (CODEWORD + TIME + AUTH); repeat already dropped
+    // by the "I say again" collapse.
+    return {
+      type: input.type,
+      body: input.body ? squish(input.body) : collapsed,
+      sender,
+      receiver,
+    };
+  }
+
+  // All other types: keep the (collapsed) text as the body, no decode.
   return {
     type: input.type,
     body: input.body ? squish(input.body) : collapsed,

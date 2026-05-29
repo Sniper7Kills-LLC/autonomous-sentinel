@@ -5,7 +5,6 @@ import {
   collapseDoubleBroadcast,
   extractSender,
   extractReceiver,
-  countCharacters,
   normalizeParsed,
 } from './normalize';
 
@@ -71,6 +70,14 @@ describe('normalize — collapseDoubleBroadcast', () => {
     const text = 'alpha charlie delta totally different second message here now';
     expect(collapseDoubleBroadcast(text)).toBe(text);
   });
+
+  it('splits on the "I say again" delimiter only when opted in', () => {
+    const text = 'skyking skyking alpha I say again skyking skyking alpha';
+    // Default (similarity) path: phrase is not a delimiter.
+    expect(collapseDoubleBroadcast(text)).not.toBe('skyking skyking alpha');
+    // Opt-in: delimiter wins, returns the head.
+    expect(collapseDoubleBroadcast(text, { delimiter: true })).toBe('skyking skyking alpha');
+  });
 });
 
 describe('normalize — extractSender', () => {
@@ -111,20 +118,6 @@ describe('normalize — extractReceiver', () => {
   });
 });
 
-describe('normalize — countCharacters', () => {
-  it('counts alphanumeric characters in the decoded body', () => {
-    expect(countCharacters('ACD')).toBe(3);
-  });
-
-  it('ignores whitespace', () => {
-    expect(countCharacters('A C D')).toBe(3);
-  });
-
-  it('is zero for empty body', () => {
-    expect(countCharacters('')).toBe(0);
-  });
-});
-
 describe('normalize — normalizeParsed orchestrator', () => {
   it('ALLSTATIONS: collapses, decodes the body, extracts sender/receiver, counts', () => {
     const once =
@@ -134,21 +127,30 @@ describe('normalize — normalizeParsed orchestrator', () => {
       transcript: `${once} ${once}`,
     });
     expect(out.body).toBe('ACD');
-    expect(out.characterCount).toBe(3);
     expect(out.sender).toBe('Mainsail');
     expect(out.receiver).toBe('ICEMAN');
   });
 
-  it('SKYKING: collapses the double broadcast but does NOT phonetic-decode the body', () => {
-    // SKYKING body format is owed by owner — collapse + extract only,
-    // body left as the collapsed transcript (no NATO decode).
-    const once = 'skyking skyking do not answer FOR ICEMAN FOR ICEMAN time 14 authentication 9D';
-    const out = normalizeParsed({ type: 'SKYKING', transcript: `${once} ${once}` });
-    expect(out.receiver).toBe('ICEMAN');
-    // Not decoded to alphanumeric — preserves the collapsed text.
-    expect(out.body).toContain('time 14');
-    // Single copy, not doubled.
+  it('SKYKING: splits on "I say again", keeps TIME/AUTH inline', () => {
+    // Canonical SKYKING (owner): preamble + [CODEWORD] TIME XX AUTH YY,
+    // delimited by "I say again", then repeated. TIME/AUTH stay inline.
+    const once = 'skyking skyking do not answer alpha time 14 auth 9d';
+    const out = normalizeParsed({ type: 'SKYKING', transcript: `${once} I say again ${once}` });
+    expect(out.body).toBe(once);
+    // Single copy, not doubled; TIME/AUTH preserved inline.
     expect((out.body?.match(/skyking skyking/g) ?? []).length).toBe(1);
+    expect(out.body).toContain('time 14');
+    expect(out.body).toContain('auth 9d');
+  });
+
+  it('SKYKING: extracts sender and receiver when present', () => {
+    // A SKYKING CAN carry a receiver ("FOR X FOR X") and a sender
+    // ("this is X out") — owner correction. Both are captured.
+    const once =
+      'skyking skyking do not answer FOR ICEMAN FOR ICEMAN alpha time 14 auth 9d this is mainsail out';
+    const out = normalizeParsed({ type: 'SKYKING', transcript: `${once} I say again ${once}` });
+    expect(out.receiver).toBe('ICEMAN');
+    expect(out.sender).toBe('mainsail');
   });
 
   it('prefers an already-captured body/sender/receiver over re-extraction', () => {
@@ -163,6 +165,16 @@ describe('normalize — normalizeParsed orchestrator', () => {
     expect(out.sender).toBe('Offutt');
     expect(out.receiver).toBe('Raptor');
     expect(out.body).toBe('ACD');
+  });
+
+  it('ALLSTATIONS: is NOT truncated by an "I say again" phrase in its content', () => {
+    // Delimiter split is SKYKING-only — ALLSTATIONS must decode every
+    // phonetic letter, before and after the phrase.
+    const out = normalizeParsed({
+      type: 'ALLSTATIONS',
+      transcript: 'all stations alpha charlie i say again delta echo',
+    });
+    expect(out.body).toBe('ACDE');
   });
 
   it('OTHER: passthrough — no decode, no collapse forced, body is the trimmed transcript', () => {
