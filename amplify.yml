@@ -27,6 +27,9 @@ applications:
           commands:
             - npm ci --prefix ../ --cache ../.npm --prefer-offline
             - cd ..
+            # The static ffmpeg asset is .tar.xz; the build image lacks
+            # `xz`, so install it before extracting (#503).
+            - if ! command -v xz >/dev/null 2>&1; then (dnf install -y xz || yum install -y xz); fi
             # Fetch + SHA-verify the static ffmpeg binary into the
             # preprocess Lambda layer asset before synth (#503).
             - node amplify/scripts/fetch-ffmpeg.mjs
