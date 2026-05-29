@@ -7,6 +7,7 @@ import { recordingMutations } from '../functions/recordingMutations/resource';
 import { commentMutations } from '../functions/commentMutations/resource';
 import { preprocess } from '../functions/preprocess/resource';
 import { linguistic } from '../functions/linguistic/resource';
+import { linguisticConfigStream } from '../functions/linguisticConfigStream/resource';
 import { legacyClaimWorker } from '../functions/legacyClaimWorker/resource';
 import { getUserPublicLambda } from '../functions/getUserPublicLambda/resource';
 import { listAuditLogPublic } from '../functions/listAuditLogPublic/resource';
@@ -175,6 +176,10 @@ export const schema = a
     // observeQuery subscription on Recording fires).
     allow.resource(preprocess).to(['query', 'mutate']),
     allow.resource(linguistic).to(['query', 'mutate']),
+    // linguisticConfigStream (#481) reads Recording (list, on a prompt-
+    // version bump) and writes AuditLog rows via the Amplify Data IAM
+    // client. `query` + `mutate` covers both.
+    allow.resource(linguisticConfigStream).to(['query', 'mutate']),
     // legacyClaimWorker already calls AppSync via the data client
     // (#318 SQS handoff); grant the resource scope so its
     // post-#438 `Amplify.configure(...)` path works.

@@ -1,10 +1,13 @@
 import { defineBackend } from '@aws-amplify/backend';
-import { Duration, Fn } from 'aws-cdk-lib';
+import { Duration, Fn, Stack } from 'aws-cdk-lib';
 import {
   type Function as LambdaFunction,
+  EventSourceMapping,
   FunctionUrlAuthType,
   InvokeMode,
+  StartingPosition,
 } from 'aws-cdk-lib/aws-lambda';
+import { StreamViewType } from 'aws-cdk-lib/aws-dynamodb';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { Policy, PolicyStatement, Role } from 'aws-cdk-lib/aws-iam';
 import { Rule, Schedule } from 'aws-cdk-lib/aws-events';
@@ -30,6 +33,7 @@ import { listSdrPublicLambda } from './functions/listSdrPublicLambda/resource';
 import { notificationPreferenceMutations } from './functions/notificationPreferenceMutations/resource';
 import { listAuditLogPublic } from './functions/listAuditLogPublic/resource';
 import { legacyClaimWorker } from './functions/legacyClaimWorker/resource';
+import { linguisticConfigStream } from './functions/linguisticConfigStream/resource';
 import { legacyClaimReplaySweeper } from './functions/legacyClaimReplaySweeper/resource';
 import { fieldVoteOrphanJanitor } from './functions/fieldVoteOrphanJanitor/resource';
 import { deployBadge } from './functions/deployBadge/resource';
@@ -65,6 +69,7 @@ const backend = defineBackend({
   legacyClaimWorker,
   legacyClaimReplaySweeper,
   fieldVoteOrphanJanitor,
+  linguisticConfigStream,
   deployBadge,
 });
 
@@ -847,3 +852,93 @@ const linguisticLambda = backend.linguistic.resources.lambda as LambdaFunction;
 linguisticLambda.addEventSource(
   new SqsEventSource(pipelineQueues.linguistic.main, { batchSize: 1 }),
 );
+
+// LinguisticConfig audit + reprocess-on-bump wiring (#481).
+//
+// A DynamoDB stream on the LinguisticConfig table drives the
+// `linguisticConfigStream` Lambda: it emits a `LINGUISTIC_CONFIG_UPDATE`
+// audit row on every change and, when a `*_PROMPT_VERSION` key's version
+// increases, enqueues reprocess jobs for previously-failed Recordings.
+//
+// Circular-dependency shape (mirrors the legacy-claim queue, #317):
+//   - The Lambda is in `resourceGroupName: 'data'`, so the table-stream →
+//     Lambda edge stays inside the data stack (no cross-stack edge).
+//   - The reprocess queue lives in its own neutral sub-stack. The data
+//     stack points at it (SendMessage); the queue stack has no outgoing
+//     edges. No cycle.
+//   - AuditLog.create + Recording.list go through the Amplify Data IAM
+//     client (granted via `allow.resource(linguisticConfigStream)` in
+//     `data/resource.ts`) — no direct DDB grant needed.
+const reprocessQueueStack = backend.createStack('ReprocessQueueStack');
+const reprocessDlq = new Queue(reprocessQueueStack, 'LinguisticReprocessDeadLetterQueue', {
+  retentionPeriod: Duration.days(14),
+});
+const reprocessQueue = new Queue(reprocessQueueStack, 'LinguisticReprocessQueue', {
+  // No consumer ships here — the reprocess worker lands with #460. The
+  // 4-day retention covers the gap; bumps enqueued before the consumer
+  // exists are picked up once it does (or expire harmlessly).
+  retentionPeriod: Duration.days(4),
+  deadLetterQueue: { queue: reprocessDlq, maxReceiveCount: 3 },
+});
+
+const linguisticConfigStreamLambda = backend.linguisticConfigStream.resources
+  .lambda as LambdaFunction;
+linguisticConfigStreamLambda.addEnvironment('REPROCESS_QUEUE_URL', reprocessQueue.queueUrl);
+reprocessQueue.grantSendMessages(linguisticConfigStreamLambda);
+
+// Enable the DynamoDB stream on the LinguisticConfig table and subscribe
+// the Lambda — the official Amplify Gen 2 stream pattern (manual
+// EventSourceMapping + stream-read IAM policy, since the Amplify table is
+// a custom resource).
+const linguisticConfigTable = backend.data.resources.tables['LinguisticConfig'];
+if (!linguisticConfigTable) {
+  throw new Error('backend: LinguisticConfig table not found on data resources');
+}
+const linguisticConfigCfnTable =
+  backend.data.resources.cfnResources.amplifyDynamoDbTables['LinguisticConfig'];
+if (!linguisticConfigCfnTable) {
+  throw new Error('backend: LinguisticConfig CFN table wrapper not found on data resources');
+}
+linguisticConfigCfnTable.streamSpecification = {
+  streamViewType: StreamViewType.NEW_AND_OLD_IMAGES,
+};
+const reprocessStreamPolicy = new Policy(
+  Stack.of(linguisticConfigTable),
+  'LinguisticConfigStreamReadPolicy',
+  {
+    statements: [
+      new PolicyStatement({
+        actions: [
+          'dynamodb:DescribeStream',
+          'dynamodb:GetRecords',
+          'dynamodb:GetShardIterator',
+          'dynamodb:ListStreams',
+        ],
+        resources: [linguisticConfigTable.tableStreamArn ?? '*'],
+      }),
+    ],
+  },
+);
+linguisticConfigStreamLambda.role?.attachInlinePolicy(reprocessStreamPolicy);
+const linguisticConfigStreamMapping = new EventSourceMapping(
+  Stack.of(linguisticConfigTable),
+  'LinguisticConfigStreamMapping',
+  {
+    target: linguisticConfigStreamLambda,
+    eventSourceArn: linguisticConfigTable.tableStreamArn,
+    startingPosition: StartingPosition.LATEST,
+    // Small table, low write rate — single-record batches keep the
+    // audit + reprocess logic simple and let a poison record fail in
+    // isolation.
+    batchSize: 1,
+    retryAttempts: 3,
+  },
+);
+linguisticConfigStreamMapping.node.addDependency(reprocessStreamPolicy);
+
+backend.addOutput({
+  custom: {
+    linguisticReprocessQueueUrl: reprocessQueue.queueUrl,
+    linguisticReprocessDlqUrl: reprocessDlq.queueUrl,
+  },
+});
