@@ -902,6 +902,16 @@ if (!linguisticConfigCfnTable) {
 linguisticConfigCfnTable.streamSpecification = {
   streamViewType: StreamViewType.NEW_AND_OLD_IMAGES,
 };
+// With the stream enabled above, the Amplify table exposes its stream
+// ARN. Fail loud at synth if it didn't populate — feeding an undefined
+// `eventSourceArn` to the EventSourceMapping below would otherwise
+// produce a confusing CFN error far from the cause.
+const linguisticConfigStreamArn = linguisticConfigTable.tableStreamArn;
+if (!linguisticConfigStreamArn) {
+  throw new Error(
+    'backend: LinguisticConfig table stream ARN unavailable after enabling streamSpecification',
+  );
+}
 const reprocessStreamPolicy = new Policy(
   Stack.of(linguisticConfigTable),
   'LinguisticConfigStreamReadPolicy',
@@ -914,7 +924,7 @@ const reprocessStreamPolicy = new Policy(
           'dynamodb:GetShardIterator',
           'dynamodb:ListStreams',
         ],
-        resources: [linguisticConfigTable.tableStreamArn ?? '*'],
+        resources: [linguisticConfigStreamArn],
       }),
     ],
   },
@@ -925,7 +935,7 @@ const linguisticConfigStreamMapping = new EventSourceMapping(
   'LinguisticConfigStreamMapping',
   {
     target: linguisticConfigStreamLambda,
-    eventSourceArn: linguisticConfigTable.tableStreamArn,
+    eventSourceArn: linguisticConfigStreamArn,
     startingPosition: StartingPosition.LATEST,
     // Small table, low write rate — single-record batches keep the
     // audit + reprocess logic simple and let a poison record fail in

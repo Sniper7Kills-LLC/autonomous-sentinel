@@ -203,6 +203,24 @@ export async function processConfigChange(
 
   // (b) Reprocess on bump.
   const messages = await collectReprocessMessages(client, parsed.newPromptVersion, now);
+
+  // Record the bump + how much work it will enqueue BEFORE sending, so a
+  // transient SQS failure (which the stream redrives) never leaves the
+  // bump unaudited. The redrive re-runs the whole record; the duplicate
+  // append-only audit rows are tolerable, and the enqueue itself is
+  // idempotent (selectForReprocess skips any prior success).
+  await audit(
+    { identity: { sub: parsed.actorId } },
+    {
+      action: 'PROMPT_VERSION_BUMP',
+      targetType: 'LinguisticConfig',
+      targetId: parsed.key,
+      before: { promptVersion: parsed.before.promptVersion ?? null },
+      after: { promptVersion: parsed.newPromptVersion, reprocessEnqueued: messages.length },
+    },
+    { client },
+  );
+
   if (messages.length > 0) {
     const send =
       deps.sendReprocess ??
@@ -215,19 +233,6 @@ export async function processConfigChange(
       });
     await send(messages);
   }
-
-  // Record the bump itself + how much work it queued.
-  await audit(
-    { identity: { sub: parsed.actorId } },
-    {
-      action: 'PROMPT_VERSION_BUMP',
-      targetType: 'LinguisticConfig',
-      targetId: parsed.key,
-      before: { promptVersion: parsed.before.promptVersion ?? null },
-      after: { promptVersion: parsed.newPromptVersion, reprocessEnqueued: messages.length },
-    },
-    { client },
-  );
 
   return { enqueued: messages.length };
 }

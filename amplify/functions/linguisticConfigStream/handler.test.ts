@@ -1,12 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mockClient } from 'aws-sdk-client-mock';
+import { marshall } from '@aws-sdk/util-dynamodb';
+import { SendMessageBatchCommand, SQSClient } from '@aws-sdk/client-sqs';
+import type { DynamoDBStreamEvent } from 'aws-lambda';
 import {
   __resetDeps,
   __setDeps,
   type ConfigStreamDataClient,
+  handler,
   processConfigChange,
 } from './handler';
 import type { ParsedConfigChange } from './parse';
 import type { ReprocessMessage } from '../linguistic/reprocess';
+
+const sqsMock = mockClient(SQSClient);
 
 interface RecordingRow {
   id: string;
@@ -44,7 +51,11 @@ function makeStub(pages: RecordingRow[][] = []) {
 
 const NOW = () => new Date('2026-05-29T12:00:00Z');
 
-afterEach(() => __resetDeps());
+afterEach(() => {
+  __resetDeps();
+  sqsMock.reset();
+  delete process.env.REPROCESS_QUEUE_URL;
+});
 
 function update(over: Partial<ParsedConfigChange> = {}): ParsedConfigChange {
   return {
@@ -151,5 +162,88 @@ describe('processConfigChange — reprocess on prompt-version bump (#481b)', () 
     const out = await processConfigChange(bump(), {});
     expect(sendReprocess).not.toHaveBeenCalled();
     expect(out.enqueued).toBe(0);
+  });
+
+  it('throws when there is work to send but no queue URL is configured', async () => {
+    // No injected sender and no REPROCESS_QUEUE_URL — the production
+    // send path must fail loud rather than silently drop the work.
+    const { client } = makeStub([
+      [{ id: 'rec', transcriptionFailed: true, linguisticAttempts: [] }],
+    ]);
+    __setDeps({ dataClient: client, now: NOW });
+    await expect(processConfigChange(bump(), {})).rejects.toThrow(/REPROCESS_QUEUE_URL/);
+  });
+
+  it('splits the production SQS send into batches of 10 (API cap)', async () => {
+    sqsMock.on(SendMessageBatchCommand).resolves({});
+    const rows = Array.from({ length: 12 }, (_, i) => ({
+      id: `rec-${i}`,
+      transcriptionFailed: true,
+      linguisticAttempts: [],
+    }));
+    const { client } = makeStub([rows]);
+    // No injected sender → exercises defaultSendReprocess + the real
+    // (mocked) SQS client.
+    __setDeps({ dataClient: client, now: NOW, reprocessQueueUrl: 'https://sqs/q' });
+
+    const out = await processConfigChange(bump(), {});
+
+    expect(out.enqueued).toBe(12);
+    const calls = sqsMock.commandCalls(SendMessageBatchCommand);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.args[0].input.Entries).toHaveLength(10);
+    expect(calls[1]?.args[0].input.Entries).toHaveLength(2);
+  });
+});
+
+describe('handler — DynamoDB stream entry point', () => {
+  function streamEvent(
+    records: { eventName: string; oldImage?: object; newImage?: object }[],
+  ): DynamoDBStreamEvent {
+    return {
+      Records: records.map((r) => ({
+        eventName: r.eventName as 'INSERT' | 'MODIFY' | 'REMOVE',
+        dynamodb: {
+          OldImage: r.oldImage ? marshall(r.oldImage) : undefined,
+          NewImage: r.newImage ? marshall(r.newImage) : undefined,
+        },
+      })) as DynamoDBStreamEvent['Records'],
+    };
+  }
+
+  const ctx = {} as never;
+  const cb = () => undefined;
+
+  it('unmarshals an INSERT (no OldImage) and audits it', async () => {
+    const { client, auditCreate } = makeStub();
+    __setDeps({ dataClient: client, now: NOW, reprocessQueueUrl: 'q' });
+    await handler(
+      streamEvent([{ eventName: 'INSERT', newImage: { key: 'SKYKING_RULES', value: { a: 1 } } }]),
+      ctx,
+      cb,
+    );
+    expect(auditCreate).toHaveBeenCalledOnce();
+    expect(auditCreate.mock.calls[0]?.[0]).toMatchObject({
+      action: 'LINGUISTIC_CONFIG_UPDATE',
+      targetId: 'SKYKING_RULES',
+    });
+  });
+
+  it('unmarshals a REMOVE (no NewImage) without throwing', async () => {
+    const { client, auditCreate } = makeStub();
+    __setDeps({ dataClient: client, now: NOW, reprocessQueueUrl: 'q' });
+    await handler(
+      streamEvent([{ eventName: 'REMOVE', oldImage: { key: 'SKYKING_RULES', value: { a: 1 } } }]),
+      ctx,
+      cb,
+    );
+    expect(auditCreate.mock.calls[0]?.[0]).toMatchObject({ targetId: 'SKYKING_RULES' });
+  });
+
+  it('skips a record that carries no key on either image', async () => {
+    const { client, auditCreate } = makeStub();
+    __setDeps({ dataClient: client, now: NOW, reprocessQueueUrl: 'q' });
+    await handler(streamEvent([{ eventName: 'MODIFY', newImage: { value: 1 } }]), ctx, cb);
+    expect(auditCreate).not.toHaveBeenCalled();
   });
 });
