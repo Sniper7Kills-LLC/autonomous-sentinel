@@ -1,0 +1,132 @@
+.wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.trigger {
+  background: none;
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  padding: 0.25rem 0.6rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.trigger:hover,
+.trigger:focus-visible {
+  border-color: var(--danger);
+  color: var(--text-1);
+  outline: none;
+}
+
+.popover {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 12;
+  min-width: 19rem;
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.85rem 1rem;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--color-bg) 60%, transparent);
+}
+
+.popoverHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.closeBtn {
+  background: none;
+  border: none;
+  font-family: var(--font-jb-mono);
+  font-size: 1rem;
+  color: var(--text-2);
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.closeBtn:hover,
+.closeBtn:focus-visible {
+  color: var(--text-1);
+  outline: none;
+}
+
+.field {
+  display: grid;
+  gap: 0.35rem;
+  font-family: var(--font-jb-mono);
+  font-size: 0.82rem;
+  color: var(--text-1);
+}
+
+.label {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.input {
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.55rem;
+  font-family: var(--font-jb-mono);
+  font-size: 0.82rem;
+  color: var(--text-1);
+}
+
+.input:focus-visible {
+  border-color: var(--color-accent);
+  outline: none;
+}
+
+.textarea {
+  composes: input;
+  resize: vertical;
+  min-height: 4rem;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.success {
+  font-family: var(--font-jb-mono);
+  font-size: 0.82rem;
+  color: var(--color-success);
+}
+
+.error {
+  font-family: var(--font-jb-mono);
+  font-size: 0.78rem;
+  color: var(--text-1);
+  padding: 0.4rem 0.55rem;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+}
+
+.notice {
+  font-family: var(--font-jb-mono);
+  font-size: 0.78rem;
+  color: var(--text-2);
+}

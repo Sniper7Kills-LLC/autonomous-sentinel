@@ -1,0 +1,116 @@
+.shell {
+  display: grid;
+  gap: 1.25rem;
+  max-width: 40rem;
+}
+
+.section {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1.25rem;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+}
+
+.sectionHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.title {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  margin: 0;
+  color: var(--text-1);
+}
+
+.caption {
+  font-family: var(--font-jb-mono);
+  font-size: 0.78rem;
+  color: var(--text-2);
+  line-height: 1.4;
+  margin: 0;
+}
+
+.toggleRow {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-family: var(--font-jb-mono);
+  font-size: 0.88rem;
+  color: var(--text-1);
+}
+
+.typeGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.4rem;
+}
+
+.typeChip {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.6rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-jb-mono);
+  font-size: 0.8rem;
+  color: var(--text-1);
+  cursor: pointer;
+}
+
+.typeChipActive {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, var(--surface-2));
+}
+
+.webhookInput {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.7rem;
+  font-family: var(--font-jb-mono);
+  font-size: 0.85rem;
+  color: var(--text-1);
+}
+
+.webhookInput:focus-visible {
+  border-color: var(--color-accent);
+  outline: none;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.status {
+  font-family: var(--font-jb-mono);
+  font-size: 0.78rem;
+  color: var(--text-2);
+}
+
+.statusOk {
+  color: var(--color-success);
+}
+
+.error {
+  padding: 0.6rem 0.9rem;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-jb-mono);
+  font-size: 0.82rem;
+  color: var(--text-1);
+}
