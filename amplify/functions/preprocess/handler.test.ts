@@ -13,11 +13,12 @@ import {
 } from './handler';
 
 /**
- * Pre-process Lambda contract (#433 stage 2):
+ * Pre-process Lambda contract (#433 stage 2 / consolidated #514):
  *
- *   SQS message → HEAD original → COPY to web key →
+ *   SQS message → HEAD original (validate) →
  *     Amplify Data `Recording.update(status=TRANSCRIBING)` →
- *     SQS publish on the transcribe queue
+ *     SQS publish `{recordingId, originalKey, contentHash}` on the
+ *     transcribe queue (the Whisper container does the ffmpeg transcode)
  *
  *   on failure → `Recording.update(status=PREPROCESS_FAILED, failedReason=…)`
  *     before rethrow so SQS redrives + the portal/admin see the
