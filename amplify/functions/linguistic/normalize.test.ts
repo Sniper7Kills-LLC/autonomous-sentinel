@@ -5,7 +5,6 @@ import {
   collapseDoubleBroadcast,
   extractSender,
   extractReceiver,
-  countCharacters,
   normalizeParsed,
 } from './normalize';
 
@@ -119,20 +118,6 @@ describe('normalize — extractReceiver', () => {
   });
 });
 
-describe('normalize — countCharacters', () => {
-  it('counts alphanumeric characters in the decoded body', () => {
-    expect(countCharacters('ACD')).toBe(3);
-  });
-
-  it('ignores whitespace', () => {
-    expect(countCharacters('A C D')).toBe(3);
-  });
-
-  it('is zero for empty body', () => {
-    expect(countCharacters('')).toBe(0);
-  });
-});
-
 describe('normalize — normalizeParsed orchestrator', () => {
   it('ALLSTATIONS: collapses, decodes the body, extracts sender/receiver, counts', () => {
     const once =
@@ -142,18 +127,16 @@ describe('normalize — normalizeParsed orchestrator', () => {
       transcript: `${once} ${once}`,
     });
     expect(out.body).toBe('ACD');
-    expect(out.characterCount).toBe(3);
     expect(out.sender).toBe('Mainsail');
     expect(out.receiver).toBe('ICEMAN');
   });
 
-  it('SKYKING: splits on "I say again", codewordCount=1, TIME/AUTH inline', () => {
+  it('SKYKING: splits on "I say again", keeps TIME/AUTH inline', () => {
     // Canonical SKYKING (owner): preamble + [CODEWORD] TIME XX AUTH YY,
     // delimited by "I say again", then repeated. TIME/AUTH stay inline.
     const once = 'skyking skyking do not answer alpha time 14 auth 9d';
     const out = normalizeParsed({ type: 'SKYKING', transcript: `${once} I say again ${once}` });
     expect(out.body).toBe(once);
-    expect(out.codewordCount).toBe(1);
     // Single copy, not doubled; TIME/AUTH preserved inline.
     expect((out.body?.match(/skyking skyking/g) ?? []).length).toBe(1);
     expect(out.body).toContain('time 14');
@@ -168,7 +151,6 @@ describe('normalize — normalizeParsed orchestrator', () => {
     const out = normalizeParsed({ type: 'SKYKING', transcript: `${once} I say again ${once}` });
     expect(out.receiver).toBe('ICEMAN');
     expect(out.sender).toBe('mainsail');
-    expect(out.codewordCount).toBe(1);
   });
 
   it('prefers an already-captured body/sender/receiver over re-extraction', () => {

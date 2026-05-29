@@ -11,18 +11,19 @@
  *                                 emit the preamble + body once
  *   - `extractSender`         — "This is XXX out."  → "XXX"
  *   - `extractReceiver`       — "FOR XXXX FOR XXXX" → "XXXX"
- *   - `countCharacters`       — alphanumeric length of the decoded body
  *   - `normalizeParsed`       — per-type orchestrator
  *
  * Handler wiring (threading these into `processTranscript`) lands with
  * the pipeline-wiring issue #460; this module ships standalone with
  * full unit coverage so it can be reasoned about in isolation.
  *
- * NOT handled here (deferred — see #495 thread):
- *   - `codewordCount`: a flat transcript ("Alpha Charlie Delta") carries
- *     no group delimiters, so codeword grouping isn't recoverable
- *     without an owner grouping spec. Left out until that lands rather
- *     than baked in as a wrong guess.
+ * NOT handled here:
+ *   - `characterCount` / `codewordCount` are NOT per-message outputs of
+ *     this stage — they are aggregate CHART values over the whole corpus
+ *     (owner, 2026-05-28): `characterCount` = how many times each decoded
+ *     character appears across all ALLSTATIONS messages; `codewordCount`
+ *     = how many times a specific codeword was used across the database.
+ *     Both belong to the charts/analytics layer, not the normalizer.
  *   - SKYBIRD / SKYMASTER / RADIOCHECK canonical body formats (owed by
  *     owner) — those types pass through untransformed for now.
  */
@@ -173,11 +174,6 @@ export function extractReceiver(transcript: string): string | undefined {
   return receiver ? receiver : undefined;
 }
 
-/** Alphanumeric character count of a (decoded) body — whitespace ignored. */
-export function countCharacters(body: string): number {
-  return body.replace(/\s+/g, '').length;
-}
-
 export interface NormalizeInput {
   /** Message type from the rules engine / classifier. */
   type: string;
@@ -194,10 +190,6 @@ export interface NormalizeOutput {
   body?: string;
   sender?: string;
   receiver?: string;
-  /** Set only for types with a decoded alphanumeric body (ALLSTATIONS). */
-  characterCount?: number;
-  /** Set for SKYKING — always 1 per owner spec. */
-  codewordCount?: number;
 }
 
 /** Types broadcast twice on air — eligible for double-broadcast collapse. */
@@ -208,11 +200,14 @@ const DOUBLE_BROADCAST_TYPES = new Set(['ALLSTATIONS', 'SKYKING']);
  * engine) win over re-extraction; extraction is the fallback when a
  * field wasn't captured.
  *
- * - ALLSTATIONS: collapse → decode body to alphanumeric → char count.
+ * - ALLSTATIONS: collapse → decode body to alphanumeric.
  * - SKYKING: collapse (via "I say again") → body kept inline (TIME/AUTH
- *   stay in the text, no decode) → codewordCount = 1. Sender + receiver
- *   are both extracted (a SKYKING may carry either).
+ *   stay in the text, no decode). Sender + receiver are both extracted
+ *   (a SKYKING may carry either).
  * - everything else: passthrough (trimmed body, best-effort extraction).
+ *
+ * Note: characterCount / codewordCount are NOT produced here — they are
+ * aggregate chart values computed over the corpus (see header).
  */
 export function normalizeParsed(input: NormalizeInput): NormalizeOutput {
   const collapsed =
@@ -228,25 +223,22 @@ export function normalizeParsed(input: NormalizeInput): NormalizeOutput {
   const receiver = input.receiver ?? extractReceiver(collapsed);
 
   if (input.type === 'ALLSTATIONS') {
-    const body = decodePhonetic(input.body ?? collapsed);
     return {
       type: input.type,
-      body,
+      body: decodePhonetic(input.body ?? collapsed),
       sender,
       receiver,
-      characterCount: countCharacters(body),
     };
   }
 
   if (input.type === 'SKYKING') {
     // Body kept inline (CODEWORD + TIME + AUTH); repeat already dropped
-    // by the "I say again" collapse. codewordCount is always 1.
+    // by the "I say again" collapse.
     return {
       type: input.type,
       body: input.body ? squish(input.body) : collapsed,
       sender,
       receiver,
-      codewordCount: 1,
     };
   }
 
