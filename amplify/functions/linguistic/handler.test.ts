@@ -274,6 +274,59 @@ describe('linguistic — handler happy path', () => {
   });
 });
 
+describe('linguistic — structured Message via normalizeParsed (#506)', () => {
+  it('populates decoded body + extracted sender/receiver for ALLSTATIONS', async () => {
+    const { client, createSpy, updateSpy } = makeDataStub();
+    __setDeps({
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-as-1',
+    });
+    const transcript =
+      'All stations all stations FOR ICEMAN FOR ICEMAN alpha charlie delta this is mainsail out';
+    await handler(
+      makeEvent({ recordingId: 'rec-as', transcript, enqueuedAt: '2026-05-24T18:00:00Z' }),
+      {} as never,
+      () => undefined,
+    );
+
+    expect(createSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        type: 'ALLSTATIONS',
+        body: 'ACD',
+        sender: 'mainsail',
+        receiver: 'ICEMAN',
+      }),
+    );
+    // Recording keeps the RAW transcript — Recording is source of truth.
+    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ id: 'rec-as', transcript }),
+    );
+  });
+
+  it('passes through body for OTHER (no decode) and leaves sender/receiver unset', async () => {
+    const { client, createSpy } = makeDataStub();
+    __setDeps({
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-other-1',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-o',
+        transcript: 'some freeform note',
+        enqueuedAt: '2026-05-24T18:00:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    const arg = createSpy.mock.calls[0]?.[0] as { type: string; body?: string; sender?: string };
+    expect(arg.type).toBe('OTHER');
+    expect(arg.body).toBe('some freeform note');
+    expect(arg.sender).toBeUndefined();
+  });
+});
+
 describe('linguistic — failure paths', () => {
   it('skips malformed SQS bodies', async () => {
     const { client } = makeDataStub();

@@ -1,5 +1,6 @@
 import type { SQSEvent, SQSHandler } from 'aws-lambda';
 import { randomUUID } from 'node:crypto';
+import { normalizeParsed } from './normalize';
 
 /**
  * Linguistic Lambda (#433 stage 4).
@@ -83,6 +84,8 @@ export interface LinguisticDataClient {
         type: MessageType;
         broadcastTs: string;
         body?: string | null;
+        sender?: string | null;
+        receiver?: string | null;
         confidence?: number | null;
         flaggedForReview?: boolean | null;
         publishedAt?: string | null;
@@ -240,6 +243,11 @@ export function parseMessage(body: string): LinguisticQueueMessage {
 async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   const client = await dataClient();
   const result = classify(msg.transcript);
+  // Turn the raw transcript into log-format fields: NATO-decode the
+  // body, collapse double broadcasts, extract sender/receiver (#506).
+  // The raw transcript stays on the Recording row (source of truth);
+  // the Message carries the derived/normalized form.
+  const normalized = normalizeParsed({ type: result.type, transcript: msg.transcript });
   const messageId = uuid();
   const ts = nowDate().toISOString();
 
@@ -250,7 +258,9 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
     // through (#433 follow-up). `broadcastTs` is .required() on the
     // Message schema, so we MUST emit it.
     broadcastTs: msg.enqueuedAt,
-    body: msg.transcript,
+    body: normalized.body ?? msg.transcript,
+    ...(normalized.sender ? { sender: normalized.sender } : {}),
+    ...(normalized.receiver ? { receiver: normalized.receiver } : {}),
     confidence: result.confidence,
     flaggedForReview: result.confidence < 0.8,
     publishedAt: ts,
