@@ -478,19 +478,12 @@ async function dispatchReprocess(
   }
   const after = updated.data ?? { ...before, ...patch };
 
-  await deps.audit(auditContextFrom(event), {
-    action: 'RECORDING_REPROCESS',
-    targetType: 'Recording',
-    targetId,
-    before: snapshot(before),
-    after: snapshot(after),
-    reason: reason ? reason : null,
-  });
-
-  // Re-enqueue from the stored original — same queue + payload shape
-  // submitRecording publishes, so the full pipeline re-runs with no
-  // client re-upload. Fire-and-forget: a failed enqueue leaves the row
-  // QUEUED for an operator redrive rather than rolling back the reset.
+  // Re-enqueue from the stored original FIRST — the functional reprocess
+  // (reset + pipeline kick-off) must complete even if the audit write
+  // hiccups. Same queue + payload shape submitRecording publishes, so
+  // the full pipeline re-runs with no client re-upload. A failed enqueue
+  // leaves the row QUEUED for an operator redrive rather than rolling
+  // back the reset.
   try {
     await deps.enqueuePreprocess({
       recordingId: targetId,
@@ -503,6 +496,24 @@ async function dispatchReprocess(
       'reprocessRecording: failed to enqueue preprocess message — Recording reset to QUEUED but pipeline stays idle until operator redrives',
       { recordingId: targetId, err: String(err) },
     );
+  }
+
+  // Audit best-effort — a failed audit must not strand a recording
+  // reset-but-not-reprocessed or surface as a client error.
+  try {
+    await deps.audit(auditContextFrom(event), {
+      action: 'RECORDING_REPROCESS',
+      targetType: 'Recording',
+      targetId,
+      before: snapshot(before),
+      after: snapshot(after),
+      reason: reason ? reason : null,
+    });
+  } catch (err) {
+    console.error('reprocessRecording: audit write failed (reprocess still ran)', {
+      recordingId: targetId,
+      err: String(err),
+    });
   }
 
   return after;
