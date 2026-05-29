@@ -1,0 +1,101 @@
+.shell {
+  display: grid;
+  gap: 1.5rem;
+  max-width: 36rem;
+  padding: 1.5rem;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+}
+
+.warning {
+  display: grid;
+  gap: 0.6rem;
+  padding: 1rem 1.25rem;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
+}
+
+.warningHeading {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-1);
+  margin: 0;
+}
+
+.warningCopy {
+  font-family: var(--font-jb-mono);
+  font-size: 0.85rem;
+  color: var(--text-1);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.bullets {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: grid;
+  gap: 0.35rem;
+  font-family: var(--font-jb-mono);
+  font-size: 0.85rem;
+  color: var(--text-1);
+  line-height: 1.5;
+}
+
+.confirm {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.confirmLabel {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  color: var(--text-2);
+  text-transform: uppercase;
+}
+
+.confirmInput {
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.7rem;
+  font-family: var(--font-jb-mono);
+  font-size: 0.95rem;
+  color: var(--text-1);
+}
+
+.confirmInput:focus-visible {
+  border-color: var(--color-accent);
+  outline: none;
+}
+
+.actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.success {
+  padding: 1rem;
+  background: color-mix(in srgb, var(--color-success) 14%, transparent);
+  border: 1px solid var(--color-success);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-jb-mono);
+  font-size: 0.88rem;
+  color: var(--text-1);
+}
+
+.error {
+  padding: 0.6rem 0.9rem;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-jb-mono);
+  font-size: 0.82rem;
+  color: var(--text-1);
+}

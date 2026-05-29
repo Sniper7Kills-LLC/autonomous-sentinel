@@ -1,0 +1,135 @@
+.shell {
+  display: grid;
+  gap: 1rem;
+}
+
+.headRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.count {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-2);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.empty {
+  padding: 1.75rem 1.25rem;
+  background: var(--surface-1);
+  border: 1px dashed var(--border-1);
+  border-radius: var(--radius-md);
+  text-align: center;
+  color: var(--text-2);
+  font-family: var(--font-jb-mono);
+  font-size: 0.88rem;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  align-items: center;
+}
+
+.rowFailed {
+  border-color: var(--danger);
+}
+
+.rowBody {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.rowHead {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-family: var(--font-jb-mono);
+  font-size: 0.78rem;
+  color: var(--text-2);
+}
+
+.idMono {
+  font-family: var(--font-jb-mono);
+  font-size: 0.92rem;
+  color: var(--text-1);
+  letter-spacing: 0.02em;
+}
+
+.rowMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-2);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tag {
+  padding: 0.1rem 0.4rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: 999px;
+}
+
+.rowRight {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.4rem;
+}
+
+.linkRow {
+  display: flex;
+  gap: 0.6rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+}
+
+.link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.link:hover,
+.link:focus-visible {
+  color: var(--text-1);
+  text-decoration: underline;
+  outline: none;
+}
+
+.error {
+  font-family: var(--font-jb-mono);
+  font-size: 0.78rem;
+  color: var(--text-1);
+  padding: 0.5rem 0.75rem;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  margin-top: 0.4rem;
+  word-break: break-word;
+}
+
+.notice {
+  font-family: var(--font-jb-mono);
+  font-size: 0.82rem;
+  color: var(--text-2);
+  padding: 0.75rem 1rem;
+  background: var(--surface-1);
+  border-left: 2px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+}

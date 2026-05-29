@@ -53,6 +53,17 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-2);
+  gap: 0.5rem;
+}
+
+.popHeadValue {
+  font-style: normal;
+  color: var(--text-1);
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-family: var(--font-jb-mono);
+  font-size: 0.78rem;
+  word-break: break-word;
 }
 
 .closeBtn {
