@@ -42,6 +42,27 @@ describe('normalize — decodePhonetic', () => {
   it('returns empty string for no phonetic content', () => {
     expect(decodePhonetic('hello world')).toBe('');
   });
+
+  it('joins whisper-split NATO words (#521)', () => {
+    expect(decodePhonetic('brav o')).toBe('B');
+    expect(decodePhonetic('x - ray')).toBe('X');
+    expect(decodePhonetic('fo xt rot')).toBe('F');
+    expect(decodePhonetic('z ulu')).toBe('Z');
+    expect(decodePhonetic('pap a')).toBe('P');
+    expect(decodePhonetic('vict or')).toBe('V');
+    expect(decodePhonetic('y an kee')).toBe('Y');
+  });
+
+  it('decodes a real split-token whisper sequence', () => {
+    // From recording 6b11cd4b: "mic , pap a , brav o , mic , delta , uniform"
+    // ("mic" is a whisper mishear of "mike", not a split — dropped).
+    expect(decodePhonetic('pap a , brav o , delta , uniform')).toBe('PBDU');
+  });
+
+  it('still decodes clean letter-by-letter input (no over-join)', () => {
+    expect(decodePhonetic('Alpha Charlie Delta')).toBe('ACD');
+    expect(decodePhonetic('India India Alpha')).toBe('IIA');
+  });
 });
 
 describe('normalize — collapseDoubleBroadcast', () => {

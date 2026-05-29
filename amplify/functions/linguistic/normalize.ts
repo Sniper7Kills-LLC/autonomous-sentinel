@@ -89,13 +89,35 @@ function squish(text: string): string {
  * "uh"/"um") are dropped conservatively. Returns "" when there is no
  * phonetic content.
  */
+/** Max fragments whisper splits one NATO word into (e.g. "fo xt rot"). */
+const MAX_JOIN = 3;
+
 export function decodePhonetic(spoken: string): string {
   if (typeof spoken !== 'string') return '';
+  // Whisper frequently splits a single phonetic word across tokens
+  // ("brav o", "x - ray", "fo xt rot", "z ulu", "y an kee") and inserts
+  // punctuation. Normalize each token to [a-z0-9], drop empties, then
+  // greedily match the longest run of 1..MAX_JOIN adjacent fragments
+  // against the NATO table. Longest-first so a clean "alpha charlie"
+  // still decodes letter-by-letter; unmatched fragments are noise → drop.
+  const toks = spoken
+    .split(/\s+/)
+    .map(normalizeToken)
+    .filter((t) => t.length > 0);
   const out: string[] = [];
-  for (const raw of spoken.split(/\s+/)) {
-    const key = normalizeToken(raw);
-    const decoded = key.length > 0 ? PHONETIC[key] : undefined;
-    if (decoded) out.push(decoded);
+  let i = 0;
+  while (i < toks.length) {
+    let matched = false;
+    for (let k = Math.min(MAX_JOIN, toks.length - i); k >= 1; k--) {
+      const decoded = PHONETIC[toks.slice(i, i + k).join('')];
+      if (decoded) {
+        out.push(decoded);
+        i += k;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) i += 1;
   }
   return out.join('');
 }
