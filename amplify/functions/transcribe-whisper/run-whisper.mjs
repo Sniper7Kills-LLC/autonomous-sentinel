@@ -90,13 +90,13 @@ export function buildArgs(opts) {
     opts.language,
     '-t',
     String(opts.threads),
-    // Word-level segmentation. `-ml 1` (`--max-len 1`) forces each
-    // emitted JSON segment to contain a single token, so the
-    // `offsets.from/to` (milliseconds) pair gives per-word timestamps
-    // — consumed by the web audio player's scrub-to-text sync
-    // (#92) via `Recording.wordTimestampsKey`.
-    '-ml',
-    '1',
+    // NOTE (#527): do NOT add `-ml 1` (`--max-len 1`). It forces each
+    // JSON segment to a single token, which corrupts the natural-
+    // sentence transcript fed to linguistics. Per-word timestamps for
+    // scrub-to-text sync (#92) come from the nested
+    // `transcription[].tokens[].{t0,t1}` array, which `-oj` emits
+    // regardless — the handler derives the word sidecar from it via
+    // `word-timestamps.mjs`.
     '-oj',
     '-of',
     opts.outputPrefix,

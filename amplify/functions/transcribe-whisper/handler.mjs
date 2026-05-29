@@ -45,6 +45,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readWhisperConfig, runWhisper, WhisperError } from './run-whisper.mjs';
 import { transcodeToOpus, transcodeToWav } from './opus-transcode.mjs';
+import { extractWordTimestamps } from './word-timestamps.mjs';
 
 const RECORDINGS_BUCKET = process.env.RECORDINGS_BUCKET ?? '';
 const PIPELINE_TEMP_PREFIX = process.env.PIPELINE_TEMP_PREFIX ?? 'pipeline-temp';
@@ -205,17 +206,22 @@ async function processOne(body) {
     const transcriptJson = await readFile(result.jsonOutputPath, 'utf8');
     const transcriptText = extractTranscriptText(transcriptJson);
 
-    // Persist the whisper JSON as the canonical word-timestamps
-    // sidecar (#92). Lands at `recordings/web/<id>.words.json` so
-    // the web `<AudioPlayer>` can fetch it via Amplify Storage
-    // without a signed-URL Lambda (the `recordings/web/*` prefix
-    // already grants `allow.guest.to(['read'])`).
+    // Derive the canonical word-timestamps sidecar (#92 / #527) from the
+    // whisper.cpp per-token offsets. We persist the normalized
+    // `{ words: [{ word, start, end }] }` shape — NOT the raw whisper
+    // JSON — so the sidecar is decoupled from whisper.cpp's layout and
+    // the web `parseWordTimestamps` consumes it via its `{words:[…]}`
+    // branch. Lands at `recordings/web/<id>.words.json` so the web
+    // `<AudioPlayer>` can fetch it via Amplify Storage without a
+    // signed-URL Lambda (the `recordings/web/*` prefix already grants
+    // `allow.guest.to(['read'])`).
     const wordTimestampsKey = `${RECORDINGS_WEB_PREFIX}/${recordingId}.words.json`;
+    const wordsSidecar = JSON.stringify(extractWordTimestamps(transcriptJson));
     await s3.send(
       new PutObjectCommand({
         Bucket: RECORDINGS_BUCKET,
         Key: wordTimestampsKey,
-        Body: transcriptJson,
+        Body: wordsSidecar,
         ContentType: 'application/json',
       }),
     );
