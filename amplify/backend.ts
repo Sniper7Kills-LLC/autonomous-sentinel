@@ -749,8 +749,19 @@ whisperFn.addToRolePolicy(
     actions: ['s3:ListBucket'],
     resources: [mediaBucket.bucketArn],
     conditions: {
-      StringLike: { 's3:prefix': ['recordings/web/*'] },
+      // `recordings/originals/*` added for the consolidated transcode
+      // path (#514): the container downloads the original before
+      // transcoding to the web-canonical Opus.
+      StringLike: { 's3:prefix': ['recordings/web/*', 'recordings/originals/*'] },
     },
+  }),
+);
+// Read the original upload so the container can transcode it to the
+// web-canonical Opus in one pass (#514).
+whisperFn.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['s3:GetObject'],
+    resources: [`${mediaBucket.bucketArn}/recordings/originals/*`],
   }),
 );
 whisperFn.addToRolePolicy(

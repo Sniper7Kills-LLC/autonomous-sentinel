@@ -1,0 +1,91 @@
+/**
+ * In-container ffmpeg → Opus transcode (#514).
+ *
+ * Runs inside the Whisper container image (which now bundles a static
+ * ffmpeg at `/usr/local/bin/ffmpeg`). Produces the web-canonical
+ * playback derivative: Opus 32 kbps mono, 16 kHz, VoIP — the same
+ * encoding params as the TS `preprocess/opus-transcode.ts`, kept in
+ * sync deliberately.
+ *
+ * `spawnFn` is injectable so the unit test drives argv + exit handling
+ * without a real ffmpeg.
+ */
+import { spawn } from 'node:child_process';
+
+export const OPUS_BITRATE = '32k';
+export const OPUS_CHANNELS = 1;
+export const OPUS_SAMPLE_RATE_HZ = 16000;
+export const OPUS_APPLICATION = 'voip';
+export const DEFAULT_FFMPEG_PATH = '/usr/local/bin/ffmpeg';
+
+export class TranscodeError extends Error {
+  constructor(message, code, stderr) {
+    super(message);
+    this.name = 'TranscodeError';
+    this.code = code;
+    this.stderr = stderr;
+  }
+}
+
+export function buildFfmpegArgs(inputPath, outputPath) {
+  return [
+    '-y',
+    '-loglevel',
+    'error',
+    '-i',
+    inputPath,
+    '-c:a',
+    'libopus',
+    '-b:a',
+    OPUS_BITRATE,
+    '-ac',
+    String(OPUS_CHANNELS),
+    '-ar',
+    String(OPUS_SAMPLE_RATE_HZ),
+    '-application',
+    OPUS_APPLICATION,
+    '-vbr',
+    'on',
+    outputPath,
+  ];
+}
+
+export function transcodeToOpus(opts) {
+  const inputPath = opts?.inputPath;
+  const outputPath = opts?.outputPath;
+  if (typeof inputPath !== 'string' || inputPath.length === 0) {
+    return Promise.reject(new Error('transcodeToOpus: inputPath required'));
+  }
+  if (typeof outputPath !== 'string' || outputPath.length === 0) {
+    return Promise.reject(new Error('transcodeToOpus: outputPath required'));
+  }
+  if (inputPath === outputPath) {
+    return Promise.reject(new Error('transcodeToOpus: inputPath and outputPath must differ'));
+  }
+  const ffmpegPath = opts.ffmpegPath || process.env.FFMPEG_PATH || DEFAULT_FFMPEG_PATH;
+  const spawnFn = opts.spawnFn || spawn;
+
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = spawnFn(ffmpegPath, buildFfmpegArgs(inputPath, outputPath));
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    let stderr = '';
+    child.stderr?.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve({ outputPath, stderrTail: stderr.slice(-512) });
+      } else {
+        reject(
+          new TranscodeError(`transcodeToOpus: ffmpeg exited ${code}`, code, stderr.slice(-512)),
+        );
+      }
+    });
+  });
+}
