@@ -117,6 +117,15 @@ const COLLAPSE_SIMILARITY = 0.8;
 export function collapseDoubleBroadcast(text: string): string {
   const normalized = squish(text);
   if (!normalized) return normalized;
+
+  // Prefer an explicit "I say again" delimiter (SKYKING marks its
+  // repeat with it) — reliable, no similarity guessing. Take the head.
+  const sayAgain = /\bi say again\b/i.exec(normalized);
+  if (sayAgain) {
+    const head = normalized.slice(0, sayAgain.index).trim();
+    if (head.length > 0) return head;
+  }
+
   const tokens = normalized.split(' ');
   const n = tokens.length;
   if (n < 2 || n % 2 !== 0) return normalized;
@@ -183,6 +192,8 @@ export interface NormalizeOutput {
   receiver?: string;
   /** Set only for types with a decoded alphanumeric body (ALLSTATIONS). */
   characterCount?: number;
+  /** Set for SKYKING — always 1 per owner spec. */
+  codewordCount?: number;
 }
 
 /** Types broadcast twice on air — eligible for double-broadcast collapse. */
@@ -194,7 +205,9 @@ const DOUBLE_BROADCAST_TYPES = new Set(['ALLSTATIONS', 'SKYKING']);
  * field wasn't captured.
  *
  * - ALLSTATIONS: collapse → decode body to alphanumeric → char count.
- * - SKYKING: collapse only (body format owed by owner — no decode).
+ * - SKYKING: collapse (via "I say again") → body kept inline (TIME/AUTH
+ *   stay in the text, no decode) → codewordCount = 1. Sender + receiver
+ *   are both extracted (a SKYKING may carry either).
  * - everything else: passthrough (trimmed body, best-effort extraction).
  */
 export function normalizeParsed(input: NormalizeInput): NormalizeOutput {
@@ -216,8 +229,19 @@ export function normalizeParsed(input: NormalizeInput): NormalizeOutput {
     };
   }
 
-  // SKYKING + all other types: keep the (collapsed) text as the body,
-  // no phonetic decode.
+  if (input.type === 'SKYKING') {
+    // Body kept inline (CODEWORD + TIME + AUTH); repeat already dropped
+    // by the "I say again" collapse. codewordCount is always 1.
+    return {
+      type: input.type,
+      body: input.body ? squish(input.body) : collapsed,
+      sender,
+      receiver,
+      codewordCount: 1,
+    };
+  }
+
+  // All other types: keep the (collapsed) text as the body, no decode.
   return {
     type: input.type,
     body: input.body ? squish(input.body) : collapsed,

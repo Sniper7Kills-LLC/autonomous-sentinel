@@ -139,16 +139,28 @@ describe('normalize — normalizeParsed orchestrator', () => {
     expect(out.receiver).toBe('ICEMAN');
   });
 
-  it('SKYKING: collapses the double broadcast but does NOT phonetic-decode the body', () => {
-    // SKYKING body format is owed by owner — collapse + extract only,
-    // body left as the collapsed transcript (no NATO decode).
-    const once = 'skyking skyking do not answer FOR ICEMAN FOR ICEMAN time 14 authentication 9D';
-    const out = normalizeParsed({ type: 'SKYKING', transcript: `${once} ${once}` });
-    expect(out.receiver).toBe('ICEMAN');
-    // Not decoded to alphanumeric — preserves the collapsed text.
-    expect(out.body).toContain('time 14');
-    // Single copy, not doubled.
+  it('SKYKING: splits on "I say again", codewordCount=1, TIME/AUTH inline', () => {
+    // Canonical SKYKING (owner): preamble + [CODEWORD] TIME XX AUTH YY,
+    // delimited by "I say again", then repeated. TIME/AUTH stay inline.
+    const once = 'skyking skyking do not answer alpha time 14 auth 9d';
+    const out = normalizeParsed({ type: 'SKYKING', transcript: `${once} I say again ${once}` });
+    expect(out.body).toBe(once);
+    expect(out.codewordCount).toBe(1);
+    // Single copy, not doubled; TIME/AUTH preserved inline.
     expect((out.body?.match(/skyking skyking/g) ?? []).length).toBe(1);
+    expect(out.body).toContain('time 14');
+    expect(out.body).toContain('auth 9d');
+  });
+
+  it('SKYKING: extracts sender and receiver when present', () => {
+    // A SKYKING CAN carry a receiver ("FOR X FOR X") and a sender
+    // ("this is X out") — owner correction. Both are captured.
+    const once =
+      'skyking skyking do not answer FOR ICEMAN FOR ICEMAN alpha time 14 auth 9d this is mainsail out';
+    const out = normalizeParsed({ type: 'SKYKING', transcript: `${once} I say again ${once}` });
+    expect(out.receiver).toBe('ICEMAN');
+    expect(out.sender).toBe('mainsail');
+    expect(out.codewordCount).toBe(1);
   });
 
   it('prefers an already-captured body/sender/receiver over re-extraction', () => {
