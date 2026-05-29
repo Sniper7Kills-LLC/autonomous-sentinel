@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { StatusPill, type PipelineStatus } from '@/components/ui/StatusPill';
@@ -166,6 +166,14 @@ function UploadRowItem({ row, canReprocess, onReprocess }: UploadRowItemProps) {
   const granularLabel = humanStage(stage);
   const [reprocessing, setReprocessing] = useState(false);
   const [reprocessError, setReprocessError] = useState<string | null>(null);
+  // Guard against state updates after unmount (row removed / navigation
+  // away while the mutation is in flight).
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // A recording-less row has no stored audio to reprocess; the server
   // rejects it too, but hide the control rather than offer a dead button.
@@ -177,9 +185,9 @@ function UploadRowItem({ row, canReprocess, onReprocess }: UploadRowItemProps) {
     try {
       await onReprocess(row.id);
     } catch (err) {
-      setReprocessError(err instanceof Error ? err.message : String(err));
+      if (mountedRef.current) setReprocessError(err instanceof Error ? err.message : String(err));
     } finally {
-      setReprocessing(false);
+      if (mountedRef.current) setReprocessing(false);
     }
   }, [onReprocess, row.id]);
   return (
