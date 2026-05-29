@@ -76,6 +76,8 @@ beforeEach(() => {
   sqsMock.reset();
   process.env.RECORDINGS_BUCKET = 'test-bucket';
   process.env.TRANSCRIBE_QUEUE_URL = 'https://sqs.us-east-1.amazonaws.com/0/transcribe';
+  // Default: ffmpeg layer not present → byte-copy fallback path.
+  delete process.env.FFMPEG_PATH;
 
   s3Mock.on(HeadObjectCommand).resolves({ ContentLength: 1234 });
   s3Mock.on(CopyObjectCommand).resolves({});
@@ -240,6 +242,85 @@ describe('preprocess — failure paths', () => {
         transcriptionStatus: 'PREPROCESS_FAILED',
         transcriptionFailed: true,
         failedReason: 'AccessDenied',
+      }),
+    );
+    errSpy.mockRestore();
+  });
+});
+
+describe('preprocess — ffmpeg transcode path (#503, FFMPEG_PATH set)', () => {
+  it('transcodes to the .opus web key, advances Recording, publishes transcribe message', async () => {
+    process.env.FFMPEG_PATH = '/opt/bin/ffmpeg';
+    const { client, updateSpy } = makeDataStub();
+    const transcodeWeb = vi.fn().mockResolvedValue({
+      webKey: 'recordings/web/rec-77.opus',
+      sizeBytes: 4096,
+    });
+    __setDeps({
+      s3: new S3Client({}),
+      sqs: new SQSClient({}),
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      transcodeWeb,
+    });
+    const event = makeEvent({
+      recordingId: 'rec-77',
+      originalKey: 'recordings/originals/abc.wav',
+      contentHash: 'h-77',
+      enqueuedAt: '2026-05-24T17:55:00Z',
+    });
+
+    await handler(event, {} as never, () => undefined);
+
+    // ffmpeg orchestration called with the configured binary path; no
+    // byte-copy on this path.
+    expect(transcodeWeb).toHaveBeenCalledOnce();
+    expect(transcodeWeb.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({ ffmpegBinary: '/opt/bin/ffmpeg' }),
+    );
+    expect(s3Mock.commandCalls(CopyObjectCommand)).toHaveLength(0);
+
+    // Recording advanced with the .opus key + transcoded size.
+    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        id: 'rec-77',
+        webCanonicalKey: 'recordings/web/rec-77.opus',
+        canonicalSizeBytes: 4096,
+        transcriptionStatus: 'TRANSCRIBING',
+      }),
+    );
+
+    // Transcribe message carries the .opus key.
+    const sent = sqsMock.commandCalls(SendMessageCommand);
+    expect(sent).toHaveLength(1);
+    const body = JSON.parse(sent[0]?.args[0].input.MessageBody as string) as { audioKey: string };
+    expect(body.audioKey).toBe('recordings/web/rec-77.opus');
+  });
+
+  it('marks PREPROCESS_FAILED + rethrows when the transcode throws', async () => {
+    process.env.FFMPEG_PATH = '/opt/bin/ffmpeg';
+    const { client, updateSpy } = makeDataStub();
+    const transcodeWeb = vi.fn().mockRejectedValue(new Error('ffmpeg exit 1'));
+    __setDeps({
+      s3: new S3Client({}),
+      sqs: new SQSClient({}),
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      transcodeWeb,
+    });
+    const event = makeEvent({
+      recordingId: 'rec-78',
+      originalKey: 'recordings/originals/abc.wav',
+      contentHash: 'h-78',
+      enqueuedAt: '2026-05-24T18:00:00Z',
+    });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await expect(handler(event, {} as never, () => undefined)).rejects.toThrow(/ffmpeg exit 1/);
+    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        id: 'rec-78',
+        transcriptionStatus: 'PREPROCESS_FAILED',
+        transcriptionFailed: true,
       }),
     );
     errSpy.mockRestore();

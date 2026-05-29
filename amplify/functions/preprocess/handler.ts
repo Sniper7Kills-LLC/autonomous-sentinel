@@ -1,6 +1,7 @@
 import type { SQSEvent, SQSHandler } from 'aws-lambda';
 import { CopyObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
+import { transcodeWebCanonical, type TranscodeWebResult } from './transcode-web';
 
 /**
  * Pre-process Lambda (#433 stage 2).
@@ -76,6 +77,11 @@ export interface PreprocessDeps {
   sqs?: SQSClient;
   dataClient?: PreprocessDataClient;
   now?: () => Date;
+  /** Override the ffmpeg transcode orchestration in tests. */
+  transcodeWeb?: (
+    input: { bucket: string; originalKey: string; recordingId: string; contentHash?: string },
+    deps: { s3: S3Client; ffmpegBinary?: string },
+  ) => Promise<TranscodeWebResult>;
 }
 
 let injected: PreprocessDeps = {};
@@ -148,17 +154,16 @@ interface ProcessOneResult {
   inputKey: string;
   /** Destination bucket key (web canonical). */
   outputKey: string;
-  /** Bytes on disk for both — they're identical at v1 because no
-   * transcode happens yet. Once ffmpeg lands, output will shrink. */
+  /** Original size, and the web-canonical output size. Equal on the
+   * byte-copy fallback; the output shrinks on the transcode path. */
   inputSizeBytes: number;
   outputSizeBytes: number;
-  /** File extensions. Useful for the future-ffmpeg log; today input
-   * and output share the same extension because v1 just copies. */
+  /** File extensions for the conversion log. On the transcode path the
+   * output is `.opus`; on the byte-copy fallback it mirrors the input. */
   inputExt: string;
   outputExt: string;
-  /** Whether the file was transcoded vs. byte-for-byte copied. v1
-   * always returns `false`; flips to `true` once the ffmpeg path
-   * (Opus 32 kbps mono) is wired in #433 follow-up. */
+  /** True when ffmpeg transcoded to Opus (FFMPEG_PATH set); false on the
+   * byte-for-byte copy fallback used until the ffmpeg layer is wired. */
   transcoded: boolean;
 }
 
@@ -167,26 +172,54 @@ async function processOne(msg: PreprocessQueueMessage): Promise<ProcessOneResult
   const transcribeQueueUrl = requiredEnv('TRANSCRIBE_QUEUE_URL');
   const client = await dataClient();
 
-  const webKey = buildWebKey(msg.recordingId, msg.originalKey);
-
+  // Original size is reported either way for the conversion log.
   const head = await s3().send(new HeadObjectCommand({ Bucket: bucket, Key: msg.originalKey }));
-  const sizeBytes = head.ContentLength ?? 0;
+  const inputSizeBytes = head.ContentLength ?? 0;
 
-  // CopySource format = `${bucket}/${url-encoded-key}` — the slash
-  // is a delimiter and must NOT be encoded, only the key part is
-  // URL-encoded (per AWS S3 docs).
-  await s3().send(
-    new CopyObjectCommand({
-      Bucket: bucket,
-      CopySource: `${bucket}/${encodeURIComponent(msg.originalKey)}`,
-      Key: webKey,
-      MetadataDirective: 'REPLACE',
-      Metadata: {
-        'recording-id': msg.recordingId,
-        'content-hash': msg.contentHash,
+  // ffmpeg transcode is gated on FFMPEG_PATH (the Lambda layer's
+  // `/opt/bin/ffmpeg`, wired once the layer is provisioned). Until
+  // then we fall back to the byte-for-byte copy so the pipeline keeps
+  // flowing — flipping the env on switches to real Opus output with
+  // no code change (#503).
+  const ffmpegPath = process.env.FFMPEG_PATH;
+  let webKey: string;
+  let outputSizeBytes: number;
+  let transcoded: boolean;
+
+  if (ffmpegPath) {
+    const transcodeWeb = injected.transcodeWeb ?? transcodeWebCanonical;
+    const result = await transcodeWeb(
+      {
+        bucket,
+        originalKey: msg.originalKey,
+        recordingId: msg.recordingId,
+        contentHash: msg.contentHash,
       },
-    }),
-  );
+      { s3: s3(), ffmpegBinary: ffmpegPath },
+    );
+    webKey = result.webKey;
+    outputSizeBytes = result.sizeBytes;
+    transcoded = true;
+  } else {
+    webKey = buildWebKey(msg.recordingId, msg.originalKey);
+    // CopySource format = `${bucket}/${url-encoded-key}` — the slash
+    // is a delimiter and must NOT be encoded, only the key part is
+    // URL-encoded (per AWS S3 docs).
+    await s3().send(
+      new CopyObjectCommand({
+        Bucket: bucket,
+        CopySource: `${bucket}/${encodeURIComponent(msg.originalKey)}`,
+        Key: webKey,
+        MetadataDirective: 'REPLACE',
+        Metadata: {
+          'recording-id': msg.recordingId,
+          'content-hash': msg.contentHash,
+        },
+      }),
+    );
+    outputSizeBytes = inputSizeBytes;
+    transcoded = false;
+  }
 
   const ts = nowIso();
   // Routed through Amplify Data so AppSync's subscription publisher
@@ -194,7 +227,7 @@ async function processOne(msg: PreprocessQueueMessage): Promise<ProcessOneResult
   const updateResult = await client.models.Recording.update({
     id: msg.recordingId,
     webCanonicalKey: webKey,
-    canonicalSizeBytes: sizeBytes,
+    canonicalSizeBytes: outputSizeBytes,
     transcriptionStatus: 'TRANSCRIBING',
     transcriptionStatusUpdatedAt: ts,
   });
@@ -221,11 +254,11 @@ async function processOne(msg: PreprocessQueueMessage): Promise<ProcessOneResult
   return {
     inputKey: msg.originalKey,
     outputKey: webKey,
-    inputSizeBytes: sizeBytes,
-    outputSizeBytes: sizeBytes,
+    inputSizeBytes,
+    outputSizeBytes,
     inputExt,
     outputExt,
-    transcoded: false,
+    transcoded,
   };
 }
 
