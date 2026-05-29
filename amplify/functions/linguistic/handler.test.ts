@@ -424,6 +424,34 @@ describe('linguistic — deleted-Recording tombstone (#459)', () => {
     errSpy.mockRestore();
   });
 
+  it('still drops the message cleanly when orphan-Message cleanup fails', async () => {
+    const { client, updateSpy, deleteSpy } = makeDataStub();
+    updateSpy.mockResolvedValueOnce({ data: null, errors: CONDITIONAL_CHECK_ERRORS });
+    // Cleanup throws — must NOT cause a redrive (would loop, re-creating
+    // a fresh orphan Message each attempt).
+    deleteSpy.mockRejectedValueOnce(new Error('throughput exceeded'));
+    __setDeps({
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-orphan-2',
+    });
+    const event = makeEvent({
+      recordingId: 'rec-deleted-3',
+      transcript: 'skyking skyking',
+      enqueuedAt: '2026-05-24T18:00:00Z',
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(handler(event, {} as never, () => undefined)).resolves.not.toThrow();
+    expect(deleteSpy).toHaveBeenCalledOnce();
+    expect(errSpy).toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalled();
+
+    warnSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
   it('drops a transcribe-failure message cleanly when the Recording was deleted in flight', async () => {
     const { client, createSpy, updateSpy, deleteSpy } = makeDataStub();
     updateSpy.mockResolvedValueOnce({ data: null, errors: CONDITIONAL_CHECK_ERRORS });

@@ -280,11 +280,34 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
       // the orphan Message we just created so it never surfaces in the
       // public feed without a Recording, then return cleanly so SQS
       // deletes the message instead of redriving (#459).
-      const deleted = await client.models.Message.delete({ id: newMessageId });
+      //
+      // The delete is best-effort: dropping the SQS message must win
+      // over a failed cleanup. If we let a delete error propagate, the
+      // handler would mark + rethrow + redrive, and the next attempt
+      // would create a *fresh* orphan Message before tombstoning again
+      // — an orphan-creation loop. A leaked orphan Message is the
+      // lesser evil (and is swept by the future Message janitor, #459
+      // out-of-scope).
+      let orphanMessageDeleted = false;
+      try {
+        const deleted = await client.models.Message.delete({ id: newMessageId });
+        orphanMessageDeleted = !deleted.errors;
+        if (deleted.errors) {
+          console.error('linguistic: failed to delete orphan Message', {
+            messageId: newMessageId,
+            errors: deleted.errors,
+          });
+        }
+      } catch (err) {
+        console.error('linguistic: orphan Message delete threw', {
+          messageId: newMessageId,
+          err: String(err),
+        });
+      }
       console.warn('linguistic: Recording deleted in flight, dropping transcript message', {
         recordingId: msg.recordingId,
         messageId: newMessageId,
-        orphanMessageDeleted: !deleted.errors,
+        orphanMessageDeleted,
       });
       return;
     }
