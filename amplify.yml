@@ -27,9 +27,6 @@ applications:
           commands:
             - npm ci --prefix ../ --cache ../.npm --prefer-offline
             - cd ..
-            # Fetch + SHA-verify the static ffmpeg binary into the
-            # preprocess Lambda layer asset before synth (#503).
-            - node amplify/scripts/fetch-ffmpeg.mjs
             - npx ampx pipeline-deploy --branch $AWS_BRANCH --app-id $AWS_APP_ID
             - cd web
     frontend:

@@ -69,8 +69,3 @@ coverage/
 
 # CDK synth output
 infra/*/cdk.out/
-
-# ffmpeg Lambda layer binary (#503) — fetched + SHA-verified at build
-# time by amplify/scripts/fetch-ffmpeg.mjs, never committed.
-amplify/layers/ffmpeg/bin/
-amplify/layers/ffmpeg/.ffmpeg.tar.xz
