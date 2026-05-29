@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { StatusPill, type PipelineStatus } from '@/components/ui/StatusPill';
@@ -10,6 +10,8 @@ import {
   type UploadRow,
   type UploadStage,
 } from '@/lib/uploads/query';
+import { reprocessRecording } from '@/lib/uploads/reprocess';
+import { fetchCallerGroups, isModeratorOrAdmin } from '@/lib/auth/roles';
 import styles from './UploadsList.module.css';
 
 interface UploadsListProps {
@@ -32,6 +34,39 @@ export function UploadsList({ uploaderId }: UploadsListProps) {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Moderators/admins get a per-row "Reprocess" control (#505). The
+  // mutation is authz-gated server-side too — this only decides
+  // whether to render the button.
+  const [canReprocess, setCanReprocess] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const groups = await fetchCallerGroups();
+        if (!cancelled) setCanReprocess(isModeratorOrAdmin(groups));
+      } catch {
+        if (!cancelled) setCanReprocess(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleReprocess = useCallback(async (recordingId: string) => {
+    await reprocessRecording(recordingId);
+    // Reflect the server-side reset to QUEUED + cleared failure so the
+    // row updates immediately; the pipeline subscription / next reload
+    // will carry it forward from there.
+    setRows((prev) =>
+      prev.map((r) =>
+        r.id === recordingId
+          ? { ...r, transcriptionStatus: 'QUEUED', transcriptionFailed: false, failedReason: null }
+          : r,
+      ),
+    );
+  }, []);
 
   const load = useCallback(
     async (token: string | null) => {
@@ -92,7 +127,12 @@ export function UploadsList({ uploaderId }: UploadsListProps) {
         </span>
       </div>
       {rows.map((row) => (
-        <UploadRowItem key={row.id} row={row} />
+        <UploadRowItem
+          key={row.id}
+          row={row}
+          canReprocess={canReprocess}
+          onReprocess={handleReprocess}
+        />
       ))}
       {nextToken && (
         <div className={styles.headRow} style={{ justifyContent: 'center' }}>
@@ -115,13 +155,41 @@ export function UploadsList({ uploaderId }: UploadsListProps) {
 
 interface UploadRowItemProps {
   row: UploadRow;
+  canReprocess: boolean;
+  onReprocess: (recordingId: string) => Promise<void>;
 }
 
-function UploadRowItem({ row }: UploadRowItemProps) {
+function UploadRowItem({ row, canReprocess, onReprocess }: UploadRowItemProps) {
   const stage = statusToStage(row.transcriptionStatus);
   const isFailed = stage.endsWith('_failed') || stage === 'failed';
   const pillStatus = mapToPill(stage);
   const granularLabel = humanStage(stage);
+  const [reprocessing, setReprocessing] = useState(false);
+  const [reprocessError, setReprocessError] = useState<string | null>(null);
+  // Guard against state updates after unmount (row removed / navigation
+  // away while the mutation is in flight).
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // A recording-less row has no stored audio to reprocess; the server
+  // rejects it too, but hide the control rather than offer a dead button.
+  const reprocessable = canReprocess && Boolean(row.originalKey);
+
+  const doReprocess = useCallback(async () => {
+    setReprocessing(true);
+    setReprocessError(null);
+    try {
+      await onReprocess(row.id);
+    } catch (err) {
+      if (mountedRef.current) setReprocessError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (mountedRef.current) setReprocessing(false);
+    }
+  }, [onReprocess, row.id]);
   return (
     <article
       className={`${styles.row} ${isFailed ? styles.rowFailed : ''}`}
@@ -158,7 +226,25 @@ function UploadRowItem({ row }: UploadRowItemProps) {
               Open message →
             </Link>
           )}
+          {reprocessable && (
+            <Button
+              variant="ghost"
+              size="sm"
+              loading={reprocessing}
+              disabled={reprocessing}
+              onClick={() => {
+                void doReprocess();
+              }}
+            >
+              Reprocess
+            </Button>
+          )}
         </div>
+        {reprocessError && (
+          <div className={styles.error} role="alert">
+            Reprocess failed: {reprocessError}
+          </div>
+        )}
       </div>
     </article>
   );

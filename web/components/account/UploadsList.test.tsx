@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { UploadsList } from './UploadsList';
 
 const listMock = vi.fn<() => Promise<unknown>>();
@@ -11,9 +11,49 @@ vi.mock('@/lib/uploads/query', async (importActual) => {
   };
 });
 
+const groupsMock = vi.fn<() => Promise<string[]>>();
+vi.mock('@/lib/auth/roles', async (importActual) => {
+  const actual = await importActual<Record<string, unknown>>();
+  return {
+    ...actual,
+    fetchCallerGroups: (): Promise<string[]> => groupsMock(),
+  };
+});
+
+const reprocessMock = vi.fn<(id: string) => Promise<void>>();
+vi.mock('@/lib/uploads/reprocess', () => ({
+  reprocessRecording: (id: string): Promise<void> => reprocessMock(id),
+}));
+
+const failedRow = {
+  id: 'rec-ccc',
+  messageId: null,
+  contentHash: 'h',
+  originalKey: 'recordings/originals/h.wav',
+  webCanonicalKey: null,
+  wordTimestampsKey: null,
+  peaksJsonKey: null,
+  transcript: null,
+  transcriptionStatus: 'TRANSCRIBE_FAILED',
+  transcriptionStatusUpdatedAt: '2026-05-28T19:00:00Z',
+  transcriptionFailed: true,
+  failedReason: 'whisper.cpp exit 1',
+  frequencyKhz: null,
+  modulation: null,
+  broadcastedAt: null,
+  durationMs: null,
+  sdrId: null,
+  automated: false,
+  createdAt: '2026-05-28T19:00:00Z',
+};
+
 describe('UploadsList', () => {
   beforeEach(() => {
     listMock.mockReset();
+    groupsMock.mockReset();
+    groupsMock.mockResolvedValue([]);
+    reprocessMock.mockReset();
+    reprocessMock.mockResolvedValue(undefined);
     vi.stubGlobal(
       'matchMedia',
       vi.fn().mockReturnValue({
@@ -106,5 +146,38 @@ describe('UploadsList', () => {
     listMock.mockRejectedValue(new Error('Unauthorized'));
     render(<UploadsList uploaderId="sub-1" />);
     expect(await screen.findByRole('alert')).toHaveTextContent(/Unauthorized/i);
+  });
+
+  it('hides the Reprocess button for a non-mod/admin member (#505)', async () => {
+    groupsMock.mockResolvedValue(['member']);
+    listMock.mockResolvedValue({ items: [failedRow], nextToken: null });
+    render(<UploadsList uploaderId="sub-1" />);
+    await waitFor(() => expect(screen.getByText('whisper.cpp exit 1')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: /reprocess/i })).not.toBeInTheDocument();
+  });
+
+  it('shows Reprocess for a moderator/admin and calls the mutation, flipping the row to queued (#505)', async () => {
+    groupsMock.mockResolvedValue(['admin']);
+    listMock.mockResolvedValue({ items: [failedRow], nextToken: null });
+    render(<UploadsList uploaderId="sub-1" />);
+
+    const btn = await screen.findByRole('button', { name: /reprocess/i });
+    fireEvent.click(btn);
+
+    await waitFor(() => expect(reprocessMock).toHaveBeenCalledWith('rec-ccc'));
+    // Optimistic status flip — pill moves to Queued, failure text clears.
+    await waitFor(() => expect(screen.getByText('Queued')).toBeInTheDocument());
+    expect(screen.queryByText('whisper.cpp exit 1')).not.toBeInTheDocument();
+  });
+
+  it('hides Reprocess for a recording-less row (no originalKey) even for admins (#505)', async () => {
+    groupsMock.mockResolvedValue(['admin']);
+    listMock.mockResolvedValue({
+      items: [{ ...failedRow, originalKey: null }],
+      nextToken: null,
+    });
+    render(<UploadsList uploaderId="sub-1" />);
+    await waitFor(() => expect(screen.getByText('whisper.cpp exit 1')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: /reprocess/i })).not.toBeInTheDocument();
   });
 });

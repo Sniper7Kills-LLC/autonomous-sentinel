@@ -1,0 +1,20 @@
+/**
+ * Caller role helpers (#505).
+ *
+ * Reads the signed-in user's Cognito groups from the idToken's
+ * `cognito:groups` claim. Used to gate moderator/admin-only UI (e.g.
+ * the recording reprocess button). The server enforces the same
+ * authorization on the mutation — these helpers only decide what to
+ * render, never what is allowed.
+ */
+
+export async function fetchCallerGroups(): Promise<string[]> {
+  const { fetchAuthSession } = await import('aws-amplify/auth');
+  const session = await fetchAuthSession();
+  const raw = session.tokens?.idToken?.payload?.['cognito:groups'];
+  return Array.isArray(raw) ? raw.filter((g): g is string => typeof g === 'string') : [];
+}
+
+export function isModeratorOrAdmin(groups: readonly string[]): boolean {
+  return groups.includes('admin') || groups.includes('moderator');
+}
