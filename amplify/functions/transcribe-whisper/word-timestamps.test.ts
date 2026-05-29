@@ -61,4 +61,17 @@ describe('extractWordTimestamps (#527)', () => {
     expect(extractWordTimestamps('{}')).toEqual({ words: [] });
     expect(extractWordTimestamps(JSON.stringify({ transcription: 'nope' }))).toEqual({ words: [] });
   });
+
+  it('treats a segment with missing or null tokens[] as empty (no throw)', () => {
+    const json = JSON.stringify({
+      transcription: [
+        { text: 'a', tokens: null },
+        { text: 'b' }, // no tokens key
+        { text: 'c', tokens: [{ text: ' word', t0: 10, t1: 20 }] },
+      ],
+    });
+    expect(extractWordTimestamps(json)).toEqual({
+      words: [{ word: 'word', start: 0.1, end: 0.2 }],
+    });
+  });
 });

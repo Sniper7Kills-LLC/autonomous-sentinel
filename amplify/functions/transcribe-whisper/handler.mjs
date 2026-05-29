@@ -216,7 +216,17 @@ async function processOne(body) {
     // signed-URL Lambda (the `recordings/web/*` prefix already grants
     // `allow.guest.to(['read'])`).
     const wordTimestampsKey = `${RECORDINGS_WEB_PREFIX}/${recordingId}.words.json`;
-    const wordsSidecar = JSON.stringify(extractWordTimestamps(transcriptJson));
+    const words = extractWordTimestamps(transcriptJson);
+    if (words.words.length === 0 && transcriptText.length > 0) {
+      // Non-empty transcript but no word timings — whisper.cpp returned
+      // segments without a usable `tokens[]` array. Scrub-to-text will
+      // be inert for this recording; surface it rather than fail silent.
+      console.warn('whisper-handler: empty word-timestamp sidecar for non-empty transcript', {
+        recordingId,
+        transcriptLen: transcriptText.length,
+      });
+    }
+    const wordsSidecar = JSON.stringify(words);
     await s3.send(
       new PutObjectCommand({
         Bucket: RECORDINGS_BUCKET,
