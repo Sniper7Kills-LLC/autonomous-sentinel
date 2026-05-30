@@ -1,21 +1,16 @@
 import { describe, it, expect } from 'vitest';
 
-import {
-  decodePhonetic,
-  collapseDoubleBroadcast,
-  extractSender,
-  extractReceiver,
-  normalizeParsed,
-} from './normalize';
+import { decodePhonetic, collapseDoubleBroadcast, normalizeParsed } from './normalize';
 
 /**
  * Linguistic normalization stage (#495).
  *
  * Pure functions that turn a raw transcript (and the rules-engine /
  * AI-fallback captured fields) into the log-format Message fields:
- * decoded alphanumeric body, de-duplicated double broadcast, and
- * extracted sender / receiver. No DDB, no network — handler wiring
- * lands in #460.
+ * decoded alphanumeric body and de-duplicated double broadcast. Sender /
+ * receiver are NOT extracted here — per #552 the AI owns all field
+ * extraction; this module only passes captured fields through. No DDB,
+ * no network.
  */
 
 describe('normalize — decodePhonetic', () => {
@@ -101,46 +96,8 @@ describe('normalize — collapseDoubleBroadcast', () => {
   });
 });
 
-describe('normalize — extractSender', () => {
-  it('extracts the sender from "This is XXX out."', () => {
-    expect(extractSender('All stations ... This is Mainsail out.')).toBe('Mainsail');
-  });
-
-  it('is case-insensitive and tolerates trailing punctuation', () => {
-    expect(extractSender('this is ANDREWS OUT')).toBe('ANDREWS');
-  });
-
-  it('returns undefined when no sender pattern present', () => {
-    expect(extractSender('all stations alpha charlie delta')).toBeUndefined();
-  });
-
-  it('does not capture the sign-off word in the degenerate "this is out out"', () => {
-    expect(extractSender('this is out out')).toBeUndefined();
-  });
-});
-
-describe('normalize — extractReceiver', () => {
-  it('extracts the receiver from "FOR XXXX FOR XXXX" and collapses the repeat', () => {
-    expect(extractReceiver('Skyking do not answer FOR ICEMAN FOR ICEMAN time 14')).toBe('ICEMAN');
-  });
-
-  it('is case-insensitive', () => {
-    expect(extractReceiver('for raptor for raptor')).toBe('raptor');
-  });
-
-  it('matches the repeat case-insensitively (JS backref honors /i)', () => {
-    // Regression lock: "FOR Raptor FOR raptor" still collapses; the
-    // captured value preserves the first occurrence's casing.
-    expect(extractReceiver('FOR Raptor FOR raptor')).toBe('Raptor');
-  });
-
-  it('returns undefined when the receiver is not stated twice', () => {
-    expect(extractReceiver('for iceman time 14 authentication')).toBeUndefined();
-  });
-});
-
 describe('normalize — normalizeParsed orchestrator', () => {
-  it('ALLSTATIONS: collapses, decodes the body, extracts sender/receiver, counts', () => {
+  it('ALLSTATIONS: collapses + decodes the body; does NOT invent sender/receiver (#552)', () => {
     const once =
       'all stations all stations FOR ICEMAN FOR ICEMAN alpha charlie delta This is Mainsail out';
     const out = normalizeParsed({
@@ -148,8 +105,9 @@ describe('normalize — normalizeParsed orchestrator', () => {
       transcript: `${once} ${once}`,
     });
     expect(out.body).toBe('ACD');
-    expect(out.sender).toBe('Mainsail');
-    expect(out.receiver).toBe('ICEMAN');
+    // No captured fields → sender/receiver stay unset (AI owns extraction).
+    expect(out.sender).toBeUndefined();
+    expect(out.receiver).toBeUndefined();
   });
 
   it('SKYKING: splits on "I say again", keeps TIME/AUTH inline', () => {
@@ -164,17 +122,17 @@ describe('normalize — normalizeParsed orchestrator', () => {
     expect(out.body).toContain('auth 9d');
   });
 
-  it('SKYKING: extracts sender and receiver when present', () => {
-    // A SKYKING CAN carry a receiver ("FOR X FOR X") and a sender
-    // ("this is X out") — owner correction. Both are captured.
+  it('SKYKING: does NOT extract sender/receiver from the transcript (#552)', () => {
+    // Field extraction is the AI's job now — normalizeParsed must not
+    // mine "FOR X FOR X" / "this is X out" out of the raw transcript.
     const once =
       'skyking skyking do not answer FOR ICEMAN FOR ICEMAN alpha time 14 auth 9d this is mainsail out';
     const out = normalizeParsed({ type: 'SKYKING', transcript: `${once} I say again ${once}` });
-    expect(out.receiver).toBe('ICEMAN');
-    expect(out.sender).toBe('mainsail');
+    expect(out.receiver).toBeUndefined();
+    expect(out.sender).toBeUndefined();
   });
 
-  it('prefers an already-captured body/sender/receiver over re-extraction', () => {
+  it('passes captured body/sender/receiver through (AI-supplied fields)', () => {
     const out = normalizeParsed({
       type: 'ALLSTATIONS',
       transcript: 'all stations alpha charlie delta This is Mainsail out',
@@ -182,7 +140,7 @@ describe('normalize — normalizeParsed orchestrator', () => {
       receiver: 'Raptor',
       body: 'Alpha Charlie Delta',
     });
-    // Captured sender/receiver win; captured phonetic body still decodes.
+    // Captured sender/receiver pass through; captured phonetic body decodes.
     expect(out.sender).toBe('Offutt');
     expect(out.receiver).toBe('Raptor');
     expect(out.body).toBe('ACD');

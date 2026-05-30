@@ -48,7 +48,6 @@ interface DataStub {
 function makeDataStub(
   candidates: Array<{ id: string; type?: string; body?: string | null }> = [],
   confidenceValue: unknown = null,
-  fallbackThresholdValue: unknown = null,
 ): DataStub {
   const createSpy = vi.fn().mockResolvedValue({ data: { id: 'msg-uuid-1' }, errors: null });
   const updateSpy = vi.fn().mockResolvedValue({ data: {}, errors: null });
@@ -58,10 +57,11 @@ function makeDataStub(
     .fn()
     .mockResolvedValue({ data: { id: 'rec', broadcastedAt: null }, errors: null });
   const listSpy = vi.fn().mockResolvedValue({ data: candidates, errors: null });
-  const configGetSpy = vi.fn().mockImplementation((input: { key: string }) => {
-    const v =
-      input.key === 'FALLBACK_CONFIDENCE_THRESHOLD' ? fallbackThresholdValue : confidenceValue;
-    return Promise.resolve({ data: v === null ? null : { value: v }, errors: null });
+  const configGetSpy = vi.fn().mockImplementation(() => {
+    return Promise.resolve({
+      data: confidenceValue === null ? null : { value: confidenceValue },
+      errors: null,
+    });
   });
   // No active prompt template by default → ai-fallback uses the bundled
   // markdown default (#self-improving-loop).
@@ -125,6 +125,24 @@ function makeEvent(body: object): SQSEvent {
     ],
   };
 }
+
+/**
+ * Bedrock fallback stub returning a successful parse. The hard-coded
+ * classifier yields TYPE only, so most transcripts now route to Bedrock
+ * (#552); tests inject this to stay deterministic + offline.
+ */
+function bedrockOk(message: {
+  type: string;
+  confidence?: number;
+  sender?: string;
+  receiver?: string;
+  body?: string;
+}) {
+  return vi.fn().mockResolvedValue({ message: { confidence: 0.9, ...message }, rules: [] });
+}
+
+/** Bedrock fallback stub that fails to parse (returns null). */
+const bedrockNull = (): Promise<null> => Promise.resolve(null);
 
 afterEach(() => {
   __resetDeps();
@@ -271,8 +289,12 @@ describe('linguistic — parseMessage', () => {
 describe('linguistic — handler happy path', () => {
   it('creates Message via Amplify Data + advances Recording to PUBLISHED', async () => {
     const { client, createSpy, updateSpy } = makeDataStub();
+    // Type-only inline classify carries no fields → routes to Bedrock,
+    // which supplies the parse (#552).
+    const bedrockFallback = bedrockOk({ type: 'SKYKING', body: 'Skyking, Skyking, do not answer' });
     __setDeps({
       dataClient: client,
+      bedrockFallback,
       now: () => new Date('2026-05-24T18:00:00Z'),
       uuid: () => 'msg-uuid-1',
     });
@@ -283,6 +305,7 @@ describe('linguistic — handler happy path', () => {
     });
     await handler(event, {} as never, () => undefined);
 
+    expect(bedrockFallback).toHaveBeenCalledOnce();
     expect(createSpy).toHaveBeenCalledOnce();
     // id is now a deterministic content hash (#454 dedup race guard),
     // not the injected uuid — assert the rest of the payload.
@@ -291,7 +314,7 @@ describe('linguistic — handler happy path', () => {
         type: 'SKYKING',
         broadcastTs: '2026-05-24T17:55:00Z',
         body: 'Skyking, Skyking, do not answer',
-        confidence: 0.85,
+        confidence: 0.9,
         flaggedForReview: false,
         publishedAt: '2026-05-24T18:00:00.000Z',
       }),
@@ -306,6 +329,60 @@ describe('linguistic — handler happy path', () => {
         transcriptionStatus: 'PUBLISHED',
       }),
     );
+  });
+
+  it('routes a high-confidence type-only inline match to Bedrock for fields (#552)', async () => {
+    // RADIOCHECK scores 0.85 from the inline classifier but carries NO
+    // fields — it must still route to Bedrock (type-confidence is not a
+    // proxy for a complete parse). Bedrock supplies the sender.
+    const { client, createSpy } = makeDataStub();
+    const bedrockFallback = bedrockOk({
+      type: 'RADIOCHECK',
+      sender: 'MAINSAIL',
+      body: 'test count 1 2 3 4 5',
+    });
+    __setDeps({
+      dataClient: client,
+      bedrockFallback,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-rc-1',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-rc',
+        transcript: 'This is Mainsail with a test count of 1 2 3 4 5',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(bedrockFallback).toHaveBeenCalledOnce();
+    expect(createSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ type: 'RADIOCHECK', sender: 'MAINSAIL' }),
+    );
+  });
+
+  it('lets Bedrock re-verify/override the inline type (#552)', async () => {
+    // Inline classify would call this RADIOCHECK ("test count"); Bedrock
+    // corrects it to SKYKING. The Bedrock type wins.
+    const { client, createSpy } = makeDataStub();
+    const bedrockFallback = bedrockOk({ type: 'SKYKING', body: 'CODEWORD time 14 auth 9d' });
+    __setDeps({
+      dataClient: client,
+      bedrockFallback,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-ov-1',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-ov',
+        transcript: 'garbled test count but actually a skyking',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(createSpy.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ type: 'SKYKING' }));
   });
 
   it('uses a DDB rule match: type + captured fields thread through to Message.create (#460)', async () => {
@@ -390,7 +467,7 @@ describe('linguistic — handler happy path', () => {
             ruleId: 'r',
             promptVersion: 1,
             confidence: 0.9,
-            message: { messageType: 'SKYKING', fields: {} },
+            message: { messageType: 'SKYKING', fields: { body: 'ALFA' } },
           }),
       },
       now: () => new Date('2026-05-24T18:00:00Z'),
@@ -418,7 +495,7 @@ describe('linguistic — handler happy path', () => {
             ruleId: 'r',
             promptVersion: 1,
             confidence: 0.9,
-            message: { messageType: 'SKYKING', fields: {} },
+            message: { messageType: 'SKYKING', fields: { body: 'ALFA' } },
           }),
       },
       now: () => new Date('2026-05-24T18:00:00Z'),
@@ -436,8 +513,11 @@ describe('linguistic — handler happy path', () => {
 
   it('flags low-confidence Messages for review', async () => {
     const { client, createSpy } = makeDataStub();
+    // OTHER carries no fields → routes to Bedrock; Bedrock can't parse it
+    // either (null) → the low-confidence inline result stands and flags.
     __setDeps({
       dataClient: client,
+      bedrockFallback: bedrockNull,
       now: () => new Date('2026-05-24T18:00:00Z'),
       uuid: () => 'msg-uuid-2',
     });
@@ -454,10 +534,19 @@ describe('linguistic — handler happy path', () => {
 });
 
 describe('linguistic — structured Message via normalizeParsed (#506)', () => {
-  it('populates decoded body + extracted sender/receiver for ALLSTATIONS', async () => {
+  it('decodes the Bedrock-captured body + carries its sender/receiver for ALLSTATIONS', async () => {
     const { client, createSpy, updateSpy } = makeDataStub();
+    // Fields come from Bedrock (#552), not transcript extraction. The
+    // captured phonetic body is still decoded to alphanumeric.
+    const bedrockFallback = bedrockOk({
+      type: 'ALLSTATIONS',
+      sender: 'mainsail',
+      receiver: 'ICEMAN',
+      body: 'alpha charlie delta',
+    });
     __setDeps({
       dataClient: client,
+      bedrockFallback,
       now: () => new Date('2026-05-24T18:00:00Z'),
       uuid: () => 'msg-as-1',
     });
@@ -485,8 +574,10 @@ describe('linguistic — structured Message via normalizeParsed (#506)', () => {
 
   it('falls back to the raw transcript when an ALLSTATIONS body has no decodable letters', async () => {
     const { client, createSpy } = makeDataStub();
+    // Bedrock can't parse → inline ALLSTATIONS type stands, no fields.
     __setDeps({
       dataClient: client,
+      bedrockFallback: bedrockNull,
       now: () => new Date('2026-05-24T18:00:00Z'),
       uuid: () => 'msg-as-empty',
     });
@@ -506,6 +597,7 @@ describe('linguistic — structured Message via normalizeParsed (#506)', () => {
     const { client, createSpy } = makeDataStub();
     __setDeps({
       dataClient: client,
+      bedrockFallback: bedrockNull,
       now: () => new Date('2026-05-24T18:00:00Z'),
       uuid: () => 'msg-other-1',
     });
@@ -530,6 +622,7 @@ describe('linguistic — persists web-canonical key from the container (#514)', 
     const { client, updateSpy } = makeDataStub();
     __setDeps({
       dataClient: client,
+      bedrockFallback: bedrockNull,
       now: () => new Date('2026-05-24T18:00:00Z'),
       uuid: () => 'msg-wc-1',
     });
@@ -594,6 +687,7 @@ describe('linguistic — failure paths', () => {
     });
     __setDeps({
       dataClient: client,
+      bedrockFallback: bedrockNull,
       now: () => new Date('2026-05-24T18:00:00Z'),
       uuid: () => 'msg-uuid-x',
     });
@@ -679,7 +773,11 @@ describe('linguistic — broadcast dedup (#454)', () => {
     const { client, createSpy, updateSpy, listSpy } = makeDataStub([
       { id: 'existing-msg', type: 'SKYKING', body: 'skyking skyking do not answer' },
     ]);
-    __setDeps({ dataClient: client, now: () => new Date('2026-05-24T18:00:00Z') });
+    __setDeps({
+      dataClient: client,
+      bedrockFallback: bedrockNull,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
     await handler(
       makeEvent({
         recordingId: 'rec-2nd-sdr',
@@ -718,7 +816,11 @@ describe('linguistic — broadcast dedup (#454)', () => {
     // No candidate found, but the deterministic-id create collides — a
     // concurrent identical capture won the race.
     createSpy.mockResolvedValueOnce({ data: null, errors: CONDITIONAL_CHECK_ERRORS });
-    __setDeps({ dataClient: client, now: () => new Date('2026-05-24T18:00:00Z') });
+    __setDeps({
+      dataClient: client,
+      bedrockFallback: bedrockNull,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     await handler(
       makeEvent({
@@ -748,6 +850,7 @@ describe('linguistic — deleted-Recording tombstone (#459)', () => {
     updateSpy.mockResolvedValueOnce({ data: null, errors: CONDITIONAL_CHECK_ERRORS });
     __setDeps({
       dataClient: client,
+      bedrockFallback: bedrockNull,
       now: () => new Date('2026-05-24T18:00:00Z'),
     });
     const event = makeEvent({
@@ -806,6 +909,7 @@ describe('linguistic — deleted-Recording tombstone (#459)', () => {
       .mockResolvedValueOnce({ data: {}, errors: null });
     __setDeps({
       dataClient: client,
+      bedrockFallback: bedrockNull,
       now: () => new Date('2026-05-24T18:00:00Z'),
       uuid: () => 'msg-uuid-real',
     });
@@ -836,7 +940,7 @@ describe('linguistic — attempt log (#64)', () => {
             ruleId: 'skyking-v3',
             promptVersion: 3,
             confidence: 0.9,
-            message: { messageType: 'SKYKING', fields: {} },
+            message: { messageType: 'SKYKING', fields: { body: 'ALFA' } },
           }),
       },
       now: () => new Date('2026-05-24T18:00:00Z'),
@@ -859,25 +963,16 @@ describe('linguistic — attempt log (#64)', () => {
     expect(typeof attempts[0]?.resultHash).toBe('string');
   });
 
-  it('records promptVersion null for the inline-fallback path', async () => {
-    const { client, updateSpy } = makeDataStub();
-    __setDeps({ dataClient: client, now: () => new Date('2026-05-24T18:00:00Z'), uuid: () => 'm' });
-    await handler(
-      makeEvent({
-        recordingId: 'rec-b',
-        transcript: 'Skyking, do not answer',
-        enqueuedAt: '2026-05-24T17:55:00Z',
-      }),
-      {} as never,
-      () => undefined,
-    );
-    const attempts = parseAttempts(updateSpy.mock.calls[0]?.[0]);
-    expect(attempts[0]).toMatchObject({ provider: 'rules', promptVersion: null });
-  });
-
   it('does not double-append on redrive when a matching success already exists', async () => {
     const { client, updateSpy, getSpy } = makeDataStub();
-    // Recording already carries a successful (rules, null, null) attempt.
+    // A field-bearing rule match keeps this on the rules path (no AI).
+    const ruleMatch: RuleMatch = {
+      ruleId: 'skyking-v3',
+      promptVersion: 3,
+      confidence: 0.9,
+      message: { messageType: 'SKYKING', fields: { body: 'ALFA' } },
+    };
+    // Recording already carries a successful (rules, 3, null) attempt.
     getSpy.mockResolvedValueOnce({
       data: {
         id: 'rec-c',
@@ -885,7 +980,7 @@ describe('linguistic — attempt log (#64)', () => {
         linguisticAttempts: [
           {
             provider: 'rules',
-            promptVersion: null,
+            promptVersion: 3,
             promptHash: null,
             resultHash: 'prev',
             success: true,
@@ -895,7 +990,12 @@ describe('linguistic — attempt log (#64)', () => {
       },
       errors: null,
     });
-    __setDeps({ dataClient: client, now: () => new Date('2026-05-24T18:00:00Z'), uuid: () => 'm' });
+    __setDeps({
+      dataClient: client,
+      rulesEngine: { tryMatch: () => Promise.resolve(ruleMatch) },
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'm',
+    });
     await handler(
       makeEvent({
         recordingId: 'rec-c',
@@ -981,10 +1081,10 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
     expect(attempts[0]).toMatchObject({ provider: 'bedrock', success: false, resultHash: null });
   });
 
-  it('routes a recognized-but-sub-threshold parse to Bedrock when the gate is raised', async () => {
-    // Gate raised to 0.9 → an inline SKYKING (0.85) now falls below it and
-    // goes to the AI — the 0-rule launch posture (everything → AI).
-    const { client } = makeDataStub([], null, 0.9);
+  it('routes a type-only inline match to Bedrock regardless of type-confidence (#552)', async () => {
+    // An inline SKYKING (0.85) carries no fields → it always goes to the
+    // AI for field extraction — the 0-rule launch posture (everything → AI).
+    const { client } = makeDataStub();
     const bedrockFallback = vi.fn().mockResolvedValue(fbSuccess);
     __setDeps({
       dataClient: client,
@@ -1005,30 +1105,6 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
     expect(bedrockFallback).toHaveBeenCalledOnce();
   });
 
-  it('falls back to the default gate when the configured threshold is out of range', async () => {
-    // Out-of-range (5) → loader returns the 0.5 default → SKYKING (0.85)
-    // stays on the cheap path, no Bedrock.
-    const { client } = makeDataStub([], null, 5);
-    const bedrockFallback = vi.fn().mockResolvedValue(fbSuccess);
-    __setDeps({
-      dataClient: client,
-      rulesEngine: noRules,
-      bedrockFallback,
-      now: () => new Date('2026-05-24T18:00:00Z'),
-      uuid: () => 'm',
-    });
-    await handler(
-      makeEvent({
-        recordingId: 'rec-oor',
-        transcript: 'Skyking, Skyking, do not answer',
-        enqueuedAt: '2026-05-24T17:55:00Z',
-      }),
-      {} as never,
-      () => undefined,
-    );
-    expect(bedrockFallback).not.toHaveBeenCalled();
-  });
-
   it('routes an empty/near-silent transcript through the fallback gate without crashing', async () => {
     const { client, createSpy } = makeDataStub();
     const bedrockFallback = vi.fn().mockResolvedValue(null); // model declines empty input
@@ -1044,19 +1120,19 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
       {} as never,
       () => undefined,
     );
-    // 0.1 < 0.5 → bedrock branch; null → OTHER Message still created.
+    // No captured fields → bedrock branch; null → OTHER Message still created.
     expect(createSpy.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ type: 'OTHER' }));
   });
 
-  it('routes a LOW-confidence rule match to Bedrock (#543)', async () => {
-    // A rule matched but its own confidence (0.4) is below the default
-    // 0.5 gate → the parse goes to the AI rather than being trusted.
-    const lowConfRule: RulesMatcher = {
+  it('routes a rule match that captured no fields to Bedrock (#552)', async () => {
+    // A rule matched the TYPE but captured no fields → the parse goes to
+    // the AI for field extraction rather than publishing type-only.
+    const noFieldRule: RulesMatcher = {
       tryMatch: () =>
         Promise.resolve({
-          ruleId: 'shaky-rule',
+          ruleId: 'type-only-rule',
           promptVersion: 1,
-          confidence: 0.4,
+          confidence: 0.9,
           message: { messageType: 'SKYKING', fields: {} },
         }),
     };
@@ -1064,7 +1140,7 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
     const bedrockFallback = vi.fn().mockResolvedValue(fbSuccess);
     __setDeps({
       dataClient: client,
-      rulesEngine: lowConfRule,
+      rulesEngine: noFieldRule,
       bedrockFallback,
       now: () => new Date('2026-05-24T18:00:00Z'),
       uuid: () => 'm',
@@ -1247,12 +1323,22 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
     expect(ctx).toContain('SKYKING'); // the active rule is listed for refinement
   });
 
-  it('does NOT invoke Bedrock when the inline classifier recognizes the type', async () => {
+  it('does NOT invoke Bedrock when a rule captured the fields', async () => {
+    // The inverse of #552: a field-bearing rule match is trusted and the
+    // AI is skipped.
     const { client } = makeDataStub();
     const bedrockFallback = vi.fn().mockResolvedValue(fbSuccess);
     __setDeps({
       dataClient: client,
-      rulesEngine: noRules,
+      rulesEngine: {
+        tryMatch: () =>
+          Promise.resolve({
+            ruleId: 'skyking-v3',
+            promptVersion: 3,
+            confidence: 0.9,
+            message: { messageType: 'SKYKING', fields: { body: 'ALFA BRAVO' } },
+          }),
+      },
       bedrockFallback,
       now: () => new Date('2026-05-24T18:00:00Z'),
       uuid: () => 'm',
