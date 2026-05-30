@@ -9,9 +9,14 @@
  *   - `decodePhonetic`        — "Alpha Charlie Delta" → "ACD"
  *   - `collapseDoubleBroadcast` — ALLSTATIONS / SKYKING are sent twice;
  *                                 emit the preamble + body once
- *   - `extractSender`         — "This is XXX out."  → "XXX"
- *   - `extractReceiver`       — "FOR XXXX FOR XXXX" → "XXXX"
  *   - `normalizeParsed`       — per-type orchestrator
+ *
+ * Field extraction (sender / receiver) is deliberately NOT done here.
+ * Per owner spec (#552): hard-coded rules determine the message TYPE
+ * only; every field is supplied by an AI-generated `LinguisticRule` or
+ * a live Bedrock parse. This module never invents sender/receiver from
+ * the transcript — it only passes through already-captured fields and
+ * formats the body.
  *
  * Handler wiring (threading these into `processTranscript`) lands with
  * the pipeline-wiring issue #460; this module ships standalone with
@@ -170,32 +175,6 @@ export function collapseDoubleBroadcast(text: string, opts: { delimiter?: boolea
   return normalized;
 }
 
-/**
- * Extract the sender from the "This is XXX out." sign-off. Returns the
- * callsign (which may be multiple words, e.g. "Cape Radio") or
- * undefined when the pattern is absent.
- */
-export function extractSender(transcript: string): string | undefined {
-  const m = /\bthis is\s+(.+?)\s+out\b/i.exec(transcript);
-  const sender = m?.[1]?.trim();
-  // Guard the degenerate "this is out out" — the lazy capture would
-  // otherwise grab the sign-off word "out" as the callsign.
-  if (!sender || /^out$/i.test(sender)) return undefined;
-  return sender;
-}
-
-/**
- * Extract the receiver from the "FOR XXXX FOR XXXX" double-address.
- * The callsign is stated twice; the backreference confirms the repeat
- * and the single captured value is returned. Undefined when the
- * receiver is not stated twice.
- */
-export function extractReceiver(transcript: string): string | undefined {
-  const m = /\bfor\s+(\S+)\s+for\s+\1\b/i.exec(transcript);
-  const receiver = m?.[1]?.trim();
-  return receiver ? receiver : undefined;
-}
-
 export interface NormalizeInput {
   /** Message type from the rules engine / classifier. */
   type: string;
@@ -218,15 +197,14 @@ export interface NormalizeOutput {
 const DOUBLE_BROADCAST_TYPES = new Set(['ALLSTATIONS', 'SKYKING']);
 
 /**
- * Per-type normalization orchestrator. Captured fields (from the rules
- * engine) win over re-extraction; extraction is the fallback when a
- * field wasn't captured.
+ * Per-type normalization orchestrator. Sender / receiver are taken
+ * verbatim from the captured fields (AI-generated rule or Bedrock parse)
+ * — there is no transcript-derived extraction fallback (#552).
  *
  * - ALLSTATIONS: collapse → decode body to alphanumeric.
  * - SKYKING: collapse (via "I say again") → body kept inline (TIME/AUTH
- *   stay in the text, no decode). Sender + receiver are both extracted
- *   (a SKYKING may carry either).
- * - everything else: passthrough (trimmed body, best-effort extraction).
+ *   stay in the text, no decode).
+ * - everything else: passthrough (trimmed body).
  *
  * Note: characterCount / codewordCount are NOT produced here — they are
  * aggregate chart values computed over the corpus (see header).
@@ -241,8 +219,9 @@ export function normalizeParsed(input: NormalizeInput): NormalizeOutput {
         ? collapseDoubleBroadcast(input.transcript)
         : squish(input.transcript);
 
-  const sender = input.sender ?? extractSender(collapsed);
-  const receiver = input.receiver ?? extractReceiver(collapsed);
+  // Fields come only from captured input (AI rule / Bedrock parse).
+  const sender = input.sender;
+  const receiver = input.receiver;
 
   if (input.type === 'ALLSTATIONS') {
     return {
