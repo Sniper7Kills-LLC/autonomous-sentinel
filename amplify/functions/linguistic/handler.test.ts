@@ -986,6 +986,49 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
     expect(bedrockFallback).toHaveBeenCalledOnce();
   });
 
+  it('falls back to the default gate when the configured threshold is out of range', async () => {
+    // Out-of-range (5) → loader returns the 0.5 default → SKYKING (0.85)
+    // stays on the cheap path, no Bedrock.
+    const { client } = makeDataStub([], null, 5);
+    const bedrockFallback = vi.fn().mockResolvedValue(fbSuccess);
+    __setDeps({
+      dataClient: client,
+      rulesEngine: noRules,
+      bedrockFallback,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'm',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-oor',
+        transcript: 'Skyking, Skyking, do not answer',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(bedrockFallback).not.toHaveBeenCalled();
+  });
+
+  it('routes an empty/near-silent transcript through the fallback gate without crashing', async () => {
+    const { client, createSpy } = makeDataStub();
+    const bedrockFallback = vi.fn().mockResolvedValue(null); // model declines empty input
+    __setDeps({
+      dataClient: client,
+      rulesEngine: noRules,
+      bedrockFallback,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'm',
+    });
+    await handler(
+      makeEvent({ recordingId: 'rec-empty', transcript: '', enqueuedAt: '2026-05-24T17:55:00Z' }),
+      {} as never,
+      () => undefined,
+    );
+    // 0.1 < 0.5 → bedrock branch; null → OTHER Message still created.
+    expect(createSpy.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ type: 'OTHER' }));
+  });
+
   it('does NOT invoke Bedrock when the inline classifier recognizes the type', async () => {
     const { client } = makeDataStub();
     const bedrockFallback = vi.fn().mockResolvedValue(fbSuccess);
