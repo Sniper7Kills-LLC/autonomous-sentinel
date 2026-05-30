@@ -492,6 +492,47 @@ async function loadConfidenceConfig(client: LinguisticDataClient): Promise<Confi
   }
 }
 
+/** LinguisticConfig key holding the rules→AI fallback confidence gate. */
+const FALLBACK_THRESHOLD_KEY = 'FALLBACK_CONFIDENCE_THRESHOLD';
+/**
+ * Default fallback gate. A parse whose confidence is BELOW this is sent
+ * to Bedrock. Default 0.5 routes only the low-confidence inline `OTHER`
+ * results (the prior behavior); raise it (admin setting) toward the
+ * rule-match confidence (0.9) to route everything the rules engine
+ * didn't confidently handle to the AI — the bootstrap posture for a
+ * 0-rule launch (self-improving loop).
+ */
+const DEFAULT_FALLBACK_THRESHOLD = 0.5;
+
+/**
+ * Load the admin-tunable rules→AI fallback confidence gate from the
+ * `FALLBACK_CONFIDENCE_THRESHOLD` LinguisticConfig row (a bare number in
+ * `[0,1]`). Any miss/out-of-range → the hard-coded default.
+ */
+async function loadFallbackThreshold(client: LinguisticDataClient): Promise<number> {
+  try {
+    const res = await client.models.LinguisticConfig.get({ key: FALLBACK_THRESHOLD_KEY });
+    if (res.errors || !res.data) return DEFAULT_FALLBACK_THRESHOLD;
+    let value: unknown = res.data.value;
+    if (typeof value === 'string') {
+      try {
+        value = JSON.parse(value);
+      } catch {
+        return DEFAULT_FALLBACK_THRESHOLD;
+      }
+    }
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1) {
+      return value;
+    }
+    return DEFAULT_FALLBACK_THRESHOLD;
+  } catch (err) {
+    console.warn('linguistic: fallback-threshold load failed; using default', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return DEFAULT_FALLBACK_THRESHOLD;
+  }
+}
+
 interface RawLinguisticMessage {
   kind?: 'transcript' | 'transcribe-failure';
   recordingId?: string;
@@ -549,6 +590,9 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   // Per-type confidence threshold (#65) — admin-tunable via the
   // CONFIDENCE_THRESHOLDS LinguisticConfig row; falls back to 0.8.
   const confidenceConfig = await loadConfidenceConfig(client);
+  // Rules→AI fallback gate — a parse below this confidence goes to
+  // Bedrock (admin-tunable; default 0.5).
+  const fallbackThreshold = await loadFallbackThreshold(client);
 
   // Fetch the Recording first: its `linguisticAttempts` log (#64) gates
   // the paid Bedrock call below, and `broadcastedAt` drives the dedup
@@ -565,11 +609,12 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   let attemptPromptHash: string | null = null;
   let attemptSuccess = true;
 
-  // Bedrock AI fallback (#63) — runs ONLY when the rules engine AND the
-  // inline keyword classifier both miss (the `OTHER`/'fallback' case),
-  // so the paid model call is reserved for genuinely-unrecognized
-  // transcripts.
-  if (result.rule === 'fallback') {
+  // Bedrock AI fallback (#63) — runs when the rules engine + inline
+  // classifier didn't produce a confident-enough parse (confidence below
+  // the admin-tunable fallback gate). A DDB rule match (0.9) clears a
+  // default gate of 0.5; at a 0-rule launch the owner raises the gate so
+  // everything routes to the AI (self-improving loop).
+  if (result.confidence < fallbackThreshold) {
     // Resolve the admin-editable prompt (active DB template, else the
     // git-reviewed markdown default) and thread it through both the hash
     // (for the attempt skip key) and the model call.
