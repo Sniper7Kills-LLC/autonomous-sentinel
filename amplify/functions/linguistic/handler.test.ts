@@ -8,7 +8,9 @@ import {
   __setDeps,
   __resetDeps,
   type LinguisticDataClient,
+  type RulesMatcher,
 } from './handler';
+import type { RuleMatch } from './rules-engine';
 
 /**
  * Linguistic Lambda contract (#433 stage 4):
@@ -266,6 +268,45 @@ describe('linguistic — handler happy path', () => {
         messageId: 'msg-uuid-1',
         transcript: 'Skyking, Skyking, do not answer',
         transcriptionStatus: 'PUBLISHED',
+      }),
+    );
+  });
+
+  it('uses a DDB rule match: type + captured fields thread through to Message.create (#460)', async () => {
+    const { client, createSpy } = makeDataStub();
+    const match: RuleMatch = {
+      ruleId: 'skyking-v3',
+      promptVersion: 3,
+      message: {
+        messageType: 'SKYKING',
+        fields: { sender: 'MAINSAIL', receiver: 'FOXTROT', body: 'ALFA BRAVO' },
+      },
+    };
+    const rulesEngine: RulesMatcher = { tryMatch: () => Promise.resolve(match) };
+    __setDeps({
+      dataClient: client,
+      rulesEngine,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-uuid-rule',
+    });
+    // A transcript the inline classifier would call OTHER — proving the
+    // rule path wins and its captured fields reach the Message.
+    const event = makeEvent({
+      recordingId: 'rec-rule',
+      transcript: 'unintelligible noise',
+      enqueuedAt: '2026-05-24T17:55:00Z',
+    });
+    await handler(event, {} as never, () => undefined);
+
+    expect(createSpy).toHaveBeenCalledOnce();
+    expect(createSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        type: 'SKYKING',
+        body: 'ALFA BRAVO',
+        sender: 'MAINSAIL',
+        receiver: 'FOXTROT',
+        confidence: 0.9,
+        flaggedForReview: false,
       }),
     );
   });

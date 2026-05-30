@@ -96,16 +96,21 @@ interface ClassifyResult {
  */
 const RULE_MATCH_CONFIDENCE = 0.9;
 
-const KNOWN_MESSAGE_TYPES: ReadonlySet<string> = new Set<MessageType>([
-  'SKYKING',
-  'SKYBIRD',
-  'SKYMASTER',
-  'ALLSTATIONS',
-  'RADIOCHECK',
-  'BACKEND',
-  'DISREGARDED',
-  'OTHER',
-]);
+// Built from a `Record<MessageType, true>` so adding a MessageType to
+// the union without listing it here is a compile error — the guard can
+// never silently drift from the enum.
+const KNOWN_MESSAGE_TYPES: ReadonlySet<string> = new Set(
+  Object.keys({
+    SKYKING: true,
+    SKYBIRD: true,
+    SKYMASTER: true,
+    ALLSTATIONS: true,
+    RADIOCHECK: true,
+    BACKEND: true,
+    DISREGARDED: true,
+    OTHER: true,
+  } satisfies Record<MessageType, true>),
+);
 
 export interface LinguisticDataClient {
   models: {
@@ -183,6 +188,10 @@ export function __setDeps(deps: LinguisticDeps): void {
 
 export function __resetDeps(): void {
   injected = {};
+  // Drop the cold-start engine singleton too, so a test that does not
+  // inject `rulesEngine` starts from a clean slate rather than reusing
+  // a previously-built production engine.
+  cachedRulesEngine = undefined;
 }
 
 let cachedRulesEngine: LinguisticRulesEngine | undefined;
