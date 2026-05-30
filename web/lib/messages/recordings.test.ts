@@ -35,5 +35,61 @@ describe('toDisplayRecording', () => {
     expect(r.webCanonicalKey).toBeNull();
     expect(r.wordTimestampsKey).toBeNull();
     expect(r.peaksJsonKey).toBeNull();
+    expect(r.linguisticAttempts).toEqual([]);
+  });
+
+  it('parses linguisticAttempts from a parsed array, tolerating ts/timestamp', () => {
+    const r = toDisplayRecording({
+      id: 'r3',
+      linguisticAttempts: [
+        {
+          provider: 'rules',
+          success: true,
+          promptVersion: 2,
+          promptHash: 'ph',
+          resultHash: 'rh',
+          timestamp: '2026-05-30T00:00:00Z',
+        },
+        { provider: 'bedrock', success: false, promptVersion: 1, ts: '2026-05-30T00:01:00Z' },
+      ],
+    });
+    expect(r.linguisticAttempts).toHaveLength(2);
+    expect(r.linguisticAttempts[0]).toMatchObject({
+      provider: 'rules',
+      success: true,
+      promptVersion: 2,
+      ts: '2026-05-30T00:00:00Z',
+    });
+    expect(r.linguisticAttempts[1]).toMatchObject({
+      provider: 'bedrock',
+      success: false,
+      ts: '2026-05-30T00:01:00Z',
+    });
+  });
+
+  it('parses linguisticAttempts when delivered as a JSON string', () => {
+    const r = toDisplayRecording({
+      id: 'r4',
+      linguisticAttempts: JSON.stringify([{ provider: 'rules', success: true }]),
+    });
+    expect(r.linguisticAttempts).toEqual([
+      {
+        provider: 'rules',
+        success: true,
+        promptVersion: null,
+        promptHash: null,
+        resultHash: null,
+        ts: null,
+      },
+    ]);
+  });
+
+  it('returns an empty attempts array for malformed JSON or non-arrays', () => {
+    expect(
+      toDisplayRecording({ id: 'r5', linguisticAttempts: '{not json' }).linguisticAttempts,
+    ).toEqual([]);
+    expect(
+      toDisplayRecording({ id: 'r6', linguisticAttempts: { foo: 1 } }).linguisticAttempts,
+    ).toEqual([]);
   });
 });

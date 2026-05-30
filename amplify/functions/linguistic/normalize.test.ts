@@ -146,6 +146,28 @@ describe('normalize — normalizeParsed orchestrator', () => {
     expect(out.body).toBe('ACD');
   });
 
+  it('ALLSTATIONS: trusts an already-decoded body instead of re-decoding to empty (#559)', () => {
+    // The AI returns the body already decoded (per the fallback prompt).
+    // decodePhonetic on alphanumeric letters yields "" — the body must NOT
+    // collapse to "" (which upstream turns into the raw transcript); it
+    // passes through unchanged.
+    const out = normalizeParsed({
+      type: 'ALLSTATIONS',
+      transcript: 'all stations all stations papa bravo mike delta uniform this is dutchbox out',
+      body: 'PBMDU',
+    });
+    expect(out.body).toBe('PBMDU');
+  });
+
+  it('ALLSTATIONS: still decodes a raw phonetic captured body (#559)', () => {
+    const out = normalizeParsed({
+      type: 'ALLSTATIONS',
+      transcript: 'all stations all stations alpha charlie delta',
+      body: 'Alpha Charlie Delta',
+    });
+    expect(out.body).toBe('ACD');
+  });
+
   it('ALLSTATIONS: is NOT truncated by an "I say again" phrase in its content', () => {
     // Delimiter split is SKYKING-only — ALLSTATIONS must decode every
     // phonetic letter, before and after the phrase.

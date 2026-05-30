@@ -3,6 +3,23 @@
 import { getDataClient } from '@/lib/amplifyClient';
 import { resolveAuthMode } from '@/lib/auth/mode';
 
+/**
+ * One entry of `Recording.linguisticAttempts` (#561 debug aids).
+ *
+ * The Linguistic Logic Lambda writes an append-only JSON log of
+ * `{provider, promptVersion, promptHash, resultHash, timestamp}`
+ * entries. `success` is surfaced when present; some historical rows
+ * use `ts` for the timestamp, so the parser tolerates both keys.
+ */
+export type LinguisticAttempt = {
+  provider: string | null;
+  success: boolean | null;
+  promptVersion: number | null;
+  promptHash: string | null;
+  resultHash: string | null;
+  ts: string | null;
+};
+
 export type DisplayRecording = {
   id: string;
   frequencyKhz: number | null;
@@ -17,6 +34,12 @@ export type DisplayRecording = {
   webCanonicalKey: string | null;
   wordTimestampsKey: string | null;
   peaksJsonKey: string | null;
+  /**
+   * Parsed `Recording.linguisticAttempts` (raw AWSJSON). Empty array
+   * when absent/unparseable. Only rendered in the moderator/admin-only
+   * debug panel (#561).
+   */
+  linguisticAttempts: LinguisticAttempt[];
 };
 
 type RawRecording = {
@@ -33,7 +56,41 @@ type RawRecording = {
   webCanonicalKey?: string | null;
   wordTimestampsKey?: string | null;
   peaksJsonKey?: string | null;
+  // AWSJSON — arrives as a parsed value (array/object) or a JSON
+  // string depending on the client path; the parser handles both.
+  linguisticAttempts?: unknown;
 };
+
+function num(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+function str(v: unknown): string | null {
+  return typeof v === 'string' ? v : null;
+}
+
+function parseAttempts(raw: unknown): LinguisticAttempt[] {
+  let value = raw;
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((e): e is Record<string, unknown> => typeof e === 'object' && e !== null)
+    .map((e) => ({
+      provider: str(e.provider),
+      success: typeof e.success === 'boolean' ? e.success : null,
+      promptVersion: num(e.promptVersion),
+      promptHash: str(e.promptHash),
+      resultHash: str(e.resultHash),
+      // Lambda writes `timestamp`; older rows used `ts`.
+      ts: str(e.ts) ?? str(e.timestamp),
+    }));
+}
 
 function toDisplay(r: RawRecording): DisplayRecording {
   return {
@@ -50,6 +107,7 @@ function toDisplay(r: RawRecording): DisplayRecording {
     webCanonicalKey: r.webCanonicalKey ?? null,
     wordTimestampsKey: r.wordTimestampsKey ?? null,
     peaksJsonKey: r.peaksJsonKey ?? null,
+    linguisticAttempts: parseAttempts(r.linguisticAttempts),
   };
 }
 
