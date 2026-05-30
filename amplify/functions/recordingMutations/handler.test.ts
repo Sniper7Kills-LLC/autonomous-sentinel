@@ -312,7 +312,7 @@ describe('recordingMutations — reparseRecording (#566)', () => {
     expect(auditSpy).toHaveBeenCalledOnce();
     expect(auditSpy).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ action: 'RECORDING_REPROCESS', targetId: 'rec-ok-1' }),
+      expect.objectContaining({ action: 'RECORDING_REPARSE', targetId: 'rec-ok-1' }),
     );
     expect(out?.id).toBe('rec-ok-1');
   });

@@ -573,9 +573,11 @@ async function dispatchReprocess(
  * Enqueues the stored `transcript` straight onto the linguistic SQS
  * queue as the same `TranscriptQueueMessage` the Whisper container
  * publishes, so the existing classifier + dedup + supersede path
- * (#454/#556) runs unchanged. Writes a `RECORDING_REPROCESS` AuditLog
- * entry (the linguistic re-run is the auditable action; the row itself
- * is not mutated here).
+ * (#454/#556) runs unchanged. Writes a `RECORDING_REPARSE` AuditLog
+ * entry — distinct from the full `RECORDING_REPROCESS` (#505) so the
+ * audit trail separates a parse-only re-run from a re-transcribe (the
+ * linguistic re-run is the auditable action; the row itself is not
+ * mutated here).
  *
  * Guards: caller must be moderator or admin; the Recording must exist,
  * not be soft-deleted, and carry a non-empty `transcript` (a recording
@@ -638,7 +640,7 @@ async function dispatchReparse(
   // before == after; the AuditLog records the action + actor.
   try {
     await deps.audit(auditContextFrom(event), {
-      action: 'RECORDING_REPROCESS',
+      action: 'RECORDING_REPARSE',
       targetType: 'Recording',
       targetId,
       before: snapshot(before),

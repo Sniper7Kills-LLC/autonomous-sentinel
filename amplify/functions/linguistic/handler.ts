@@ -557,8 +557,18 @@ async function supersedePriorMessage(
       });
       return;
     }
-    // Count M_old's live Recordings. If anything other than this one
-    // still points at it (multi-SDR), leave it standing.
+    // Count M_old's remaining live Recordings. By the time this runs the
+    // caller has ALREADY repointed this Recording's `messageId` to the new
+    // target, so the single-audio case returns 0 here (this Recording moved
+    // off M_old) and a multi-SDR case returns the still-attached siblings —
+    // hence `length === 0` is the primary "M_old was audio-only" path, not
+    // dead code. The GSI is eventually consistent: a sibling SDR capture
+    // that linked to M_old microseconds ago might not appear, so this could
+    // soft-delete an M_old that just gained a sibling. Accepted: the window
+    // is tiny, only on an admin-triggered re-run, the delete is a reversible
+    // soft-delete (restorable), and the stranded sibling re-dedups on its
+    // next write. (A GSI cannot be read strongly-consistent, so a
+    // ConsistentRead fix is not available.)
     const siblings = await client.models.Recording.listRecordingByMessageId({
       messageId: priorMessageId,
     });
