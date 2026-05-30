@@ -1053,22 +1053,18 @@ const transcribeAwsFinalizerFn = backend.transcribeAwsFinalizer.resources.lambda
 transcribeAwsFn.addEnvironment('RECORDINGS_BUCKET', mediaBucket.bucketName);
 transcribeAwsFn.addEnvironment('PIPELINE_TEMP_PREFIX', 'pipeline-temp');
 
-// Callsign dictionary → custom vocabulary. `CALLSIGN_TABLE_NAME`
-// wires the table at synth; the handler Scans it (bounded, hand-
-// curated table — same Scan rationale as `load-rules-ddb.ts`). When
-// the env var / grant is absent the handler skips vocab and still
-// transcribes (best-effort), so this wiring is non-blocking.
-const callsignTable = backend.data.resources.tables['Callsign'];
-if (!callsignTable) {
-  throw new Error('backend: Callsign table not found on data resources');
-}
-transcribeAwsFn.addEnvironment('CALLSIGN_TABLE_NAME', callsignTable.tableName);
-transcribeAwsFn.addToRolePolicy(
-  new PolicyStatement({
-    actions: ['dynamodb:Scan'],
-    resources: [callsignTable.tableArn],
-  }),
-);
+// Callsign dictionary → custom vocabulary: NOT wired here (#590).
+// Referencing the `data`-stack Callsign table (env name + Scan grant)
+// from this function added a `function → data` edge that closed a
+// nested-stack CFN circular dependency [TranscribeAwsStack, data,
+// function] — the hosting `pipeline-deploy` (and a full `ampx sandbox
+// --once`) fail to synth. The custom vocabulary is best-effort and the
+// high-value terms are STATIC (BASE_VOCAB = NATO alphabet + digit words
+// + collective callsigns + EAM prowords), so with `CALLSIGN_TABLE_NAME`
+// unset the handler builds the base+proword vocab and still transcribes.
+// Re-introducing the dynamic per-account callsigns without the
+// cross-stack edge (e.g. routing the load through the dispatcher's data
+// access, or a string-ARN grant) is a follow-up under #590.
 
 // Transcribe control-plane: start jobs, poll a job (finalizer / future
 // dispatcher), and manage the callsign custom vocabulary. Job + vocab
