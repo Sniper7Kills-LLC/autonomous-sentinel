@@ -240,3 +240,27 @@ export const reprocessRecording = a
   // role routing (same rationale as submitRecording above).
   .authorization((allow) => allow.groups(['admin', 'moderator']))
   .handler(a.handler.function(recordingMutations));
+
+/**
+ * `reparseRecording` — moderator/admin re-runs ONLY the linguistic
+ * (AI parse) stage on a recording's stored transcript, skipping
+ * preprocess + transcribe (#566). The handler enqueues the stored
+ * `transcript` straight onto the linguistic SQS queue as the same
+ * message shape the Whisper container publishes, then writes a
+ * `RECORDING_REPROCESS` AuditLog entry. Guards (in the handler):
+ * recording must exist, not be soft-deleted, and carry a non-empty
+ * `transcript` — a recording that never transcribed has nothing to
+ * re-parse. Use case: re-parse after a model/prompt change without
+ * paying to re-transcribe.
+ */
+export const reparseRecording = a
+  .mutation()
+  .arguments({
+    recordingId: a.id().required(),
+    reason: a.string(),
+  })
+  .returns(a.ref('Recording'))
+  // Moderator + admin only. Enumerated per-group for Identity Pool
+  // role routing (same rationale as reprocessRecording above).
+  .authorization((allow) => allow.groups(['admin', 'moderator']))
+  .handler(a.handler.function(recordingMutations));
