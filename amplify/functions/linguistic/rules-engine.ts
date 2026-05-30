@@ -43,7 +43,12 @@ export interface LinguisticRule {
   priority: number;
   enabled: boolean;
   promptVersion: number;
+  /** Per-rule match confidence in [0,1] (#543). Defaults to 0.9 when absent. */
+  confidence?: number;
 }
+
+/** Default confidence for a rule that doesn't carry one. */
+export const DEFAULT_RULE_CONFIDENCE = 0.9;
 
 export interface ParsedMessage {
   messageType: string;
@@ -53,6 +58,8 @@ export interface ParsedMessage {
 export interface RuleMatch {
   ruleId: string;
   promptVersion: number;
+  /** The matched rule's confidence (#543) — the parse confidence. */
+  confidence: number;
   message: ParsedMessage;
 }
 
@@ -63,6 +70,7 @@ interface CompiledRule {
   captureMap: Record<string, string>;
   priority: number;
   promptVersion: number;
+  confidence: number;
 }
 
 interface Cache {
@@ -150,6 +158,7 @@ export class LinguisticRulesEngine {
       return {
         ruleId: rule.id,
         promptVersion: rule.promptVersion,
+        confidence: rule.confidence,
         message: {
           messageType: rule.messageType,
           fields,
@@ -168,6 +177,10 @@ export class LinguisticRulesEngine {
         captureMap: r.captureMap,
         priority: r.priority,
         promptVersion: r.promptVersion,
+        confidence:
+          typeof r.confidence === 'number' && r.confidence >= 0 && r.confidence <= 1
+            ? r.confidence
+            : DEFAULT_RULE_CONFIDENCE,
       };
     } catch (err) {
       // A single bad regex must NOT break the whole engine. Log +

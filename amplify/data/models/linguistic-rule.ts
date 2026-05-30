@@ -67,6 +67,15 @@ export const LinguisticRule = a
      */
     promptVersion: a.integer().default(1),
     /**
+     * Per-rule match confidence in [0,1] (#543, self-improving loop).
+     * The handler uses this (not a constant) as the parse confidence on
+     * a match, so the rules→AI fallback gate (#540) can route a
+     * low-confidence rule match to Bedrock. AI-generated rules set this
+     * from the model's self-assessment + corpus validation; hand-curated
+     * rules default to 0.9 (high-trust, above the default gate).
+     */
+    confidence: a.float().default(0.9),
+    /**
      * Free-form admin notes — what the rule matches, why this
      * priority, etc.
      */

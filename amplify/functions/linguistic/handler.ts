@@ -109,14 +109,6 @@ interface ClassifyResult {
   promptVersion?: number | null;
 }
 
-/**
- * Confidence assigned to a deterministic DDB-rule regex match. A
- * configured rule is a high-trust signal — well above the 0.8 default
- * auto-publish threshold. Per-type thresholding (#65) lands in a later
- * slice; until then this fixed value drives `flaggedForReview`.
- */
-const RULE_MATCH_CONFIDENCE = 0.9;
-
 // Built from a `Record<MessageType, true>` so adding a MessageType to
 // the union without listing it here is a compile error — the guard can
 // never silently drift from the enum.
@@ -350,7 +342,7 @@ export async function classifyWithRules(
   const f = match.message.fields;
   return {
     type: match.message.messageType as MessageType,
-    confidence: RULE_MATCH_CONFIDENCE,
+    confidence: match.confidence,
     rule: `rule:${match.ruleId}`,
     promptVersion: match.promptVersion,
     fields: {

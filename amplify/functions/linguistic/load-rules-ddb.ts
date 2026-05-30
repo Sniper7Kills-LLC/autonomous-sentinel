@@ -47,6 +47,7 @@ interface RawRow {
   priority?: number;
   enabled?: boolean;
   promptVersion?: number;
+  confidence?: number;
 }
 
 function toRule(raw: RawRow): LinguisticRule | null {
@@ -77,6 +78,8 @@ function toRule(raw: RawRow): LinguisticRule | null {
     priority: raw.priority,
     enabled: raw.enabled !== false, // default-true when absent
     promptVersion: raw.promptVersion ?? 1,
+    // Confidence: engine clamps/defaults out-of-range, so pass through.
+    ...(typeof raw.confidence === 'number' ? { confidence: raw.confidence } : {}),
   };
 }
 
