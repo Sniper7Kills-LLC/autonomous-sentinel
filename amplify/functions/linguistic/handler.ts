@@ -723,6 +723,30 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
     // (same parse → same id → link); re-invoking on a rare redrive is the
     // safe trade. A cost-skip that reuses the stored parse is a follow-up.
     const fb = await bedrockFallback(msg.transcript, fbOpts);
+    // Log the raw Bedrock parse for debugging (#560) — the attempt log
+    // stores only hashes, so without this the model's actual output
+    // (body, fields, proposed rules) is invisible in CloudWatch.
+    console.info('linguistic: bedrock parse', {
+      recordingId: msg.recordingId,
+      modelId,
+      parsed: fb
+        ? {
+            type: fb.message.type,
+            confidence: fb.message.confidence,
+            sender: fb.message.sender ?? null,
+            receiver: fb.message.receiver ?? null,
+            body: fb.message.body ?? null,
+          }
+        : null,
+      rules: fb
+        ? fb.rules.map((r) => ({
+            component: r.component,
+            appliesToType: r.appliesToType ?? null,
+            confidence: r.confidence ?? null,
+            pattern: r.pattern,
+          }))
+        : [],
+    });
     if (fb && KNOWN_MESSAGE_TYPES.has(fb.message.type)) {
       result = {
         type: fb.message.type as MessageType,

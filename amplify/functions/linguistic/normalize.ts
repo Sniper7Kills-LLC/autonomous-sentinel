@@ -224,9 +224,15 @@ export function normalizeParsed(input: NormalizeInput): NormalizeOutput {
   const receiver = input.receiver;
 
   if (input.type === 'ALLSTATIONS') {
+    // Decode-if-phonetic-else-trust (#559): a raw phonetic body decodes to
+    // its alphanumeric group; an already-decoded body (the AI returns the
+    // body decoded per the fallback prompt) yields "" from decodePhonetic —
+    // fall back to the captured body itself rather than collapsing to "",
+    // which upstream turns into the raw transcript.
+    const captured = input.body ?? collapsed;
     return {
       type: input.type,
-      body: decodePhonetic(input.body ?? collapsed),
+      body: decodePhonetic(captured) || squish(captured),
       sender,
       receiver,
     };

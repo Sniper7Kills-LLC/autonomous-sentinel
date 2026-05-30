@@ -143,3 +143,134 @@
   border: 1px solid var(--border-1);
   border-radius: var(--radius-md);
 }
+
+/* Moderator/admin-only debug panel (#561). Deliberately set off from
+   the public view with a dashed border + muted surface. */
+.debugPanel {
+  background: var(--surface-2);
+  border: 1px dashed var(--border-1);
+  border-radius: var(--radius-md);
+  padding: 0.5rem 1rem;
+}
+
+.debugSummary {
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.85rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  padding: 0.5rem 0;
+}
+
+.debugBody {
+  display: grid;
+  gap: 1.25rem;
+  padding: 0.75rem 0 0.5rem;
+}
+
+.debugHeading {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.82rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-1);
+  margin: 0 0 0.5rem;
+}
+
+.debugBlock {
+  display: grid;
+  gap: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.debugBlockLabel {
+  font-family: var(--font-jb-mono);
+  font-size: 0.7rem;
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+}
+
+.debugPre {
+  font-family: var(--font-jb-mono);
+  font-size: 0.82rem;
+  color: var(--text-1);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--surface-1);
+  padding: 0.75rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-1);
+  margin: 0;
+  max-height: 18rem;
+  overflow: auto;
+}
+
+.debugEmpty {
+  font-family: var(--font-jb-mono);
+  font-size: 0.8rem;
+  color: var(--text-2);
+  margin: 0;
+}
+
+.debugCaveat {
+  font-family: var(--font-jb-mono);
+  font-size: 0.75rem;
+  color: var(--text-2);
+  margin: 0 0 0.5rem;
+}
+
+.debugTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-jb-mono);
+  font-size: 0.78rem;
+  color: var(--text-1);
+}
+
+.debugTable th,
+.debugTable td {
+  text-align: left;
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--border-1);
+  vertical-align: top;
+}
+
+.debugTable th {
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 0.68rem;
+}
+
+.debugDl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.35rem 1rem;
+  font-family: var(--font-jb-mono);
+  font-size: 0.82rem;
+  color: var(--text-1);
+  margin: 0;
+}
+
+.debugDl dt {
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+}
+
+.debugDl dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+.debugCode {
+  font-family: var(--font-jb-mono);
+  font-size: 0.78rem;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  padding: 0.1rem 0.3rem;
+  word-break: break-all;
+}

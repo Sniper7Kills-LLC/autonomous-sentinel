@@ -1056,6 +1056,39 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
     expect(typeof attempts[0]?.promptHash).toBe('string');
   });
 
+  it('logs the raw Bedrock parse + proposed rules for debugging (#560)', async () => {
+    const { client } = makeDataStub();
+    const rules: ProposedRule[] = [
+      { component: 'TYPE', messageType: 'SKYKING', pattern: 'SKYKING', confidence: 0.95 },
+    ];
+    const bedrockFallback = vi.fn().mockResolvedValue({ ...fbSuccess, rules });
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    __setDeps({
+      dataClient: client,
+      rulesEngine: noRules,
+      bedrockFallback,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'm',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-log',
+        transcript: 'zzz noise',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    const parseLog = infoSpy.mock.calls.find((c) => c[0] === 'linguistic: bedrock parse');
+    expect(parseLog).toBeDefined();
+    expect(parseLog?.[1]).toMatchObject({
+      recordingId: 'rec-log',
+      parsed: { type: 'SKYKING', sender: 'MAINSAIL' },
+      rules: [expect.objectContaining({ component: 'TYPE', pattern: 'SKYKING' })],
+    });
+    infoSpy.mockRestore();
+  });
+
   it('logs a FAILED bedrock attempt and keeps OTHER when Bedrock returns null', async () => {
     const { client, createSpy, updateSpy } = makeDataStub();
     const bedrockFallback = vi.fn().mockResolvedValue(null);

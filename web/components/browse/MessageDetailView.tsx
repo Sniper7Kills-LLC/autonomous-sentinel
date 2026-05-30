@@ -7,6 +7,7 @@ import { RevisionPanel } from '@/components/validation/RevisionPanel';
 import { FieldVoteAffordance } from '@/components/validation/FieldVoteAffordance';
 import { AbuseReportButton } from '@/components/abuse/AbuseReportButton';
 import { useSessionState } from '@/components/account/SessionGreeting';
+import { DebugDetailsPanel } from './DebugDetailsPanel';
 import { getMessage } from '@/lib/messages/query';
 import { listRecordingsForMessage, type DisplayRecording } from '@/lib/messages/recordings';
 import type { DisplayMessage } from '@/lib/messages/types';
@@ -182,6 +183,8 @@ export function MessageDetailView({ messageId }: MessageDetailViewProps) {
           </div>
         )}
       </section>
+
+      <DebugDetailsPanel message={message} recordings={recordings} />
     </div>
   );
 }
