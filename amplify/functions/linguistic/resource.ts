@@ -18,4 +18,13 @@ export const linguistic = defineFunction({
   entry: './handler.ts',
   timeoutSeconds: 60,
   memoryMB: 1024,
+  // Grouped with `data` (#460) so the function lives in the data
+  // nested stack. The handler holds a direct `dynamodb:Scan` grant on
+  // the LinguisticRule table (rules-engine loader) — keeping the
+  // function in the data stack makes that grant in-stack rather than a
+  // `function → data` cross-stack edge, which (with the existing
+  // `data → function` AppSync edge from `allow.resource(linguistic)`)
+  // formed a nested-stack circular dependency (build job 116). Same
+  // resolution as `legacyClaimWorker` (#317).
+  resourceGroupName: 'data',
 });
