@@ -566,6 +566,21 @@ recordingMutationsLambda.addEnvironment(
 );
 pipelineQueues.preprocess.main.grantSendMessages(recordingMutationsLambda);
 
+// recordingMutations → linguistic queue (#566 reparseRecording).
+//
+// `reparseRecording` re-runs ONLY the linguistic stage on a recording's
+// stored transcript, skipping preprocess + transcribe. It publishes the
+// same TranscriptQueueMessage shape the Whisper container emits straight
+// onto the linguistic queue, so the existing classifier + dedup +
+// supersede path (#454/#556) runs unchanged. Failure to publish surfaces
+// to the caller (the mutation has nothing else to do), unlike the
+// fire-and-forget preprocess kick-off.
+recordingMutationsLambda.addEnvironment(
+  'LINGUISTIC_QUEUE_URL',
+  pipelineQueues.linguistic.main.queueUrl,
+);
+pipelineQueues.linguistic.main.grantSendMessages(recordingMutationsLambda);
+
 // Pre-process Lambda → `recordings/web/*` write grant (#46).
 //
 // The pre-process Lambda transcodes the original upload into the

@@ -274,3 +274,26 @@
   padding: 0.1rem 0.3rem;
   word-break: break-all;
 }
+
+/* Moderator/admin per-recording reprocess controls (#566). */
+.recAdmin {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--border-1);
+}
+
+.recAdminOk {
+  font-family: var(--font-jb-mono);
+  font-size: 0.78rem;
+  color: var(--success, #3fb950);
+}
+
+.recAdminErr {
+  font-family: var(--font-jb-mono);
+  font-size: 0.78rem;
+  color: var(--danger, #f85149);
+}
