@@ -3,6 +3,7 @@ import { normalizeParsed } from './normalize';
 import { contentMatches, dedupWindow, deterministicMessageId } from './dedup';
 import { LinguisticRulesEngine, type RuleMatch } from './rules-engine';
 import { loadRulesFromDdb } from './load-rules-ddb';
+import { type ConfidenceConfig, isFlagged } from './threshold';
 
 /**
  * Linguistic Lambda (#433 stage 4).
@@ -165,6 +166,12 @@ export interface LinguisticDataClient {
         canonicalSizeBytes?: number | null;
       }) => Promise<{ data: unknown; errors?: unknown }>;
     };
+    LinguisticConfig: {
+      get: (input: { key: string }) => Promise<{
+        data: { value?: unknown } | null;
+        errors?: unknown;
+      }>;
+    };
   };
 }
 
@@ -315,6 +322,46 @@ export async function classifyWithRules(
   };
 }
 
+/** LinguisticConfig key holding the per-type confidence-threshold map. */
+const CONFIDENCE_THRESHOLDS_KEY = 'CONFIDENCE_THRESHOLDS';
+
+/**
+ * Load the admin-tunable per-type confidence thresholds (#65) from the
+ * `CONFIDENCE_THRESHOLDS` LinguisticConfig row. The row's `value` is a
+ * `{ <messageType>: number, DEFAULT?: number }` map. Read per
+ * invocation (hot-reload, per CLAUDE.md) — a single keyed get is cheap.
+ *
+ * Any miss (no row, query error, malformed value) resolves to an empty
+ * map, so `resolveThreshold` falls back to its DEFAULT then the
+ * hard-coded 0.8 — a fresh env with no config row still gates safely.
+ */
+async function loadConfidenceConfig(client: LinguisticDataClient): Promise<ConfidenceConfig> {
+  const empty: ConfidenceConfig = { confidenceThresholds: {} };
+  try {
+    const res = await client.models.LinguisticConfig.get({ key: CONFIDENCE_THRESHOLDS_KEY });
+    if (res.errors || !res.data) return empty;
+    // `a.json()` reads back as a parsed object, but tolerate a JSON
+    // string too (older writers / direct DDB seeds).
+    let value: unknown = res.data.value;
+    if (typeof value === 'string') {
+      try {
+        value = JSON.parse(value);
+      } catch {
+        return empty;
+      }
+    }
+    if (!value || typeof value !== 'object') return empty;
+    // Pass the raw map through — resolveThreshold validates each entry's
+    // range and ignores out-of-range / non-numeric values.
+    return { confidenceThresholds: value as Record<string, number> };
+  } catch (err) {
+    console.warn('linguistic: confidence-threshold load failed; using defaults', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return empty;
+  }
+}
+
 interface RawLinguisticMessage {
   kind?: 'transcript' | 'transcribe-failure';
   recordingId?: string;
@@ -370,6 +417,9 @@ export function parseMessage(body: string): LinguisticQueueMessage {
 async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   const client = await dataClient();
   const result = await classifyWithRules(msg.transcript, rulesEngine());
+  // Per-type confidence threshold (#65) — admin-tunable via the
+  // CONFIDENCE_THRESHOLDS LinguisticConfig row; falls back to 0.8.
+  const confidenceConfig = await loadConfidenceConfig(client);
   // Turn the raw transcript into log-format fields: NATO-decode the
   // body, collapse double broadcasts, extract sender/receiver (#506).
   // Rule-captured fields (#62) win over re-extraction. The raw
@@ -439,7 +489,10 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
       ...(normalized.sender ? { sender: normalized.sender } : {}),
       ...(normalized.receiver ? { receiver: normalized.receiver } : {}),
       confidence: result.confidence,
-      flaggedForReview: result.confidence < 0.8,
+      flaggedForReview: isFlagged(
+        { type: result.type, confidence: result.confidence },
+        confidenceConfig,
+      ),
       publishedAt: ts,
     });
     if (created.errors) {

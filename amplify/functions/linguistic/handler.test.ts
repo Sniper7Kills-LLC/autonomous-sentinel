@@ -32,11 +32,18 @@ interface DataStub {
   deleteSpy: ReturnType<typeof vi.fn>;
   getSpy: ReturnType<typeof vi.fn>;
   listSpy: ReturnType<typeof vi.fn>;
+  configGetSpy: ReturnType<typeof vi.fn>;
 }
 
-/** @param candidates Messages the dedup GSI query returns (default none). */
+/**
+ * @param candidates Messages the dedup GSI query returns (default none).
+ * @param confidenceValue `value` returned by LinguisticConfig.get for
+ *   the CONFIDENCE_THRESHOLDS row (#65). Default `null` = no row, so
+ *   the threshold gate falls back to the hard-coded 0.8.
+ */
 function makeDataStub(
   candidates: Array<{ id: string; type?: string; body?: string | null }> = [],
+  confidenceValue: unknown = null,
 ): DataStub {
   const createSpy = vi.fn().mockResolvedValue({ data: { id: 'msg-uuid-1' }, errors: null });
   const updateSpy = vi.fn().mockResolvedValue({ data: {}, errors: null });
@@ -46,6 +53,10 @@ function makeDataStub(
     .fn()
     .mockResolvedValue({ data: { id: 'rec', broadcastedAt: null }, errors: null });
   const listSpy = vi.fn().mockResolvedValue({ data: candidates, errors: null });
+  const configGetSpy = vi.fn().mockResolvedValue({
+    data: confidenceValue === null ? null : { value: confidenceValue },
+    errors: null,
+  });
   const client: LinguisticDataClient = {
     models: {
       Message: {
@@ -54,9 +65,10 @@ function makeDataStub(
         list: listSpy as never,
       },
       Recording: { get: getSpy as never, update: updateSpy as never },
+      LinguisticConfig: { get: configGetSpy as never },
     },
   };
-  return { client, createSpy, updateSpy, deleteSpy, getSpy, listSpy };
+  return { client, createSpy, updateSpy, deleteSpy, getSpy, listSpy, configGetSpy };
 }
 
 /** Amplify Data shape for a `.update()` against a deleted row. */
@@ -308,6 +320,89 @@ describe('linguistic — handler happy path', () => {
         confidence: 0.9,
         flaggedForReview: false,
       }),
+    );
+  });
+
+  it('applies an admin per-type confidence threshold from LinguisticConfig (#65)', async () => {
+    // SKYKING threshold raised to 0.95 — above the rule match's 0.9 — so
+    // the Message must land flagged even though it would be clean under
+    // the default 0.8 gate.
+    const { client, createSpy } = makeDataStub([], { SKYKING: 0.95 });
+    const match: RuleMatch = {
+      ruleId: 'skyking-v3',
+      promptVersion: 3,
+      message: { messageType: 'SKYKING', fields: { body: 'ALFA' } },
+    };
+    __setDeps({
+      dataClient: client,
+      rulesEngine: { tryMatch: () => Promise.resolve(match) },
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-uuid-thr',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-thr',
+        transcript: 'noise',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(createSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ type: 'SKYKING', confidence: 0.9, flaggedForReview: true }),
+    );
+  });
+
+  it('falls back to the 0.8 default gate when the threshold config load throws (#65)', async () => {
+    const { client, createSpy, configGetSpy } = makeDataStub();
+    configGetSpy.mockRejectedValueOnce(new Error('ddb unavailable'));
+    __setDeps({
+      dataClient: client,
+      rulesEngine: {
+        tryMatch: () =>
+          Promise.resolve({
+            ruleId: 'r',
+            promptVersion: 1,
+            message: { messageType: 'SKYKING', fields: {} },
+          }),
+      },
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-uuid-err',
+    });
+    await handler(
+      makeEvent({ recordingId: 'rec-err', transcript: 'x', enqueuedAt: '2026-05-24T17:55:00Z' }),
+      {} as never,
+      () => undefined,
+    );
+    // 0.9 >= default 0.8 → clean, even though config load failed.
+    expect(createSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ confidence: 0.9, flaggedForReview: false }),
+    );
+  });
+
+  it('falls back to the default gate when the threshold value is malformed (#65)', async () => {
+    // A non-JSON string value — JSON.parse fails, resolves to empty map.
+    const { client, createSpy } = makeDataStub([], 'not-json');
+    __setDeps({
+      dataClient: client,
+      rulesEngine: {
+        tryMatch: () =>
+          Promise.resolve({
+            ruleId: 'r',
+            promptVersion: 1,
+            message: { messageType: 'SKYKING', fields: {} },
+          }),
+      },
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-uuid-mal',
+    });
+    await handler(
+      makeEvent({ recordingId: 'rec-mal', transcript: 'x', enqueuedAt: '2026-05-24T17:55:00Z' }),
+      {} as never,
+      () => undefined,
+    );
+    expect(createSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ confidence: 0.9, flaggedForReview: false }),
     );
   });
 
