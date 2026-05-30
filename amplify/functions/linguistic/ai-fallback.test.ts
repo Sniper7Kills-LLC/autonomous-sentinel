@@ -6,11 +6,43 @@ import type {
 } from '@aws-sdk/client-bedrock-runtime';
 import {
   tryBedrockFallback,
+  sanitizeProposedRules,
   DEFAULT_FALLBACK_MODEL_ID,
   DEFAULT_PROMPT_TEMPLATE,
   PARSED_EAM_SCHEMA,
   type ParsedEam,
 } from './ai-fallback';
+
+describe('sanitizeProposedRules (#544)', () => {
+  it('keeps valid rules and drops bad component / pattern', () => {
+    const out = sanitizeProposedRules([
+      { component: 'TYPE', pattern: 'SKYKING', messageType: 'SKYKING', confidence: 0.9 },
+      { component: 'SENDER', pattern: '(?<sender>\\w+)', captureMap: { sender: 'sender' } },
+      { component: 'BOGUS', pattern: 'x' }, // unknown component
+      { component: 'BODY', pattern: '(' }, // uncompilable regex
+      { component: 'BODY' }, // no pattern
+    ]);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({ component: 'TYPE', confidence: 0.9 });
+    expect(out[1]).toMatchObject({ component: 'SENDER', captureMap: { sender: 'sender' } });
+  });
+
+  it('returns [] for non-array input', () => {
+    expect(sanitizeProposedRules(undefined)).toEqual([]);
+    expect(sanitizeProposedRules('nope')).toEqual([]);
+  });
+
+  it('drops an over-length (ReDoS-risk) pattern', () => {
+    const huge = 'a'.repeat(600);
+    expect(sanitizeProposedRules([{ component: 'TYPE', pattern: huge }])).toEqual([]);
+  });
+
+  it('drops an out-of-range confidence but keeps the rule', () => {
+    const out = sanitizeProposedRules([{ component: 'TYPE', pattern: 'X', confidence: 5 }]);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.confidence).toBeUndefined();
+  });
+});
 
 /**
  * Behaviour tests for the Bedrock AI fallback helper (#63).

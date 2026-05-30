@@ -53,6 +53,24 @@ Always respond by calling the \`parsed_eam\` tool. Never reply with prose.
 - \`confidence\` — your 0–1 confidence in this parse. 0.8+ auto-publishes;
   below that the entry is flagged for community review.
 
+## Proposing rules (optional)
+
+You are the slow, expensive path. When a transcript shows a **stable,
+reusable pattern**, also return \`rules\` — small per-component regexes
+that let future similar transcripts be parsed without calling you:
+
+- Prefer **many small single-component rules** over one whole-message
+  rule. A \`TYPE\` rule detects the message type; \`SENDER\` / \`RECEIVER\` /
+  \`BODY\` rules each extract one field.
+- Patterns are **JavaScript regular expressions**. Use a **named capture
+  group** whose name matches the \`captureMap\` value, e.g.
+  \`THIS IS (?<sender>[A-Z]+)\` with \`captureMap: { "sender": "sender" }\`.
+- Account for ASR noise — keep patterns tolerant (optional spaces,
+  case-insensitive intent) but specific enough not to match other types.
+- Set each rule's \`confidence\` honestly: only high-confidence,
+  well-generalized rules auto-activate; the rest are queued for review.
+- If nothing reliably generalizes, omit \`rules\`.
+
 ## Transcript
 
 """

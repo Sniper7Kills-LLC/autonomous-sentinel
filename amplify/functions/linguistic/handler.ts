@@ -17,6 +17,7 @@ import {
   tryBedrockFallback,
   type FallbackOpts,
   type FallbackResult,
+  type ProposedRule,
 } from './ai-fallback';
 
 /**
@@ -200,6 +201,20 @@ export interface LinguisticDataClient {
         errors?: unknown;
       }>;
     };
+    LinguisticRule: {
+      create: (input: {
+        pattern: string;
+        messageType: string;
+        component: 'TYPE' | 'SENDER' | 'RECEIVER' | 'BODY';
+        appliesToType?: string | null;
+        captureMap: string;
+        priority: number;
+        enabled: boolean;
+        confidence: number;
+        promptVersion: number;
+        notes?: string | null;
+      }) => Promise<{ data: { id?: string } | null; errors?: unknown }>;
+    };
   };
 }
 
@@ -355,6 +370,58 @@ export async function classifyWithRules(
 
 /** Provider for the rules path attempt log (#64). */
 const RULES_PROVIDER: LinguisticProvider = 'rules';
+
+/**
+ * Confidence at/above which an AI-proposed rule auto-activates
+ * (`enabled=true`); below it the rule lands disabled for admin review
+ * (#544 hybrid activation). Corpus validation (#545) will add a second
+ * gate. Default priority for AI rules.
+ */
+const RULE_AUTO_ACTIVATE_BAR = 0.85;
+const AI_RULE_PRIORITY = 50;
+const AI_RULE_DEFAULT_CONFIDENCE = 0.7;
+
+/**
+ * Persist the model's proposed per-component rules (#544). Hybrid
+ * activation: rules at/above the auto-activate bar go live; the rest
+ * land disabled for the admin review queue. captureMap is stringified
+ * for the AWSJSON column. Returns the count written.
+ */
+async function writeProposedRules(
+  client: LinguisticDataClient,
+  rules: ProposedRule[],
+  fallbackType: string,
+  promptVersion: number,
+): Promise<number> {
+  let written = 0;
+  for (const r of rules) {
+    const confidence = typeof r.confidence === 'number' ? r.confidence : AI_RULE_DEFAULT_CONFIDENCE;
+    try {
+      const res = await client.models.LinguisticRule.create({
+        pattern: r.pattern,
+        messageType: r.messageType ?? fallbackType,
+        component: r.component,
+        ...(r.appliesToType ? { appliesToType: r.appliesToType } : {}),
+        captureMap: JSON.stringify(r.captureMap ?? {}),
+        priority: AI_RULE_PRIORITY,
+        enabled: confidence >= RULE_AUTO_ACTIVATE_BAR,
+        confidence,
+        promptVersion,
+        notes: 'AI-generated (#544)',
+      });
+      if (res.errors) {
+        console.warn('linguistic: LinguisticRule.create errored', { errors: res.errors });
+      } else {
+        written += 1;
+      }
+    } catch (err) {
+      console.warn('linguistic: proposed-rule write failed', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return written;
+}
 /** Provider for the Bedrock AI-fallback attempt log (#63/#64). */
 const BEDROCK_PROVIDER: LinguisticProvider = 'bedrock';
 
@@ -644,6 +711,20 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
           ...(fb.message.body ? { body: fb.message.body } : {}),
         },
       };
+      // Self-improving loop (#544): persist the model's proposed rules so
+      // future similar transcripts match a rule and skip the AI. Only on
+      // a fresh parse (no prior bedrock attempt) to avoid duplicating
+      // rules on an SQS redrive.
+      const alreadyTried = existingAttempts.some((a) => a.provider === BEDROCK_PROVIDER);
+      if (fb.rules.length > 0 && !alreadyTried) {
+        const n = await writeProposedRules(client, fb.rules, result.type, bedrockVersion);
+        if (n > 0) {
+          console.info('linguistic: wrote AI-proposed rules', {
+            recordingId: msg.recordingId,
+            count: n,
+          });
+        }
+      }
     } else {
       // Bedrock couldn't parse it either — keep the OTHER result but log
       // a FAILED bedrock attempt so a future bedrock-prompt bump (#66)
