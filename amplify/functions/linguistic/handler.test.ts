@@ -300,6 +300,7 @@ describe('linguistic — handler happy path', () => {
     const match: RuleMatch = {
       ruleId: 'skyking-v3',
       promptVersion: 3,
+      confidence: 0.9,
       message: {
         messageType: 'SKYKING',
         fields: { sender: 'MAINSAIL', receiver: 'FOXTROT', body: 'ALFA BRAVO' },
@@ -342,6 +343,7 @@ describe('linguistic — handler happy path', () => {
     const match: RuleMatch = {
       ruleId: 'skyking-v3',
       promptVersion: 3,
+      confidence: 0.9,
       message: { messageType: 'SKYKING', fields: { body: 'ALFA' } },
     };
     __setDeps({
@@ -374,6 +376,7 @@ describe('linguistic — handler happy path', () => {
           Promise.resolve({
             ruleId: 'r',
             promptVersion: 1,
+            confidence: 0.9,
             message: { messageType: 'SKYKING', fields: {} },
           }),
       },
@@ -401,6 +404,7 @@ describe('linguistic — handler happy path', () => {
           Promise.resolve({
             ruleId: 'r',
             promptVersion: 1,
+            confidence: 0.9,
             message: { messageType: 'SKYKING', fields: {} },
           }),
       },
@@ -818,6 +822,7 @@ describe('linguistic — attempt log (#64)', () => {
           Promise.resolve({
             ruleId: 'skyking-v3',
             promptVersion: 3,
+            confidence: 0.9,
             message: { messageType: 'SKYKING', fields: {} },
           }),
       },
@@ -1027,6 +1032,39 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
     );
     // 0.1 < 0.5 → bedrock branch; null → OTHER Message still created.
     expect(createSpy.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ type: 'OTHER' }));
+  });
+
+  it('routes a LOW-confidence rule match to Bedrock (#543)', async () => {
+    // A rule matched but its own confidence (0.4) is below the default
+    // 0.5 gate → the parse goes to the AI rather than being trusted.
+    const lowConfRule: RulesMatcher = {
+      tryMatch: () =>
+        Promise.resolve({
+          ruleId: 'shaky-rule',
+          promptVersion: 1,
+          confidence: 0.4,
+          message: { messageType: 'SKYKING', fields: {} },
+        }),
+    };
+    const { client } = makeDataStub();
+    const bedrockFallback = vi.fn().mockResolvedValue(fbSuccess);
+    __setDeps({
+      dataClient: client,
+      rulesEngine: lowConfRule,
+      bedrockFallback,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'm',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-lowc',
+        transcript: 'skyking',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(bedrockFallback).toHaveBeenCalledOnce();
   });
 
   it('does NOT invoke Bedrock when the inline classifier recognizes the type', async () => {

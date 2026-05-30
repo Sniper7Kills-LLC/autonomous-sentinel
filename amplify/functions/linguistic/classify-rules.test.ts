@@ -18,6 +18,7 @@ describe('classifyWithRules (#460 slice 1 — rules engine wiring)', () => {
     const match: RuleMatch = {
       ruleId: 'skyking-v3',
       promptVersion: 3,
+      confidence: 0.9,
       message: {
         messageType: 'SKYKING',
         fields: { sender: 'MAINSAIL', body: 'ALFA BRAVO' },
@@ -37,6 +38,7 @@ describe('classifyWithRules (#460 slice 1 — rules engine wiring)', () => {
     const match: RuleMatch = {
       ruleId: 'r1',
       promptVersion: 1,
+      confidence: 0.9,
       message: { messageType: 'ALLSTATIONS', fields: { receiver: 'ALL STATIONS' } },
     };
     const out = await classifyWithRules('all stations ...', engineReturning(match));
@@ -53,6 +55,7 @@ describe('classifyWithRules (#460 slice 1 — rules engine wiring)', () => {
     const match: RuleMatch = {
       ruleId: 'bad',
       promptVersion: 1,
+      confidence: 0.9,
       message: { messageType: 'NONSENSE', fields: {} },
     };
     const out = await classifyWithRules('radio check', engineReturning(match));
