@@ -85,6 +85,9 @@ interface TranscriptQueueMessage {
    * produced the playback derivative (consolidated transcode, #514). */
   webCanonicalKey?: string;
   canonicalSizeBytes?: number;
+  /** Overall whisper confidence (#581): mean per-token `p` in [0,1].
+   * Absent when the transcriber emitted no per-token probabilities. */
+  transcriptionConfidence?: number;
   enqueuedAt: string;
 }
 
@@ -215,6 +218,8 @@ export interface LinguisticDataClient {
         wordTimestampsKey?: string | null;
         webCanonicalKey?: string | null;
         canonicalSizeBytes?: number | null;
+        // Overall whisper confidence (#581), [0,1] or null.
+        transcriptionConfidence?: number | null;
         // a.json() (AWSJSON) — written as a JSON string per the #520
         // AuditLog.diff precedent; AppSync returns it parsed on read.
         linguisticAttempts?: string;
@@ -770,6 +775,7 @@ interface RawLinguisticMessage {
   wordTimestampsKey?: string;
   webCanonicalKey?: string;
   canonicalSizeBytes?: number;
+  transcriptionConfidence?: number;
   reason?: string;
   enqueuedAt?: string;
 }
@@ -811,6 +817,16 @@ export function parseMessage(body: string): LinguisticQueueMessage {
         : undefined,
     canonicalSizeBytes:
       typeof parsed.canonicalSizeBytes === 'number' ? parsed.canonicalSizeBytes : undefined,
+    // Overall whisper confidence (#581). Validate it's a finite number in
+    // [0,1] — drop anything else (a bad/legacy value must never persist a
+    // bogus score on the Recording).
+    transcriptionConfidence:
+      typeof parsed.transcriptionConfidence === 'number' &&
+      Number.isFinite(parsed.transcriptionConfidence) &&
+      parsed.transcriptionConfidence >= 0 &&
+      parsed.transcriptionConfidence <= 1
+        ? parsed.transcriptionConfidence
+        : undefined,
     enqueuedAt: parsed.enqueuedAt ?? nowDate().toISOString(),
   };
 }
@@ -1111,6 +1127,11 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
     ...(msg.webCanonicalKey ? { webCanonicalKey: msg.webCanonicalKey } : {}),
     ...(typeof msg.canonicalSizeBytes === 'number'
       ? { canonicalSizeBytes: msg.canonicalSizeBytes }
+      : {}),
+    // Overall whisper transcription confidence (#581) — only when the
+    // container carried it. Distinct from Message.confidence (parse).
+    ...(typeof msg.transcriptionConfidence === 'number'
+      ? { transcriptionConfidence: msg.transcriptionConfidence }
       : {}),
   });
   if (updated.errors) {

@@ -85,6 +85,14 @@ export const Recording = a
     // reprocess UI (#107) reads this to triage.
     failedReason: a.string(),
     transcript: a.string(),
+    // Overall whisper transcription confidence (#581): mean per-token
+    // probability `p` over content tokens, in [0,1]. Written by the
+    // linguistic Lambda from the value the Whisper container carries on
+    // the transcript queue message. Null when the transcriber emitted no
+    // per-token probabilities. Distinct from `Message.confidence`, which
+    // is the linguistic-PARSE confidence. Feeds the low-confidence Amazon
+    // Transcribe escalation gate (#582) + the moderator debug panel (#561).
+    transcriptionConfidence: a.float(),
     // Append-only log of linguistic attempts. Written by #64.
     linguisticAttempts: a.json(),
 

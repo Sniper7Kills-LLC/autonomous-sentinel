@@ -35,6 +35,12 @@ export type DisplayRecording = {
   wordTimestampsKey: string | null;
   peaksJsonKey: string | null;
   /**
+   * Overall whisper transcription confidence (#581), [0,1] or null.
+   * Distinct from the Message's parse confidence; surfaced in the
+   * moderator/admin debug panel (#561) as "Transcription confidence".
+   */
+  transcriptionConfidence: number | null;
+  /**
    * Parsed `Recording.linguisticAttempts` (raw AWSJSON). Empty array
    * when absent/unparseable. Only rendered in the moderator/admin-only
    * debug panel (#561).
@@ -56,6 +62,7 @@ type RawRecording = {
   webCanonicalKey?: string | null;
   wordTimestampsKey?: string | null;
   peaksJsonKey?: string | null;
+  transcriptionConfidence?: number | null;
   // AWSJSON — arrives as a parsed value (array/object) or a JSON
   // string depending on the client path; the parser handles both.
   linguisticAttempts?: unknown;
@@ -107,6 +114,7 @@ function toDisplay(r: RawRecording): DisplayRecording {
     webCanonicalKey: r.webCanonicalKey ?? null,
     wordTimestampsKey: r.wordTimestampsKey ?? null,
     peaksJsonKey: r.peaksJsonKey ?? null,
+    transcriptionConfidence: num(r.transcriptionConfidence),
     linguisticAttempts: parseAttempts(r.linguisticAttempts),
   };
 }

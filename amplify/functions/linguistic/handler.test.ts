@@ -307,6 +307,38 @@ describe('linguistic — parseMessage', () => {
       expect(out.wordTimestampsKey).toBeUndefined();
     }
   });
+
+  it('round-trips a finite transcriptionConfidence in [0,1] (#581)', () => {
+    const out = parseMessage(
+      JSON.stringify({
+        kind: 'transcript',
+        recordingId: 'r-1',
+        transcript: 'skyking',
+        transcriptionConfidence: 0.73,
+        enqueuedAt: '2026-05-24T18:00:00Z',
+      }),
+    );
+    if (out.kind === 'transcript') {
+      expect(out.transcriptionConfidence).toBe(0.73);
+    }
+  });
+
+  it('drops an out-of-range / non-finite transcriptionConfidence (#581)', () => {
+    for (const bad of [1.5, -0.1, Number.NaN, 'x']) {
+      const out = parseMessage(
+        JSON.stringify({
+          kind: 'transcript',
+          recordingId: 'r-1',
+          transcript: 'skyking',
+          transcriptionConfidence: bad,
+          enqueuedAt: '2026-05-24T18:00:00Z',
+        }),
+      );
+      if (out.kind === 'transcript') {
+        expect(out.transcriptionConfidence).toBeUndefined();
+      }
+    }
+  });
 });
 
 describe('linguistic — handler happy path', () => {
@@ -671,6 +703,57 @@ describe('linguistic — persists web-canonical key from the container (#514)', 
         transcriptionStatus: 'PUBLISHED',
       }),
     );
+  });
+});
+
+describe('linguistic — persists transcription confidence from the container (#581)', () => {
+  it('writes transcriptionConfidence onto the Recording when present', async () => {
+    const { client, updateSpy } = makeDataStub();
+    __setDeps({
+      dataClient: client,
+      bedrockFallback: bedrockOk({ type: 'SKYKING', body: 'skyking skyking' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-tc-1',
+    });
+    await handler(
+      makeEvent({
+        kind: 'transcript',
+        recordingId: 'rec-tc',
+        transcript: 'skyking skyking',
+        transcriptionConfidence: 0.82,
+        enqueuedAt: '2026-05-24T18:00:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        id: 'rec-tc',
+        transcriptionConfidence: 0.82,
+        transcriptionStatus: 'PUBLISHED',
+      }),
+    );
+  });
+
+  it('omits transcriptionConfidence when the message lacks it', async () => {
+    const { client, updateSpy } = makeDataStub();
+    __setDeps({
+      dataClient: client,
+      bedrockFallback: bedrockOk({ type: 'SKYKING', body: 'skyking skyking' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-tc-2',
+    });
+    await handler(
+      makeEvent({
+        kind: 'transcript',
+        recordingId: 'rec-tc-2',
+        transcript: 'skyking skyking',
+        enqueuedAt: '2026-05-24T18:00:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(updateSpy.mock.calls[0]?.[0]).not.toHaveProperty('transcriptionConfidence');
   });
 });
 
