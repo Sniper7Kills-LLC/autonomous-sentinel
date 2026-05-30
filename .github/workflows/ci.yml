@@ -29,6 +29,8 @@ jobs:
               - 'package-lock.json'
               - 'tsconfig.base.json'
               - 'eslint.config.mjs'
+              - 'lint-staged.config.mjs'
+              - 'lint-staged.config.test.mjs'
               - 'amplify.yml'
               - '.github/workflows/ci.yml'
             web:
@@ -37,6 +39,19 @@ jobs:
               - 'amplify/**'
             client:
               - 'upload-client/**'
+
+  tooling-checks:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.root == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run test:tooling
 
   web-checks:
     needs: detect-changes
@@ -91,14 +106,15 @@ jobs:
 
   all-checks:
     name: all-checks
-    needs: [web-checks, amplify-checks, client-checks]
+    needs: [tooling-checks, web-checks, amplify-checks, client-checks]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Verify upstream jobs
         run: |
           set -e
-          for r in "${{ needs.web-checks.result }}" \
+          for r in "${{ needs.tooling-checks.result }}" \
+                   "${{ needs.web-checks.result }}" \
                    "${{ needs.amplify-checks.result }}" \
                    "${{ needs.client-checks.result }}"; do
             case "$r" in

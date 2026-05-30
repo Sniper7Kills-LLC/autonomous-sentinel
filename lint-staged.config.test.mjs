@@ -46,10 +46,24 @@ test('non-lintable formattable files go to prettierOnly, not a workspace lint', 
   assert.deepEqual(prettierOnly.sort(), ['amplify/README.md', 'docs/notes.yaml', 'web/styles.css']);
 });
 
-test('root-level lintable scripts are prettier-only (no workspace owns them)', () => {
-  const { byWorkspace, prettierOnly } = bucketStagedFiles([abs('lint-staged.config.mjs')], ROOT);
+test('root-level lintable scripts bucket as rootLintable (not a workspace, not prettier-only)', () => {
+  const { byWorkspace, rootLintable, prettierOnly } = bucketStagedFiles(
+    [abs('lint-staged.config.mjs')],
+    ROOT,
+  );
   assert.deepEqual(byWorkspace, {});
-  assert.deepEqual(prettierOnly, ['lint-staged.config.mjs']);
+  assert.deepEqual(rootLintable, ['lint-staged.config.mjs']);
+  assert.deepEqual(prettierOnly, []);
+});
+
+test('root-level lintable scripts lint against the root flat config (cheap, no TS program)', () => {
+  const cmds = buildCommands([abs('eslint.config.mjs')], ROOT);
+  const eslintCmds = cmds.filter((c) => c.startsWith('eslint '));
+  assert.equal(eslintCmds.length, 1);
+  assert.ok(eslintCmds[0].includes('--config eslint.config.mjs'));
+  assert.ok(eslintCmds[0].includes("'eslint.config.mjs'"));
+  assert.ok(!/--config (?:web|amplify|upload-client)\//.test(eslintCmds[0]));
+  assert.ok(eslintCmds[0].includes('--max-warnings=0'));
 });
 
 test('buildCommands emits one scoped eslint command per affected workspace', () => {

@@ -35,14 +35,20 @@ export function toRepoRelative(absPath, root = process.cwd()) {
  *
  * @param {string[]} absPaths absolute staged file paths
  * @param {string} root repo root
- * @returns {{ byWorkspace: Record<string, string[]>, prettierOnly: string[] }}
+ * @returns {{ byWorkspace: Record<string, string[]>, rootLintable: string[], prettierOnly: string[] }}
  *   `byWorkspace[ws]` holds repo-relative lintable paths owned by `ws`.
- *   `prettierOnly` holds repo-relative paths that are not under a workspace
- *   and/or are not ESLint-lintable (json/md/yaml/css, or root-level scripts).
+ *   `rootLintable` holds repo-relative lintable paths NOT under any workspace
+ *   (root-level tooling such as `eslint.config.mjs`, `lint-staged.config.mjs`);
+ *   these lint against the root flat config, which routes `.mjs`/`.cjs` through
+ *   the type-unaware block so the pass stays ~1s.
+ *   `prettierOnly` holds repo-relative paths that are not ESLint-lintable at all
+ *   (json/md/yaml/css).
  */
 export function bucketStagedFiles(absPaths, root = process.cwd()) {
   /** @type {Record<string, string[]>} */
   const byWorkspace = {};
+  /** @type {string[]} */
+  const rootLintable = [];
   /** @type {string[]} */
   const prettierOnly = [];
 
@@ -50,17 +56,21 @@ export function bucketStagedFiles(absPaths, root = process.cwd()) {
     const rel = toRepoRelative(abs, root);
     const ws = WORKSPACES.find((w) => rel === w || rel.startsWith(`${w}/`));
 
-    if (ws && LINTABLE.test(rel)) {
-      (byWorkspace[ws] ??= []).push(rel);
+    if (LINTABLE.test(rel)) {
+      if (ws) {
+        (byWorkspace[ws] ??= []).push(rel);
+      } else {
+        // Root-level tooling scripts keep their ESLint coverage via the root
+        // flat config (cheap — no TypeScript program for `.mjs`/`.cjs`).
+        rootLintable.push(rel);
+      }
     } else if (PRETTIER_ALL.test(rel)) {
-      // Lintable files outside any workspace (e.g. root-level `*.mjs`
-      // tooling) and all non-lintable formattable files get prettier only.
       prettierOnly.push(rel);
     }
     // Anything else (e.g. binary assets) is ignored entirely.
   }
 
-  return { byWorkspace, prettierOnly };
+  return { byWorkspace, rootLintable, prettierOnly };
 }
 
 /**
@@ -90,9 +100,19 @@ function quote(p) {
  * @returns {string[]} command strings for lint-staged to execute
  */
 export function buildCommands(absPaths, root = process.cwd()) {
-  const { byWorkspace, prettierOnly } = bucketStagedFiles(absPaths, root);
+  const { byWorkspace, rootLintable, prettierOnly } = bucketStagedFiles(absPaths, root);
   /** @type {string[]} */
   const commands = [];
+
+  // Root-level tooling scripts (e.g. this file, `eslint.config.mjs`) lint
+  // against the root flat config. `.mjs`/`.cjs` route through the root config's
+  // type-unaware block, so no TypeScript program is built (~1s).
+  if (rootLintable.length > 0) {
+    const quoted = rootLintable.map(quote).join(' ');
+    commands.push(
+      `eslint --fix --max-warnings=0 --cache --cache-strategy content --cache-location node_modules/.cache/eslint/ --config eslint.config.mjs ${quoted}`,
+    );
+  }
 
   for (const ws of WORKSPACES) {
     const files = byWorkspace[ws];
@@ -111,8 +131,9 @@ export function buildCommands(absPaths, root = process.cwd()) {
     );
   }
 
-  // Prettier over everything formattable (workspace + root-level), one pass.
-  const allFormattable = [...Object.values(byWorkspace).flat(), ...prettierOnly];
+  // Prettier over everything formattable (workspace lintable + root-level
+  // lintable + non-lintable formattable), one pass.
+  const allFormattable = [...Object.values(byWorkspace).flat(), ...rootLintable, ...prettierOnly];
   if (allFormattable.length > 0) {
     commands.push(`prettier --write ${allFormattable.map(quote).join(' ')}`);
   }
