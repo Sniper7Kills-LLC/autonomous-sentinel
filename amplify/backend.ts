@@ -638,11 +638,16 @@ preprocessLambda.addEventSource(
 // immutability + per-branch image versioning.
 //
 // Resource sizing per #54 spec + CLAUDE.md → Stack table:
-//   - memorySize 3008 MB: medium model (~1.5 GB) + ffmpeg-decoded
-//     audio + Node heap. Lambda gets ~2 vCPU at this memory tier.
-//   - timeout 15 min: chunker (#59) keeps inputs ≤ 5 min, so a
-//     single invoke fits comfortably; headroom covers cold-start +
-//     retries.
+//   - memorySize 10240 MB (Lambda max): medium model (~1.5 GB) +
+//     ffmpeg-decoded audio + Node heap. Lambda vCPU scales with the
+//     memory tier — ~6 vCPU here vs ~2 at the old 3008 MB. Bumped after
+//     a ~4-min clip hit the 900 s timeout AND near-OOM (2997/3008 MB)
+//     on CPU transcription (#563); more vCPU ≈ 3× throughput. 900 s is
+//     the Lambda hard max, so the only lever for long clips is CPU.
+//   - timeout 15 min (the Lambda hard maximum): the chunker (#59) is
+//     meant to keep inputs ≤ 5 min, but even a single sub-5-min clip
+//     can exceed 900 s on CPU at the old memory tier — hence the bump.
+//     Hours-long recordings still need finer chunking (tracked apart).
 //   - ephemeralStorage 2048 MB: /tmp holds the Opus download +
 //     whisper.cpp JSON output during processing.
 //   - RESERVED concurrency only, never provisioned, per CLAUDE.md
@@ -723,7 +728,7 @@ const whisperImageTagOrDigest = resolveEcrDigest({
 
 const whisperFn = new DockerImageFunction(transcribeWhisperStack, 'TranscribeWhisperFn', {
   code: DockerImageCode.fromEcr(whisperRepo, { tagOrDigest: whisperImageTagOrDigest }),
-  memorySize: 3008,
+  memorySize: 10240,
   timeout: Duration.minutes(15),
   ephemeralStorageSize: Size.mebibytes(2048),
   environment: {
