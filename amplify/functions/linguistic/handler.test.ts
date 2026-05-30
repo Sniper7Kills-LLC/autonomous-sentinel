@@ -11,7 +11,7 @@ import {
   type RulesMatcher,
 } from './handler';
 import type { RuleMatch } from './rules-engine';
-import { renderFallbackPrompt } from './ai-fallback';
+import { renderFallbackPrompt, type ProposedRule } from './ai-fallback';
 import { hashPrompt } from './attempts';
 
 /**
@@ -36,6 +36,7 @@ interface DataStub {
   listSpy: ReturnType<typeof vi.fn>;
   configGetSpy: ReturnType<typeof vi.fn>;
   promptListSpy: ReturnType<typeof vi.fn>;
+  ruleCreateSpy: ReturnType<typeof vi.fn>;
 }
 
 /**
@@ -65,6 +66,7 @@ function makeDataStub(
   // No active prompt template by default → ai-fallback uses the bundled
   // markdown default (#self-improving-loop).
   const promptListSpy = vi.fn().mockResolvedValue({ data: [], errors: null });
+  const ruleCreateSpy = vi.fn().mockResolvedValue({ data: { id: 'rule-1' }, errors: null });
   const client: LinguisticDataClient = {
     models: {
       Message: {
@@ -77,9 +79,20 @@ function makeDataStub(
       LinguisticPromptTemplate: {
         list: promptListSpy as never,
       },
+      LinguisticRule: { create: ruleCreateSpy as never },
     },
   };
-  return { client, createSpy, updateSpy, deleteSpy, getSpy, listSpy, configGetSpy, promptListSpy };
+  return {
+    client,
+    createSpy,
+    updateSpy,
+    deleteSpy,
+    getSpy,
+    listSpy,
+    configGetSpy,
+    promptListSpy,
+    ruleCreateSpy,
+  };
 }
 
 /** Amplify Data shape for a `.update()` against a deleted row. */
@@ -905,6 +918,7 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
     modelId: 'anthropic.claude-test',
     promptVersion: 1,
     retried: false,
+    rules: [] as ProposedRule[],
   };
   // rules engine that never matches → inline classifier runs.
   const noRules: RulesMatcher = { tryMatch: () => Promise.resolve(null) };
@@ -1065,6 +1079,88 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
       () => undefined,
     );
     expect(bedrockFallback).toHaveBeenCalledOnce();
+  });
+
+  it('persists AI-proposed rules with hybrid activation (#544)', async () => {
+    const { client, ruleCreateSpy } = makeDataStub();
+    const rules: ProposedRule[] = [
+      { component: 'TYPE', messageType: 'SKYKING', pattern: 'SKYKING', confidence: 0.95 },
+      {
+        component: 'SENDER',
+        appliesToType: 'SKYKING',
+        pattern: 'THIS IS (?<sender>\\w+)',
+        captureMap: { sender: 'sender' },
+        confidence: 0.6,
+      },
+    ];
+    const bedrockFallback = vi.fn().mockResolvedValue({ ...fbSuccess, rules });
+    __setDeps({
+      dataClient: client,
+      rulesEngine: noRules,
+      bedrockFallback,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'm',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-rules',
+        transcript: 'zzz noise',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(ruleCreateSpy).toHaveBeenCalledTimes(2);
+    // High-confidence (0.95) auto-activates; low-confidence (0.6) queues.
+    const calls = ruleCreateSpy.mock.calls.map(
+      (c) => c[0] as { component: string; enabled: boolean; captureMap: string },
+    );
+    expect(calls.find((c) => c.component === 'TYPE')?.enabled).toBe(true);
+    expect(calls.find((c) => c.component === 'SENDER')?.enabled).toBe(false);
+    // captureMap stringified for the AWSJSON column.
+    expect(typeof calls[0]?.captureMap).toBe('string');
+  });
+
+  it('does not re-write rules on a redrive (prior bedrock attempt logged) (#544)', async () => {
+    const { client, getSpy, ruleCreateSpy } = makeDataStub();
+    getSpy.mockResolvedValueOnce({
+      data: {
+        id: 'rec-redr',
+        broadcastedAt: null,
+        linguisticAttempts: [
+          {
+            provider: 'bedrock',
+            promptVersion: 1,
+            promptHash: 'h',
+            resultHash: null,
+            success: false,
+            ts: '2026-05-24T17:00:00.000Z',
+          },
+        ],
+      },
+      errors: null,
+    });
+    const rules: ProposedRule[] = [
+      { component: 'TYPE', messageType: 'SKYKING', pattern: 'SKYKING', confidence: 0.95 },
+    ];
+    const bedrockFallback = vi.fn().mockResolvedValue({ ...fbSuccess, rules });
+    __setDeps({
+      dataClient: client,
+      rulesEngine: noRules,
+      bedrockFallback,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'm',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-redr',
+        transcript: 'zzz noise',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(ruleCreateSpy).not.toHaveBeenCalled();
   });
 
   it('does NOT invoke Bedrock when the inline classifier recognizes the type', async () => {

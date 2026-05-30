@@ -89,9 +89,99 @@ export const PARSED_EAM_SCHEMA = {
       description:
         'Model-reported confidence 0-1. 0.8+ auto-publishes; below flags for community review per CLAUDE.md.',
     },
+    rules: {
+      type: 'array',
+      description:
+        'OPTIONAL. Reusable per-component regex rules that would let FUTURE similar transcripts be parsed without calling you. Emit one per stable component you can capture; prefer many small single-component rules over one whole-message rule. Omit if no reliable pattern is evident.',
+      items: {
+        type: 'object',
+        properties: {
+          component: {
+            type: 'string',
+            enum: ['TYPE', 'SENDER', 'RECEIVER', 'BODY'],
+            description:
+              'TYPE detects the message type; SENDER/RECEIVER/BODY extract that one field.',
+          },
+          messageType: {
+            type: 'string',
+            description: 'For a TYPE rule: the type it assigns (from the enum above).',
+          },
+          appliesToType: {
+            type: 'string',
+            description:
+              'For a SENDER/RECEIVER/BODY rule: the message type it extracts from. Omit to apply to all types.',
+          },
+          pattern: {
+            type: 'string',
+            description:
+              'JavaScript-compatible regular expression. Use a NAMED capture group whose name matches the captureMap value (e.g. (?<sender>\\\\w+)).',
+          },
+          captureMap: {
+            type: 'object',
+            additionalProperties: { type: 'string' },
+            description: 'Map of regex named-group → field name (sender / receiver / body).',
+          },
+          confidence: {
+            type: 'number',
+            minimum: 0,
+            maximum: 1,
+            description: 'Your confidence this rule is correct + general. Drives auto-activation.',
+          },
+        },
+        required: ['component', 'pattern'],
+      },
+    },
   },
   required: ['type', 'confidence'],
 } as const;
+
+/** A per-component rule the model proposes for the LinguisticRule table (#544). */
+export interface ProposedRule {
+  component: 'TYPE' | 'SENDER' | 'RECEIVER' | 'BODY';
+  pattern: string;
+  messageType?: string;
+  appliesToType?: string;
+  captureMap?: Record<string, string>;
+  confidence?: number;
+}
+
+const RULE_COMPONENTS = new Set(['TYPE', 'SENDER', 'RECEIVER', 'BODY']);
+
+/**
+ * Validate + clean the model's proposed rules. Drops any whose pattern
+ * isn't a compilable regex or whose component is unknown — a malformed
+ * AI rule must never reach the engine.
+ */
+export function sanitizeProposedRules(raw: unknown): ProposedRule[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ProposedRule[] = [];
+  for (const r of raw) {
+    if (!r || typeof r !== 'object') continue;
+    const o = r as Record<string, unknown>;
+    if (typeof o.component !== 'string' || !RULE_COMPONENTS.has(o.component)) continue;
+    if (typeof o.pattern !== 'string' || o.pattern.length === 0) continue;
+    try {
+      new RegExp(o.pattern);
+    } catch {
+      continue;
+    }
+    const rule: ProposedRule = {
+      component: o.component as ProposedRule['component'],
+      pattern: o.pattern,
+    };
+    if (typeof o.messageType === 'string') rule.messageType = o.messageType;
+    if (typeof o.appliesToType === 'string' && o.appliesToType)
+      rule.appliesToType = o.appliesToType;
+    if (o.captureMap && typeof o.captureMap === 'object') {
+      rule.captureMap = o.captureMap as Record<string, string>;
+    }
+    if (typeof o.confidence === 'number' && o.confidence >= 0 && o.confidence <= 1) {
+      rule.confidence = o.confidence;
+    }
+    out.push(rule);
+  }
+  return out;
+}
 
 export interface ParsedEam {
   sender?: string;
@@ -112,6 +202,8 @@ export interface FallbackResult {
   promptVersion: number;
   /** Whether the corrective retry was needed (observability surface). */
   retried: boolean;
+  /** Per-component rules the model proposed (#544) — already sanitized. */
+  rules: ProposedRule[];
 }
 
 export interface FallbackOpts {
@@ -298,5 +390,6 @@ export async function tryBedrockFallback(
     modelId,
     promptVersion,
     retried,
+    rules: sanitizeProposedRules((parsed as { rules?: unknown }).rules),
   };
 }
