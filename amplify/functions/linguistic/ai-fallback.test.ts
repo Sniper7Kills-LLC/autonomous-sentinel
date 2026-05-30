@@ -165,6 +165,17 @@ describe('tryBedrockFallback — env overrides', () => {
     expect(result?.promptVersion).toBe(7);
   });
 
+  it('appends opts.context AFTER the transcript block (#544b)', async () => {
+    const { client, calls } = makeStubClient([toolUseResponse({ type: 'OTHER', confidence: 0.5 })]);
+    await tryBedrockFallback('the-transcript', { client, context: 'REFINE-CONTEXT-MARKER' });
+    const content = calls[0]?.input.messages?.[0]?.content?.[0];
+    const text = content && 'text' in content ? (content.text ?? '') : '';
+    expect(text).toContain('the-transcript');
+    expect(text).toContain('REFINE-CONTEXT-MARKER');
+    // Context lands after the transcript's closing triple-quote.
+    expect(text.indexOf('REFINE-CONTEXT-MARKER')).toBeGreaterThan(text.lastIndexOf('"""'));
+  });
+
   it('throws if a custom prompt template lacks the {{TRANSCRIPT}} placeholder', async () => {
     const { client } = makeStubClient([toolUseResponse({ type: 'OTHER', confidence: 0.5 })]);
     await expect(
