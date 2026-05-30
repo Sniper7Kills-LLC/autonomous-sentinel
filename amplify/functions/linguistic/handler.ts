@@ -12,7 +12,12 @@ import {
   type LinguisticAttempt,
   type LinguisticProvider,
 } from './attempts';
-import { renderFallbackPrompt, tryBedrockFallback, type FallbackResult } from './ai-fallback';
+import {
+  renderFallbackPrompt,
+  tryBedrockFallback,
+  type FallbackOpts,
+  type FallbackResult,
+} from './ai-fallback';
 
 /**
  * Linguistic Lambda (#433 stage 4).
@@ -195,6 +200,12 @@ export interface LinguisticDataClient {
         errors?: unknown;
       }>;
     };
+    LinguisticPromptTemplate: {
+      list: (input?: { filter?: { isActive: { eq: boolean } } }) => Promise<{
+        data: Array<{ body?: string | null; version?: number | null }> | null;
+        errors?: unknown;
+      }>;
+    };
   };
 }
 
@@ -207,7 +218,7 @@ export interface LinguisticDeps {
   dataClient?: LinguisticDataClient;
   rulesEngine?: RulesMatcher;
   /** Bedrock AI fallback (#63). Injected in tests; defaults to the real call. */
-  bedrockFallback?: (transcript: string) => Promise<FallbackResult | null>;
+  bedrockFallback?: (transcript: string, opts?: FallbackOpts) => Promise<FallbackResult | null>;
   now?: () => Date;
   uuid?: () => string;
 }
@@ -354,8 +365,8 @@ const RULES_PROVIDER: LinguisticProvider = 'rules';
 const BEDROCK_PROVIDER: LinguisticProvider = 'bedrock';
 
 /** Resolve the Bedrock fallback (injected in tests, real call in prod). */
-function bedrockFallback(transcript: string): Promise<FallbackResult | null> {
-  return (injected.bedrockFallback ?? tryBedrockFallback)(transcript);
+function bedrockFallback(transcript: string, opts?: FallbackOpts): Promise<FallbackResult | null> {
+  return (injected.bedrockFallback ?? tryBedrockFallback)(transcript, opts);
 }
 
 /**
@@ -399,6 +410,39 @@ function coerceAttempts(value: unknown): LinguisticAttempt[] {
     type: typeof value,
   });
   return [];
+}
+
+/**
+ * Resolve the active Bedrock prompt template (self-improving loop). Reads
+ * the `LinguisticPromptTemplate` row with `isActive=true` so an admin's
+ * edited prompt (version-bumped) overrides the bundled markdown default.
+ * Returns `{}` on any miss — `ai-fallback` then uses its git-reviewed
+ * `DEFAULT_PROMPT_TEMPLATE`, so an env with no prompt row still runs.
+ */
+async function loadActivePromptTemplate(
+  client: LinguisticDataClient,
+): Promise<{ body?: string; version?: number }> {
+  try {
+    const res = await client.models.LinguisticPromptTemplate.list({
+      filter: { isActive: { eq: true } },
+    });
+    if (res.errors || !res.data || res.data.length === 0) return {};
+    // The model mandates one active row per promptId; if several slip
+    // through, the highest version wins (matches the model docstring).
+    const active = [...res.data].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0];
+    if (active?.body) {
+      return {
+        body: active.body,
+        ...(typeof active.version === 'number' ? { version: active.version } : {}),
+      };
+    }
+    return {};
+  } catch (err) {
+    console.warn('linguistic: active prompt-template load failed; using default', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return {};
+  }
 }
 
 /** LinguisticConfig key holding the per-type confidence-threshold map. */
@@ -519,11 +563,19 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   // so the paid model call is reserved for genuinely-unrecognized
   // transcripts.
   if (result.rule === 'fallback') {
+    // Resolve the admin-editable prompt (active DB template, else the
+    // git-reviewed markdown default) and thread it through both the hash
+    // (for the attempt skip key) and the model call.
+    const tmpl = await loadActivePromptTemplate(client);
+    const fbOpts: FallbackOpts = {
+      ...(tmpl.body ? { promptTemplate: tmpl.body } : {}),
+      ...(typeof tmpl.version === 'number' ? { promptVersion: tmpl.version } : {}),
+    };
     const {
       rendered,
       promptVersion: bedrockVersion,
       modelId,
-    } = renderFallbackPrompt(msg.transcript);
+    } = renderFallbackPrompt(msg.transcript, fbOpts);
     attemptProvider = BEDROCK_PROVIDER;
     attemptPromptVersion = bedrockVersion;
     attemptPromptHash = hashPrompt(rendered);
@@ -535,7 +587,7 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
     // one. The deterministic-id dedup already makes a redrive idempotent
     // (same parse → same id → link); re-invoking on a rare redrive is the
     // safe trade. A cost-skip that reuses the stored parse is a follow-up.
-    const fb = await bedrockFallback(msg.transcript);
+    const fb = await bedrockFallback(msg.transcript, fbOpts);
     if (fb && KNOWN_MESSAGE_TYPES.has(fb.message.type)) {
       result = {
         type: fb.message.type as MessageType,

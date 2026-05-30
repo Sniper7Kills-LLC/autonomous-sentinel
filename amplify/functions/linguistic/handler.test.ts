@@ -35,6 +35,7 @@ interface DataStub {
   getSpy: ReturnType<typeof vi.fn>;
   listSpy: ReturnType<typeof vi.fn>;
   configGetSpy: ReturnType<typeof vi.fn>;
+  promptListSpy: ReturnType<typeof vi.fn>;
 }
 
 /**
@@ -59,6 +60,9 @@ function makeDataStub(
     data: confidenceValue === null ? null : { value: confidenceValue },
     errors: null,
   });
+  // No active prompt template by default → ai-fallback uses the bundled
+  // markdown default (#self-improving-loop).
+  const promptListSpy = vi.fn().mockResolvedValue({ data: [], errors: null });
   const client: LinguisticDataClient = {
     models: {
       Message: {
@@ -68,9 +72,12 @@ function makeDataStub(
       },
       Recording: { get: getSpy as never, update: updateSpy as never },
       LinguisticConfig: { get: configGetSpy as never },
+      LinguisticPromptTemplate: {
+        list: promptListSpy as never,
+      },
     },
   };
-  return { client, createSpy, updateSpy, deleteSpy, getSpy, listSpy, configGetSpy };
+  return { client, createSpy, updateSpy, deleteSpy, getSpy, listSpy, configGetSpy, promptListSpy };
 }
 
 /** Amplify Data shape for a `.update()` against a deleted row. */
@@ -973,6 +980,38 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
       () => undefined,
     );
     expect(bedrockFallback).not.toHaveBeenCalled();
+  });
+
+  it('feeds the active DB prompt template (admin-edited) into the Bedrock call', async () => {
+    const { client, promptListSpy } = makeDataStub();
+    promptListSpy.mockResolvedValueOnce({
+      data: [{ body: 'CUSTOM ADMIN PROMPT {{TRANSCRIPT}}', version: 7 }],
+      errors: null,
+    });
+    const bedrockFallback = vi.fn().mockResolvedValue(fbSuccess);
+    __setDeps({
+      dataClient: client,
+      rulesEngine: noRules,
+      bedrockFallback,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'm',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-tmpl',
+        transcript: 'unintelligible zzzz noise',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(bedrockFallback).toHaveBeenCalledWith(
+      'unintelligible zzzz noise',
+      expect.objectContaining({
+        promptTemplate: 'CUSTOM ADMIN PROMPT {{TRANSCRIPT}}',
+        promptVersion: 7,
+      }),
+    );
   });
 
   it('re-invokes Bedrock on redrive but does not double-append the attempt log', async () => {
