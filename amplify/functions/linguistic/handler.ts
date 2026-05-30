@@ -4,6 +4,13 @@ import { contentMatches, dedupWindow, deterministicMessageId } from './dedup';
 import { LinguisticRulesEngine, type RuleMatch } from './rules-engine';
 import { loadRulesFromDdb } from './load-rules-ddb';
 import { type ConfidenceConfig, isFlagged } from './threshold';
+import {
+  appendAttempt,
+  hashResult,
+  shouldSkip,
+  type LinguisticAttempt,
+  type LinguisticProvider,
+} from './attempts';
 
 /**
  * Linguistic Lambda (#433 stage 4).
@@ -87,6 +94,12 @@ interface ClassifyResult {
    * re-extraction from the transcript.
    */
   fields?: { sender?: string; receiver?: string; body?: string };
+  /**
+   * Matched rule's prompt version (#64 attempts log). `null` for the
+   * inline keyword fallback / no-match, so a future rule set produces a
+   * distinct `(provider, version, hash)` key and is not skipped.
+   */
+  promptVersion?: number | null;
 }
 
 /**
@@ -150,7 +163,12 @@ export interface LinguisticDataClient {
     };
     Recording: {
       get: (input: { id: string }) => Promise<{
-        data: { id: string; broadcastedAt?: string | null; messageId?: string | null } | null;
+        data: {
+          id: string;
+          broadcastedAt?: string | null;
+          messageId?: string | null;
+          linguisticAttempts?: unknown;
+        } | null;
         errors?: unknown;
       }>;
       update: (input: {
@@ -164,6 +182,9 @@ export interface LinguisticDataClient {
         wordTimestampsKey?: string | null;
         webCanonicalKey?: string | null;
         canonicalSizeBytes?: number | null;
+        // a.json() (AWSJSON) — written as a JSON string per the #520
+        // AuditLog.diff precedent; AppSync returns it parsed on read.
+        linguisticAttempts?: string;
       }) => Promise<{ data: unknown; errors?: unknown }>;
     };
     LinguisticConfig: {
@@ -314,12 +335,49 @@ export async function classifyWithRules(
     type: match.message.messageType as MessageType,
     confidence: RULE_MATCH_CONFIDENCE,
     rule: `rule:${match.ruleId}`,
+    promptVersion: match.promptVersion,
     fields: {
       ...(f.sender ? { sender: f.sender } : {}),
       ...(f.receiver ? { receiver: f.receiver } : {}),
       ...(f.body ? { body: f.body } : {}),
     },
   };
+}
+
+/** Provider for the rules path attempt log (#64). */
+const RULES_PROVIDER: LinguisticProvider = 'rules';
+
+/**
+ * Stable JSON of the parsed result for the attempt `resultHash` —
+ * fixed key order + omitted blanks so the same parse always hashes the
+ * same regardless of field insertion order.
+ */
+function canonicalResultJson(parsed: {
+  type: string;
+  body: string;
+  sender?: string;
+  receiver?: string;
+}): string {
+  return JSON.stringify({
+    body: parsed.body,
+    receiver: parsed.receiver ?? null,
+    sender: parsed.sender ?? null,
+    type: parsed.type,
+  });
+}
+
+/** Coerce a Recording's `linguisticAttempts` (a.json()) to an array. */
+function coerceAttempts(value: unknown): LinguisticAttempt[] {
+  if (Array.isArray(value)) return value as LinguisticAttempt[];
+  if (typeof value === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed as LinguisticAttempt[];
+    } catch {
+      // fall through
+    }
+  }
+  return [];
 }
 
 /** LinguisticConfig key holding the per-type confidence-threshold map. */
@@ -443,6 +501,36 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   const rec = await client.models.Recording.get({ id: msg.recordingId });
   const broadcastTime = rec.data?.broadcastedAt ?? msg.enqueuedAt;
 
+  // Attempt log (#64). Append a successful rules-path attempt unless an
+  // identical `(provider, promptVersion, promptHash)` success already
+  // exists (idempotent on SQS redrive). The rules path has no prompt, so
+  // `promptHash` is null. This log is the substrate the reprocess-on-bump
+  // gate (#66/#481) reads to decide which recordings to re-run.
+  const promptVersion = result.promptVersion ?? null;
+  const skipKey = { provider: RULES_PROVIDER, promptVersion, promptHash: null };
+  const existingAttempts = coerceAttempts(rec.data?.linguisticAttempts);
+  const resultHash = hashResult(
+    canonicalResultJson({
+      type: result.type,
+      body: canonical,
+      sender: normalized.sender,
+      receiver: normalized.receiver,
+    }),
+  );
+  const attempts = shouldSkip(existingAttempts, skipKey)
+    ? existingAttempts
+    : appendAttempt(
+        existingAttempts,
+        {
+          provider: RULES_PROVIDER,
+          promptVersion,
+          promptHash: null,
+          resultHash,
+          success: true,
+        },
+        { now: nowDate },
+      );
+
   // Dedup (#454): multiple SDRs of one broadcast + SQS redrives link to
   // a single Message. Find an existing Message of the same type within
   // the broadcast-time window whose content matches (exact decoded for
@@ -521,6 +609,8 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
     transcript: msg.transcript,
     transcriptionStatus: 'PUBLISHED',
     transcriptionStatusUpdatedAt: ts,
+    // Persist the appended attempt log (#64). Stringified for AWSJSON.
+    linguisticAttempts: JSON.stringify(attempts),
     ...(msg.wordTimestampsKey ? { wordTimestampsKey: msg.wordTimestampsKey } : {}),
     // Web-canonical Opus produced by the Whisper container (#514).
     ...(msg.webCanonicalKey ? { webCanonicalKey: msg.webCanonicalKey } : {}),
