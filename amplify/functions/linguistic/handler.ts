@@ -1031,6 +1031,10 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
     if (match) targetMessageId = match.id;
   }
 
+  // True only when THIS run created a brand-new Message (not a dedup link
+  // / race collision). Gates the PARSE_FAILED status below so a Recording
+  // that links to an existing GOOD Message is never marked failed (#579).
+  let createdFresh = false;
   if (targetMessageId) {
     console.info('linguistic: linked Recording to existing Message (dedup)', {
       recordingId: msg.recordingId,
@@ -1049,10 +1053,12 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
       ...(normalized.sender ? { sender: normalized.sender } : {}),
       ...(normalized.receiver ? { receiver: normalized.receiver } : {}),
       confidence: result.confidence,
-      flaggedForReview: isFlagged(
-        { type: result.type, confidence: result.confidence },
-        confidenceConfig,
-      ),
+      // Force-flag when the AI parse failed and we fell back to the inline
+      // type-only classifier (#579): the fields are unreliable (raw body, no
+      // sender), so the Message must never sit as "clean".
+      flaggedForReview:
+        !attemptSuccess ||
+        isFlagged({ type: result.type, confidence: result.confidence }, confidenceConfig),
       publishedAt: ts,
     });
     if (created.errors) {
@@ -1071,15 +1077,28 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
       }
     } else {
       targetMessageId = created.data?.id ?? messageId;
+      createdFresh = true;
     }
   }
 
-  // Link the Recording → Message + advance to PUBLISHED in one update.
+  // Link the Recording → Message + advance status in one update. A Message
+  // is always published (the inline fallback still yields a typed row), but
+  // when the AI parse failed on a fresh create (#579) the Recording lands
+  // PARSE_FAILED — the flagged Message is linked for review/re-run, not
+  // presented as clean. `transcriptionFailed` mirrors the markFailed()
+  // contract so the manual-transcript gate (transcriptRevisionMutations)
+  // treats it like any other failed parse; cleared on a successful publish
+  // so a recovering re-run resets it.
+  const aiParseFailed = !attemptSuccess && createdFresh;
   const updated = await client.models.Recording.update({
     id: msg.recordingId,
     messageId: targetMessageId,
     transcript: msg.transcript,
-    transcriptionStatus: 'PUBLISHED',
+    transcriptionStatus: aiParseFailed ? 'PARSE_FAILED' : 'PUBLISHED',
+    transcriptionFailed: aiParseFailed,
+    failedReason: aiParseFailed
+      ? 'AI parse failed; inline fallback published + flagged for review (#579)'
+      : null,
     transcriptionStatusUpdatedAt: ts,
     // Persist a stable broadcast time on the FIRST run only (#556), so
     // every subsequent re-run reuses it and an unchanged re-parse maps to

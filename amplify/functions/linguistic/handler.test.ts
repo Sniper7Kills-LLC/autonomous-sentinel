@@ -645,7 +645,9 @@ describe('linguistic — persists web-canonical key from the container (#514)', 
     const { client, updateSpy } = makeDataStub();
     __setDeps({
       dataClient: client,
-      bedrockFallback: bedrockNull,
+      // Successful parse → PUBLISHED (this test is about key persistence,
+      // not the AI-fail path which now lands PARSE_FAILED, #579).
+      bedrockFallback: bedrockOk({ type: 'SKYKING', body: 'skyking skyking' }),
       now: () => new Date('2026-05-24T18:00:00Z'),
       uuid: () => 'msg-wc-1',
     });
@@ -1135,6 +1137,14 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
     expect(createSpy.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ type: 'OTHER' }));
     const attempts = attemptsOf(updateSpy.mock.calls[0]?.[0]);
     expect(attempts[0]).toMatchObject({ provider: 'bedrock', success: false, resultHash: null });
+    // #579: an AI-fail fresh publish is force-flagged, and the Recording
+    // lands PARSE_FAILED (linked flagged Message, surfaced for review).
+    expect(createSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ flaggedForReview: true }),
+    );
+    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ transcriptionStatus: 'PARSE_FAILED', transcriptionFailed: true }),
+    );
   });
 
   it('routes a type-only inline match to Bedrock regardless of type-confidence (#552)', async () => {
