@@ -6,7 +6,15 @@ import {
   GetVocabularyCommand,
   CreateVocabularyCommand,
 } from '@aws-sdk/client-transcribe';
-import { handler, parseDispatchMessage, __setDeps, __resetDeps } from './handler';
+import { DynamoDBClient, ScanCommand } from '@aws-sdk/client-dynamodb';
+import { marshall } from '@aws-sdk/util-dynamodb';
+import {
+  handler,
+  parseDispatchMessage,
+  __setDeps,
+  __resetDeps,
+  __resetCallsignCache,
+} from './handler';
 import { recordingIdFromJobName } from './job-name';
 import { computeVocabHash } from './vocab';
 
@@ -23,6 +31,7 @@ import { computeVocabHash } from './vocab';
  */
 
 const transcribeMock = mockClient(TranscribeClient);
+const ddbMock = mockClient(DynamoDBClient);
 
 const ENV = {
   RECORDINGS_BUCKET: 'media-bucket',
@@ -36,8 +45,11 @@ function setEnv() {
 
 beforeEach(() => {
   transcribeMock.reset();
+  ddbMock.reset();
   setEnv();
   __resetDeps();
+  __resetCallsignCache();
+  delete process.env.CALLSIGN_TABLE_NAME;
 });
 
 describe('parseDispatchMessage', () => {
@@ -159,6 +171,41 @@ describe('handler — StartTranscriptionJob', () => {
     await expect(handler({ recordingId: 'r', audioKey: 'k.wav', enqueuedAt: 't' })).rejects.toThrow(
       /RECORDINGS_BUCKET/,
     );
+  });
+});
+
+describe('handler — production Callsign loader (no injected loadCallsigns)', () => {
+  it('Scans the Callsign table, includes variants, skips unapproved, and caches per warm container', async () => {
+    process.env.CALLSIGN_TABLE_NAME = 'Callsign-table';
+    ddbMock.on(ScanCommand).resolves({
+      Items: [
+        marshall({ normalized: 'SKYKING', variants: ['SKY KING'], approved: true }),
+        marshall({ normalized: 'MAINSAIL', approved: false }), // skipped
+        marshall({ normalized: 'CYBORG' }), // approved absent → included
+      ],
+    });
+    transcribeMock.on(GetVocabularyCommand).resolves({ VocabularyState: 'READY' });
+    transcribeMock.on(StartTranscriptionJobCommand).resolves({});
+
+    await handler({ recordingId: 'rec-ddb', audioKey: 'k.wav', enqueuedAt: 't' });
+
+    // SKYKING + SKY KING + CYBORG (MAINSAIL excluded as unapproved).
+    const expected = computeVocabHash(['SKYKING', 'SKY KING', 'CYBORG']);
+    const job = transcribeMock.commandCalls(StartTranscriptionJobCommand)[0]!.args[0].input;
+    expect(job.Settings?.VocabularyName).toBe(expected.vocabName);
+    expect(ddbMock.commandCalls(ScanCommand)).toHaveLength(1);
+
+    // Second invoke reuses the warm-container cache — no second Scan.
+    await handler({ recordingId: 'rec-ddb-2', audioKey: 'k.wav', enqueuedAt: 't' });
+    expect(ddbMock.commandCalls(ScanCommand)).toHaveLength(1);
+  });
+
+  it('skips vocab (no Scan) when CALLSIGN_TABLE_NAME is unset', async () => {
+    transcribeMock.on(StartTranscriptionJobCommand).resolves({});
+    await handler({ recordingId: 'rec-noenv', audioKey: 'k.wav', enqueuedAt: 't' });
+    expect(ddbMock.commandCalls(ScanCommand)).toHaveLength(0);
+    const job = transcribeMock.commandCalls(StartTranscriptionJobCommand)[0]!.args[0].input;
+    expect(job.Settings?.VocabularyName).toBeUndefined();
   });
 });
 

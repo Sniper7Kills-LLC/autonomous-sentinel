@@ -200,6 +200,19 @@ function ddb(): DynamoDBClient {
   return (cachedDdb ??= new DynamoDBClient({}));
 }
 
+// Warm-container TTL cache for the callsign Scan — `ensureVocabulary`
+// runs every invoke, so without this a busy container re-Scans the
+// (tiny, slow-changing) Callsign table on every recording. 5-minute
+// TTL bounds staleness: a freshly-added callsign reaches the vocab
+// within one TTL window, which is fine for a hand-curated dictionary.
+// Mirrors the cache-per-cold-load intent of `load-rules-ddb.ts`.
+const CALLSIGN_CACHE_TTL_MS = 5 * 60 * 1000;
+let callsignCache: { value: string[]; expiresAt: number } | undefined;
+
+export function __resetCallsignCache(): void {
+  callsignCache = undefined;
+}
+
 /**
  * Production callsign loader — Scans the `Callsign` DDB table for
  * approved entries and returns their `normalized` values (plus any
@@ -208,10 +221,13 @@ function ddb(): DynamoDBClient {
  * `load-rules-ddb.ts` precedent. `CALLSIGN_TABLE_NAME` env var wires
  * the table at synth time. Returns `[]` (vocab skipped) when the env
  * var is unset so a sandbox without the wiring still transcribes.
+ * Result is cached per warm container for `CALLSIGN_CACHE_TTL_MS`.
  */
 async function loadCallsignsFromDdb(): Promise<string[]> {
   const table = process.env.CALLSIGN_TABLE_NAME;
   if (!table) return [];
+  const now = Date.now();
+  if (callsignCache && callsignCache.expiresAt > now) return callsignCache.value;
   const out: string[] = [];
   let lastKey: Record<string, AttributeValue> | undefined;
   do {
@@ -239,6 +255,7 @@ async function loadCallsignsFromDdb(): Promise<string[]> {
     }
     lastKey = res.LastEvaluatedKey;
   } while (lastKey);
+  callsignCache = { value: out, expiresAt: now + CALLSIGN_CACHE_TTL_MS };
   return out;
 }
 
