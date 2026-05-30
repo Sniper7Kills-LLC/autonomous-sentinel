@@ -18,3 +18,15 @@ export async function fetchCallerGroups(): Promise<string[]> {
 export function isModeratorOrAdmin(groups: readonly string[]): boolean {
   return groups.includes('admin') || groups.includes('moderator');
 }
+
+/**
+ * Admin-only gate. The Linguistic Logic admin surfaces
+ * (LinguisticPromptTemplate / LinguisticRule, #546) are restricted to
+ * the `admin` group server-side; this helper mirrors that on the client
+ * so moderators don't see admin-only controls. The server still
+ * enforces the authorization on every read/mutation — this only decides
+ * what to render.
+ */
+export function isAdmin(groups: readonly string[]): boolean {
+  return groups.includes('admin');
+}
