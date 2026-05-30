@@ -1,11 +1,44 @@
 import { describe, it, expect } from 'vitest';
 import {
+  BASE_VOCAB,
   VOCAB_HASH_LENGTH,
   VOCAB_NAME_PREFIX,
+  buildVocabTableTsv,
   canonicaliseCallsigns,
   computeVocabHash,
+  unionWithBaseVocab,
   vocabChanged,
 } from './vocab';
+
+/** The NATO phonetic alphabet — the highest-value base-vocab subset. */
+const NATO_ALPHABET = [
+  'ALFA',
+  'BRAVO',
+  'CHARLIE',
+  'DELTA',
+  'ECHO',
+  'FOXTROT',
+  'GOLF',
+  'HOTEL',
+  'INDIA',
+  'JULIETT',
+  'KILO',
+  'LIMA',
+  'MIKE',
+  'NOVEMBER',
+  'OSCAR',
+  'PAPA',
+  'QUEBEC',
+  'ROMEO',
+  'SIERRA',
+  'TANGO',
+  'UNIFORM',
+  'VICTOR',
+  'WHISKEY',
+  'XRAY',
+  'YANKEE',
+  'ZULU',
+];
 
 /**
  * Behaviour tests for the Transcribe custom-vocab helpers (#56).
@@ -70,17 +103,54 @@ describe('computeVocabHash', () => {
     expect(h.vocabName).toMatch(/^eam-callsigns-[0-9a-f]{12}$/);
   });
 
-  it('exposes the canonicalised list ready to pass to Transcribe Phrases', () => {
+  it('exposes the canonicalised term list (base ∪ callsigns) ready for Transcribe Phrases', () => {
     const h = computeVocabHash(['  hello  ', 'WORLD', 'hello']);
-    expect(h.canonicalised).toEqual(['HELLO', 'WORLD']);
+    // The dynamic callsigns survive, deduped + uppercased…
+    expect(h.canonicalised).toContain('HELLO');
+    expect(h.canonicalised).toContain('WORLD');
+    // …and the static base is unioned in.
+    expect(h.canonicalised).toContain('FOXTROT');
+    expect(h.canonicalised).toContain('SKYKING');
+    // Sorted + deduped.
+    expect(h.canonicalised).toEqual([...new Set(h.canonicalised)].sort());
   });
 
-  it('produces a stable hash for an empty dictionary (sentinel)', () => {
-    // Two empty inputs must collide; downstream caller decides
-    // whether to skip the Transcribe CreateVocabulary call when
-    // canonicalised.length === 0.
-    expect(computeVocabHash([]).full).toBe(computeVocabHash([]).full);
-    expect(computeVocabHash([]).canonicalised).toEqual([]);
+  it('unions the static BASE_VOCAB into the term list even for an empty dictionary', () => {
+    const h = computeVocabHash([]);
+    expect(h.full).toBe(computeVocabHash([]).full); // deterministic
+    expect(h.canonicalised.length).toBeGreaterThan(0); // base alone is non-empty
+    for (const term of BASE_VOCAB) {
+      expect(h.canonicalised).toContain(term);
+    }
+  });
+});
+
+describe('BASE_VOCAB union', () => {
+  it('includes the full NATO phonetic alphabet in the computed vocab term list', () => {
+    const terms = computeVocabHash(['SKYKING']).canonicalised;
+    for (const letter of NATO_ALPHABET) {
+      expect(terms).toContain(letter);
+    }
+  });
+
+  it('includes military digit words and EAM prowords (STANDBY + hyphenated MORE-TO-FOLLOW)', () => {
+    const terms = unionWithBaseVocab([]);
+    for (const digit of ['ZERO', 'TREE', 'FOWER', 'FIFE', 'NINER']) {
+      expect(terms).toContain(digit);
+    }
+    expect(terms).toContain('STANDBY');
+    expect(terms).toContain('MORE-TO-FOLLOW');
+  });
+
+  it('every BASE_VOCAB entry is already canonical (uppercase, trimmed, non-empty)', () => {
+    for (const term of BASE_VOCAB) {
+      expect(term).toBe(term.trim().toUpperCase());
+      expect(term.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('a callsign-only change still rolls the hash (union changes)', () => {
+    expect(computeVocabHash([]).full).not.toBe(computeVocabHash(['BACKBONE']).full);
   });
 });
 
@@ -111,5 +181,37 @@ describe('vocabChanged', () => {
     expect(fakePrev.slice(0, VOCAB_HASH_LENGTH)).toBe(next.short);
     expect(fakePrev).not.toBe(next.full);
     expect(vocabChanged(fakePrev, next)).toBe(true);
+  });
+});
+
+describe('TSV injection hardening', () => {
+  it('a callsign containing a newline does not add a broken row — one row per term', () => {
+    const tsv = computeVocabHash(['FOO\nBAR']).tableTsv;
+    const lines = tsv.split('\n').filter((l) => l.length > 0);
+    // Header + one row per term. Every non-empty line must have exactly
+    // one tab (Phrase\tDisplayAs) — a leaked newline/tab would create a
+    // line with 0 or 2 tabs.
+    expect(lines[0]).toBe('Phrase\tDisplayAs');
+    for (const line of lines) {
+      expect(line.split('\t')).toHaveLength(2);
+    }
+    // The injected callsign survives as a single sanitised phrase.
+    expect(tsv).toContain('FOO-BAR');
+  });
+
+  it('buildVocabTableTsv strips tab/newline/CR from Phrase and DisplayAs cells', () => {
+    const tsv = buildVocabTableTsv([{ phrase: 'EVIL\tPHRASE', displayAs: 'line1\nline2\rline3' }]);
+    const lines = tsv.split('\n').filter((l) => l.length > 0);
+    // Header + exactly one data row despite the embedded newline/CR.
+    expect(lines).toHaveLength(2);
+    expect(lines[1]!.split('\t')).toHaveLength(2);
+    expect(lines[1]).toBe('EVIL PHRASE\tline1 line2 line3');
+  });
+
+  it('every generated TSV line has exactly one tab (full base ∪ callsigns table)', () => {
+    const tsv = computeVocabHash(['SKY KING', 'BACK\tBONE']).tableTsv;
+    for (const line of tsv.split('\n').filter((l) => l.length > 0)) {
+      expect((line.match(/\t/g) ?? []).length).toBe(1);
+    }
   });
 });
