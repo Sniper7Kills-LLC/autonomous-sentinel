@@ -143,6 +143,32 @@ describe('LinguisticRulesEngine — per-component composition (#548)', () => {
   });
 });
 
+describe('LinguisticRulesEngine — snapshot (#544b)', () => {
+  it('summarizes the active ruleset', async () => {
+    const engine = new LinguisticRulesEngine(
+      stubLoader([
+        makeRule({ id: 't', component: 'TYPE', messageType: 'SKYKING', pattern: 'SKYKING' }),
+        makeRule({
+          id: 's',
+          component: 'SENDER',
+          appliesToType: 'SKYKING',
+          pattern: 'IS (?<sender>\\w+)',
+          confidence: 0.6,
+        }),
+        makeRule({ id: 'off', pattern: 'x', enabled: false }), // excluded
+      ]),
+    );
+    const snap = await engine.snapshot();
+    expect(snap.map((r) => r.id).sort()).toEqual(['s', 't']);
+    expect(snap.find((r) => r.id === 's')).toMatchObject({
+      component: 'SENDER',
+      appliesToType: 'SKYKING',
+      confidence: 0.6,
+      pattern: 'IS (?<sender>\\w+)',
+    });
+  });
+});
+
 describe('LinguisticRulesEngine — confidence (#543)', () => {
   it('returns the rule confidence on a match', async () => {
     const engine = new LinguisticRulesEngine(

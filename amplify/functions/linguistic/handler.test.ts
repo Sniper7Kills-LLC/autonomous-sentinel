@@ -1209,6 +1209,44 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
     expect(ruleCreateSpy).not.toHaveBeenCalled();
   });
 
+  it('feeds the failed attempt + ruleset snapshot into the Bedrock context (#544b)', async () => {
+    const engineWithRules: RulesMatcher = {
+      tryMatch: () => Promise.resolve(null),
+      snapshot: () =>
+        Promise.resolve([
+          {
+            id: 'r1',
+            component: 'TYPE' as const,
+            messageType: 'SKYKING',
+            appliesToType: null,
+            pattern: 'SKYKING',
+            confidence: 0.9,
+          },
+        ]),
+    };
+    const { client } = makeDataStub();
+    const bedrockFallback = vi.fn().mockResolvedValue(fbSuccess);
+    __setDeps({
+      dataClient: client,
+      rulesEngine: engineWithRules,
+      bedrockFallback,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'm',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-ctx',
+        transcript: 'zzz noise',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    const ctx = (bedrockFallback.mock.calls[0]?.[1] as { context?: string })?.context ?? '';
+    expect(ctx).toContain('best attempt');
+    expect(ctx).toContain('SKYKING'); // the active rule is listed for refinement
+  });
+
   it('does NOT invoke Bedrock when the inline classifier recognizes the type', async () => {
     const { client } = makeDataStub();
     const bedrockFallback = vi.fn().mockResolvedValue(fbSuccess);

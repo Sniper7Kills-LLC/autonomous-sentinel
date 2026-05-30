@@ -1,7 +1,7 @@
 import type { SQSEvent, SQSHandler } from 'aws-lambda';
 import { normalizeParsed } from './normalize';
 import { contentMatches, dedupWindow, deterministicMessageId } from './dedup';
-import { LinguisticRulesEngine, type RuleMatch } from './rules-engine';
+import { LinguisticRulesEngine, type RuleMatch, type RuleSummary } from './rules-engine';
 import { loadRulesFromDdb } from './load-rules-ddb';
 import { type ConfidenceConfig, isFlagged } from './threshold';
 import {
@@ -221,6 +221,8 @@ export interface LinguisticDataClient {
 /** Minimal rules-engine surface the handler depends on (test-injectable). */
 export interface RulesMatcher {
   tryMatch(transcript: string): Promise<RuleMatch | null>;
+  /** Active ruleset summary for the AI-refine context (#544b). Optional. */
+  snapshot?(): Promise<RuleSummary[]>;
 }
 
 export interface LinguisticDeps {
@@ -380,6 +382,41 @@ const RULES_PROVIDER: LinguisticProvider = 'rules';
 const RULE_AUTO_ACTIVATE_BAR = 0.85;
 const AI_RULE_PRIORITY = 50;
 const AI_RULE_DEFAULT_CONFIDENCE = 0.7;
+
+/** Max rules listed in the AI-refine context, to bound prompt size. */
+const CONTEXT_RULE_LIMIT = 50;
+
+/**
+ * Build the dynamic context fed to Bedrock (#544b): the failed
+ * rule-engine attempt + the current active ruleset, so the model refines
+ * existing rules instead of only generating fresh ones.
+ */
+function buildBedrockContext(result: ClassifyResult, summaries: RuleSummary[]): string {
+  const lines = ['The rules engine could not confidently parse this transcript.'];
+  const fieldsNote =
+    result.fields && Object.keys(result.fields).length > 0
+      ? ` fields=${JSON.stringify(result.fields)}`
+      : '';
+  lines.push(`Its best attempt: type=${result.type} confidence=${result.confidence}${fieldsNote}`);
+  if (summaries.length > 0) {
+    lines.push(
+      '',
+      'Current active rules — refine or extend these (propose improved versions to raise confidence next time):',
+    );
+    for (const s of summaries.slice(0, CONTEXT_RULE_LIMIT)) {
+      const applies = s.appliesToType ? ` applies=${s.appliesToType}` : '';
+      lines.push(
+        `- [${s.component}${applies}] ${s.messageType} /${s.pattern}/ (conf ${s.confidence})`,
+      );
+    }
+    if (summaries.length > CONTEXT_RULE_LIMIT) {
+      lines.push(`- …and ${summaries.length - CONTEXT_RULE_LIMIT} more.`);
+    }
+  } else {
+    lines.push('', 'There are no rules yet — propose rules to bootstrap the ruleset.');
+  }
+  return lines.join('\n');
+}
 
 /**
  * Persist the model's proposed per-component rules (#544). Hybrid
@@ -660,7 +697,8 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   const broadcastTime = rec.data?.broadcastedAt ?? msg.enqueuedAt;
   const existingAttempts = coerceAttempts(rec.data?.linguisticAttempts);
 
-  let result = await classifyWithRules(msg.transcript, rulesEngine());
+  const engine = rulesEngine();
+  let result = await classifyWithRules(msg.transcript, engine);
 
   // Attempt provenance — rules path by default; switched to bedrock below.
   let attemptProvider: LinguisticProvider = RULES_PROVIDER;
@@ -689,7 +727,22 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
     } = renderFallbackPrompt(msg.transcript, fbOpts);
     attemptProvider = BEDROCK_PROVIDER;
     attemptPromptVersion = bedrockVersion;
+    // Hash the BASE rendered prompt (template + transcript) only — the
+    // refine context below is dynamic and must not bust the skip key.
     attemptPromptHash = hashPrompt(rendered);
+    // Feed the failed attempt + current ruleset so the model refines
+    // existing rules rather than only generating fresh ones (#544b). The
+    // ruleset summary is best-effort — a loader hiccup must not sink the
+    // transcript, so fall back to no ruleset context.
+    let summaries: RuleSummary[] = [];
+    try {
+      summaries = (await engine.snapshot?.()) ?? [];
+    } catch (err) {
+      console.warn('linguistic: ruleset snapshot failed; AI context omits it', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+    fbOpts.context = buildBedrockContext(result, summaries);
     // Always invoke on the fallback path. We deliberately do NOT skip the
     // call when a prior bedrock success is logged: the attempt log stores
     // only the result *hash*, not the parsed type/fields, so a skip would
