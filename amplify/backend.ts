@@ -885,7 +885,7 @@ linguisticLambda.addToRolePolicy(
 const linguisticStack = Stack.of(linguisticLambda);
 linguisticLambda.addEnvironment(
   'LINGUISTIC_FALLBACK_MODEL_ID',
-  process.env.LINGUISTIC_FALLBACK_MODEL_ID ?? 'anthropic.claude-sonnet-4-7-20250115-v1:0',
+  process.env.LINGUISTIC_FALLBACK_MODEL_ID ?? 'us.anthropic.claude-sonnet-4-6',
 );
 linguisticLambda.addToRolePolicy(
   new PolicyStatement({
