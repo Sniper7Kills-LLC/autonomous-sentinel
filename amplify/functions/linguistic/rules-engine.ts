@@ -228,8 +228,10 @@ export class LinguisticRulesEngine {
 
   /**
    * Value a component rule contributes: the mapped field if its
-   * `captureMap` names one, else the first capture group, else the whole
-   * match. Trimmed; empty → no contribution.
+   * `captureMap` names one, else the first capture group. A rule that
+   * captures NOTHING contributes nothing (we deliberately do NOT fall
+   * back to the whole match `m[0]` — that would set the field to the
+   * entire matched span, almost never what's wanted). Trimmed.
    */
   private extractComponentValue(
     match: RegExpMatchArray,
@@ -238,7 +240,7 @@ export class LinguisticRulesEngine {
   ): string {
     const mapped = this.mapCaptures(match, captureMap);
     if (mapped[field]) return mapped[field];
-    return (match[1] ?? match[0] ?? '').trim();
+    return (match[1] ?? '').trim();
   }
 
   private tryCompile(r: LinguisticRule): CompiledRule | null {

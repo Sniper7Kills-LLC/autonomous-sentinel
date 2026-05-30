@@ -85,6 +85,41 @@ describe('LinguisticRulesEngine — per-component composition (#548)', () => {
     expect((await engine.tryMatch('SKYKING THIS IS MAINSAIL'))?.confidence).toBe(0.4);
   });
 
+  it('leaves fields empty when only a TYPE rule matches (no component rules)', async () => {
+    const engine = new LinguisticRulesEngine(
+      stubLoader([
+        makeRule({
+          id: 't',
+          component: 'TYPE',
+          messageType: 'SKYKING',
+          pattern: 'SKYKING',
+          captureMap: {},
+        }),
+      ]),
+    );
+    const r = await engine.tryMatch('SKYKING THIS IS MAINSAIL');
+    expect(r?.message.messageType).toBe('SKYKING');
+    expect(r?.message.fields).toEqual({});
+  });
+
+  it('a component rule that captures nothing contributes nothing (no whole-match fallback)', async () => {
+    const engine = new LinguisticRulesEngine(
+      stubLoader([
+        makeRule({
+          id: 't',
+          component: 'TYPE',
+          messageType: 'SKYKING',
+          pattern: 'SKYKING',
+          captureMap: {},
+        }),
+        // Matches but has no capture group — must NOT set sender to the match.
+        makeRule({ id: 's', component: 'SENDER', pattern: 'THIS IS MAINSAIL', captureMap: {} }),
+      ]),
+    );
+    const r = await engine.tryMatch('SKYKING THIS IS MAINSAIL');
+    expect(r?.message.fields.sender).toBeUndefined();
+  });
+
   it('does not overwrite a field the TYPE rule already captured', async () => {
     const engine = new LinguisticRulesEngine(
       stubLoader([

@@ -79,13 +79,15 @@ export const LinguisticRule = a
      * Which component of the parsed message this rule fills (#548).
      * `TYPE` rules detect the message type (and may also extract fields
      * via `captureMap`, whole-message style); `SENDER`/`RECEIVER`/`BODY`
-     * rules extract that one field and compose onto a TYPE match.
-     * Defaults to `TYPE`.
+     * rules extract that one field and compose onto a TYPE match. The
+     * engine treats an absent/unknown component as `TYPE` (a.enum has no
+     * `.default()` in the Gen 2 DSL).
      */
     component: a.enum(['TYPE', 'SENDER', 'RECEIVER', 'BODY']),
     /**
      * For a SENDER/RECEIVER/BODY rule: the message type it extracts from
-     * (empty/absent = applies to every type). Ignored for TYPE rules.
+     * (null/absent = applies to every type; the loader normalizes an
+     * empty string to absent). Ignored for TYPE rules.
      */
     appliesToType: a.string(),
     /**
