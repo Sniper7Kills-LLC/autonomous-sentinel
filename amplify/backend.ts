@@ -872,6 +872,31 @@ linguisticLambda.addToRolePolicy(
   }),
 );
 
+// Bedrock AI fallback (#63/#460). The handler calls the Converse API on
+// the configured Anthropic model only when the rules engine + inline
+// classifier both miss — so model spend is reserved for genuinely
+// unrecognized transcripts. Per CLAUDE.md the AI provider stays in AWS
+// (Bedrock). The model is admin-tunable via `LINGUISTIC_FALLBACK_MODEL_ID`.
+//
+// Grant scoped to Anthropic foundation models + this account's
+// inference profiles (Claude Sonnet 4.x is invoked via a cross-region
+// inference profile in us-east-1). Bedrock ARNs are external resources,
+// so no cross-stack edge / CFN cycle.
+const linguisticStack = Stack.of(linguisticLambda);
+linguisticLambda.addEnvironment(
+  'LINGUISTIC_FALLBACK_MODEL_ID',
+  process.env.LINGUISTIC_FALLBACK_MODEL_ID ?? 'anthropic.claude-sonnet-4-7-20250115-v1:0',
+);
+linguisticLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['bedrock:InvokeModel'],
+    resources: [
+      `arn:aws:bedrock:*::foundation-model/anthropic.*`,
+      `arn:aws:bedrock:*:${linguisticStack.account}:inference-profile/*`,
+    ],
+  }),
+);
+
 // LinguisticConfig audit + reprocess-on-bump wiring (#481).
 //
 // A DynamoDB stream on the LinguisticConfig table drives the
