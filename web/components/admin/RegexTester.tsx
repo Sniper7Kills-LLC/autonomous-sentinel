@@ -51,9 +51,16 @@ export function RegexTester({ pattern, initialSample = '' }: RegexTesterProps) {
             data-testid="regex-count"
           >
             {result.matchCount > 0
-              ? `${result.matchCount} match${result.matchCount === 1 ? '' : 'es'}`
+              ? `${result.matchCount}${result.capped ? '+' : ''} match${result.matchCount === 1 ? '' : 'es'}`
               : 'No match'}
           </p>
+          {(result.truncated || result.capped) && (
+            <p className={styles.hintBad} role="status" data-testid="regex-limited">
+              {result.truncated ? 'Sample truncated for testing (too long). ' : ''}
+              {result.capped ? 'Stopped after the match limit. ' : ''}
+              The live engine runs against the full transcript.
+            </p>
+          )}
           <p className={styles.regexHighlight} data-testid="regex-highlight">
             {result.segments.map((seg, i) =>
               seg.match ? (

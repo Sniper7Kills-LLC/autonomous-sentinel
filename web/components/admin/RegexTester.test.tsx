@@ -39,4 +39,11 @@ describe('RegexTester', () => {
     fireEvent.change(textarea, { target: { value: 'SKYKING' } });
     expect(screen.getByTestId('regex-count')).toHaveTextContent('1 match');
   });
+
+  it('shows a limited-test note when the match count is capped', () => {
+    // 1001 single-char matches trips the MAX_MATCHES cap (1000).
+    render(<RegexTester pattern="a" initialSample={'a'.repeat(1001)} />);
+    expect(screen.getByTestId('regex-limited')).toBeInTheDocument();
+    expect(screen.getByTestId('regex-count')).toHaveTextContent('1000+ matches');
+  });
 });

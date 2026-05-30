@@ -164,9 +164,17 @@ describe('activateTemplate', () => {
     },
   ];
 
-  it('deactivates the prior active row then activates the target', async () => {
+  it('deactivates the prior active row then activates the target and verifies one active', async () => {
     updateTemplateMock.mockResolvedValue({ data: { id: 'x' } });
-    await activateTemplate('b', templates);
+    // post-flip re-list: exactly one active (the invariant holds)
+    listTemplateMock.mockResolvedValue({
+      data: [
+        { id: 'a', promptId: ACTIVE_PROMPT_ID, version: 1, body: 'x', isActive: false },
+        { id: 'b', promptId: ACTIVE_PROMPT_ID, version: 2, body: 'y', isActive: true },
+      ],
+    });
+    const result = await activateTemplate('b', templates);
+    expect(result).toEqual({ activeCount: 1 });
     const calls = updateTemplateMock.mock.calls.map((c) => c[0] as Record<string, unknown>);
     expect(calls).toEqual([
       { id: 'a', isActive: false },
@@ -176,9 +184,30 @@ describe('activateTemplate', () => {
 
   it('does not deactivate the target even if it was already active', async () => {
     updateTemplateMock.mockResolvedValue({ data: { id: 'x' } });
+    listTemplateMock.mockResolvedValue({
+      data: [{ id: 'a', promptId: ACTIVE_PROMPT_ID, version: 1, body: 'x', isActive: true }],
+    });
     await activateTemplate('a', templates);
     const calls = updateTemplateMock.mock.calls.map((c) => c[0] as Record<string, unknown>);
     expect(calls).toEqual([{ id: 'a', isActive: true }]);
+  });
+
+  it('reports activeCount when the post-flip invariant is violated (partial failure)', async () => {
+    updateTemplateMock.mockResolvedValue({ data: { id: 'x' } });
+    // re-list shows two active rows — a stale row was left active
+    listTemplateMock.mockResolvedValue({
+      data: [
+        { id: 'a', promptId: ACTIVE_PROMPT_ID, version: 1, body: 'x', isActive: true },
+        { id: 'b', promptId: ACTIVE_PROMPT_ID, version: 2, body: 'y', isActive: true },
+      ],
+    });
+    const result = await activateTemplate('b', templates);
+    expect(result).toEqual({ activeCount: 2 });
+  });
+
+  it('throws (not a silent success) when the activate write errors', async () => {
+    updateTemplateMock.mockResolvedValue({ errors: [{ message: 'conditional check failed' }] });
+    await expect(activateTemplate('b', templates)).rejects.toThrow(/conditional check failed/);
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { testPattern } from './regexMatch';
+import { testPattern, MAX_SAMPLE_LENGTH, MAX_MATCHES } from './regexMatch';
 
 describe('testPattern', () => {
   it('reports an invalid regex as a failure with the message', () => {
@@ -46,5 +46,44 @@ describe('testPattern', () => {
     if (r.ok) {
       expect(r.segments.every((s) => s.text.length > 0)).toBe(true);
     }
+  });
+
+  it('caps the match count and flags `capped` so a cheap pattern cannot spin', () => {
+    const sample = 'a'.repeat(MAX_MATCHES + 50);
+    const r = testPattern('a', sample);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.matchCount).toBe(MAX_MATCHES);
+      expect(r.capped).toBe(true);
+    }
+  });
+
+  it('truncates an oversized sample and flags `truncated`', () => {
+    const sample = 'x'.repeat(MAX_SAMPLE_LENGTH + 100) + 'needle';
+    const r = testPattern('needle', sample);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      // the needle lives past the truncation point, so it is not matched
+      expect(r.truncated).toBe(true);
+      expect(r.matchCount).toBe(0);
+    }
+  });
+
+  it('does not flag truncated/capped for a normal small sample', () => {
+    const r = testPattern('skyking', 'skyking do not answer');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.truncated).toBe(false);
+      expect(r.capped).toBe(false);
+    }
+  });
+
+  it('terminates quickly on a catastrophic-backtracking pattern against a bounded sample', () => {
+    // (a+)+$ is the classic ReDoS shape. With the sample-length bound the
+    // tester must still return (not hang the test runner). We keep the
+    // sample short here so the single-match backtracking itself is cheap;
+    // the guard that matters in production is the input-length bound.
+    const r = testPattern('(a+)+$', 'aaaaaaaaaaaaaaaaaaaab');
+    expect(r.ok).toBe(true);
   });
 });

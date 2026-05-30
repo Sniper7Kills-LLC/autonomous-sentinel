@@ -93,9 +93,24 @@ export function LinguisticPromptTemplates() {
       setError(null);
       setStatus(null);
       try {
-        await activateTemplate(id, templates);
-        setStatus('Activated. The Linguistic Logic Lambda picks it up on its next cache refresh.');
+        const { activeCount } = await activateTemplate(id, templates);
         await reload();
+        // The flip is non-atomic (#572). Surface a partial-failure state
+        // — zero or multiple active rows — to the admin instead of
+        // reporting a clean activation.
+        if (activeCount === 1) {
+          setStatus(
+            'Activated. The Linguistic Logic Lambda picks it up on its next cache refresh.',
+          );
+        } else if (activeCount === 0) {
+          setError(
+            'Activation did not complete: no version is currently active. Re-run activation (the activate step may have failed after deactivating the old version — see #572).',
+          );
+        } else {
+          setError(
+            `Activation left ${activeCount} versions active (expected 1). A concurrent edit or partial failure occurred; re-run activation to converge (#572). The Lambda will use the highest version until then.`,
+          );
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to activate the version.');
       } finally {
@@ -117,8 +132,10 @@ export function LinguisticPromptTemplates() {
       </header>
       <p className={styles.muted}>
         Versioned Bedrock fallback prompts. Exactly one version is active; the Lambda renders it
-        against each transcript. Activation and version numbering are applied client-side until the
-        atomic backend mutations ship.
+        against each transcript. Activation and version numbering are applied client-side and are{' '}
+        <strong>not atomic</strong> until the backend mutations ship (#572): two admins activating
+        or saving at the same time can race. Activation re-checks the active count and warns here if
+        it does not settle on exactly one.
       </p>
 
       {loading ? (

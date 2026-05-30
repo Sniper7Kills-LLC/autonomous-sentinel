@@ -14,16 +14,21 @@ import { FALLBACK_SYSTEM_PROMPT } from './fallbackPrompt';
  *
  * Scope note: the model docstrings describe a deferred *atomic*
  * activation mutation (TransactWriteItems flip) and a *version-bumping*
- * create mutation; neither exists yet. Until they ship, the helpers
- * here approximate both client-side with the auto-generated
- * create/update/delete operations:
+ * create mutation; neither exists yet — both are tracked in issue #572.
+ * Until they ship, the helpers here approximate both client-side with
+ * the auto-generated create/update/delete operations:
  *   - `activateTemplate` deactivates the prior active row(s), then
  *     activates the chosen one (two sequential updates — NOT atomic; a
  *     mid-flight failure can leave zero or two active rows; the Lambda
  *     tolerates multi-active by picking version-desc and logging a warn).
+ *     To keep that failure VISIBLE rather than silent, the helper
+ *     re-lists after the flip and returns the post-flip active-count so
+ *     the UI can warn the admin when the invariant is violated (#572).
  *   - `saveNewTemplateVersion` computes `max(version)+1` client-side
  *     then `create`s (subject to a lost-update race between concurrent
- *     admins; the deferred mutation closes it with a conditional write).
+ *     admins; the deferred #572 mutation closes it with a conditional
+ *     write). The create error path propagates to the UI so a failed
+ *     save never looks like a success.
  * These approximations are called out in the admin UI copy and the PR.
  */
 
@@ -201,14 +206,30 @@ export async function saveNewTemplateVersion(input: {
 }
 
 /**
+ * Result of an `activateTemplate` call. `activeCount` is the number of
+ * `isActive=true` rows observed by a re-list AFTER the flip: it should be
+ * exactly 1. Anything else means the non-atomic two-phase flip
+ * partially failed (0 = nothing active, ≥2 = stale rows left active) and
+ * the UI must warn the admin instead of treating the activation as
+ * clean. The atomic mutation in #572 makes this verification redundant.
+ */
+export type ActivationResult = { activeCount: number };
+
+/**
  * Activate one template version for `ACTIVE_PROMPT_ID`: deactivate every
  * other active row, then activate the target. NON-ATOMIC (two-phase
- * client-side flip) — see module docstring.
+ * client-side flip) — see module docstring (#572).
+ *
+ * After the flip it re-lists and returns the observed active-count so a
+ * partial failure (the activate step erroring after a deactivate, a
+ * concurrent admin, etc.) is surfaced to the UI rather than swallowed.
+ * Errors on the individual writes still throw; the returned count covers
+ * the case where the writes "succeed" but leave the invariant violated.
  */
 export async function activateTemplate(
   targetId: string,
   templates: readonly DisplayTemplate[],
-): Promise<void> {
+): Promise<ActivationResult> {
   const model = modelOps<RawTemplate>('LinguisticPromptTemplate');
   if (!model.update) throw new Error('LinguisticPromptTemplate.update is unavailable.');
   const update = model.update;
@@ -220,6 +241,12 @@ export async function activateTemplate(
   }
   const res = await update({ id: targetId, isActive: true }, USER_POOL);
   throwOnErrors(res.errors, 'activateTemplate(activate)');
+
+  // Verify the post-flip invariant: exactly one active row. A re-list is
+  // cheap (the table is tiny) and keeps a partial-failure state visible.
+  const after = await listPromptTemplates();
+  const activeCount = after.filter((t) => t.isActive).length;
+  return { activeCount };
 }
 
 /** List every LinguisticRule, highest priority first. Admin-gated read. */
