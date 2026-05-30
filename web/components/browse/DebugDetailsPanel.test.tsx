@@ -55,6 +55,7 @@ const recording: DisplayRecording = {
   webCanonicalKey: 'k',
   wordTimestampsKey: null,
   peaksJsonKey: null,
+  transcriptionConfidence: 0.64,
   linguisticAttempts: [attempt],
 };
 
@@ -106,6 +107,9 @@ describe('DebugDetailsPanel', () => {
     // Parsed fields
     expect(screen.getByText('MAINSAIL')).toBeInTheDocument();
     expect(screen.getByText('0.91')).toBeInTheDocument();
+    // Transcription confidence (#581) — distinct from the parse confidence
+    expect(screen.getByText(/Transcription confidence:/)).toBeInTheDocument();
+    expect(screen.getByText(/0\.64/)).toBeInTheDocument();
     // Rules section with caveat label
     await waitFor(() => expect(screen.getByText(/not a per-message link/i)).toBeInTheDocument());
     expect(screen.getByText('SKYKING\\s+SKYKING')).toBeInTheDocument();

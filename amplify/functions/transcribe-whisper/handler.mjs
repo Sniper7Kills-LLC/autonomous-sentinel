@@ -46,6 +46,7 @@ import { randomUUID } from 'node:crypto';
 import { readWhisperConfig, runWhisper, WhisperError } from './run-whisper.mjs';
 import { transcodeToOpus, transcodeToWav } from './opus-transcode.mjs';
 import { extractWordTimestamps } from './word-timestamps.mjs';
+import { extractTranscriptionConfidence } from './transcription-confidence.mjs';
 
 const RECORDINGS_BUCKET = process.env.RECORDINGS_BUCKET ?? '';
 const PIPELINE_TEMP_PREFIX = process.env.PIPELINE_TEMP_PREFIX ?? 'pipeline-temp';
@@ -236,6 +237,14 @@ async function processOne(body) {
       }),
     );
 
+    // Overall transcription confidence (#581): mean per-token whisper.cpp
+    // probability `p` over content tokens. `null` when older/alternate
+    // whisper output omits `p` — we then omit the field from the queue
+    // message (same conditional-add pattern as the keys below). Persisted
+    // on the Recording by the linguistic Lambda; feeds the low-confidence
+    // Amazon Transcribe escalation gate (#582) + the debug panel (#561).
+    const transcriptionConfidence = extractTranscriptionConfidence(transcriptJson);
+
     // Pipeline-temp duplicate kept as a short-lived debugging copy.
     // Lifecycle policy expires this prefix after 7 days; the canonical
     // copy at `recordings/web/*` is the long-lived asset.
@@ -264,6 +273,9 @@ async function processOne(body) {
           // produced the web-canonical Opus, so linguistic persists
           // its key + size on the Recording.
           ...(webCanonicalKey ? { webCanonicalKey, canonicalSizeBytes } : {}),
+          // Overall whisper confidence (#581) — omitted when null so
+          // older output without per-token `p` doesn't write a bogus 0.
+          ...(transcriptionConfidence !== null ? { transcriptionConfidence } : {}),
           enqueuedAt: ts,
         }),
       }),
@@ -274,6 +286,7 @@ async function processOne(body) {
       transcriptLen: transcriptText.length,
       wordTimestampsKey,
       webCanonicalKey: webCanonicalKey ?? '(legacy audioKey path)',
+      transcriptionConfidence,
       stderrTail: result.stderrTail.slice(-256),
       gitSha: IMAGE_GIT_SHA,
       buildId: IMAGE_BUILD_ID,

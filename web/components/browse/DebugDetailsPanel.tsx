@@ -80,6 +80,10 @@ export function DebugDetailsPanel({ message, recordings }: DebugDetailsPanelProp
             recordings.map((r) => (
               <div key={r.id} className={styles.debugBlock}>
                 <div className={styles.debugBlockLabel}>recording {r.id}</div>
+                <div className={styles.debugBlockLabel}>
+                  Transcription confidence:{' '}
+                  {r.transcriptionConfidence === null ? '—' : r.transcriptionConfidence.toFixed(2)}
+                </div>
                 {r.transcript ? (
                   <pre className={styles.debugPre}>{r.transcript}</pre>
                 ) : (
@@ -137,7 +141,7 @@ export function DebugDetailsPanel({ message, recordings }: DebugDetailsPanelProp
             <dd>{message.receiver ?? '—'}</dd>
             <dt>body</dt>
             <dd>{message.body ? <pre className={styles.debugPre}>{message.body}</pre> : '—'}</dd>
-            <dt>confidence</dt>
+            <dt>parse confidence</dt>
             <dd>{message.confidence === null ? '—' : message.confidence.toFixed(2)}</dd>
             <dt>flaggedForReview</dt>
             <dd>{message.flaggedForReview ? 'yes' : 'no'}</dd>
