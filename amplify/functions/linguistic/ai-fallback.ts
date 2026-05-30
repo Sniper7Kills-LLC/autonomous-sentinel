@@ -146,6 +146,12 @@ export interface ProposedRule {
 }
 
 const RULE_COMPONENTS = new Set(['TYPE', 'SENDER', 'RECEIVER', 'BODY']);
+/**
+ * Max length of an AI-proposed regex. A defensive cap against a
+ * pathological (ReDoS-prone) pattern reaching the engine — real EAM
+ * component patterns are short. Over-length patterns are dropped.
+ */
+const MAX_RULE_PATTERN_LENGTH = 500;
 
 /**
  * Validate + clean the model's proposed rules. Drops any whose pattern
@@ -159,7 +165,13 @@ export function sanitizeProposedRules(raw: unknown): ProposedRule[] {
     if (!r || typeof r !== 'object') continue;
     const o = r as Record<string, unknown>;
     if (typeof o.component !== 'string' || !RULE_COMPONENTS.has(o.component)) continue;
-    if (typeof o.pattern !== 'string' || o.pattern.length === 0) continue;
+    if (
+      typeof o.pattern !== 'string' ||
+      o.pattern.length === 0 ||
+      o.pattern.length > MAX_RULE_PATTERN_LENGTH
+    ) {
+      continue;
+    }
     try {
       new RegExp(o.pattern);
     } catch {

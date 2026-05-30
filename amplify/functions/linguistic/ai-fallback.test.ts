@@ -32,6 +32,11 @@ describe('sanitizeProposedRules (#544)', () => {
     expect(sanitizeProposedRules('nope')).toEqual([]);
   });
 
+  it('drops an over-length (ReDoS-risk) pattern', () => {
+    const huge = 'a'.repeat(600);
+    expect(sanitizeProposedRules([{ component: 'TYPE', pattern: huge }])).toEqual([]);
+  });
+
   it('drops an out-of-range confidence but keeps the rule', () => {
     const out = sanitizeProposedRules([{ component: 'TYPE', pattern: 'X', confidence: 5 }]);
     expect(out).toHaveLength(1);

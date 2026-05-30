@@ -1113,12 +1113,58 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
     expect(ruleCreateSpy).toHaveBeenCalledTimes(2);
     // High-confidence (0.95) auto-activates; low-confidence (0.6) queues.
     const calls = ruleCreateSpy.mock.calls.map(
-      (c) => c[0] as { component: string; enabled: boolean; captureMap: string },
+      (c) =>
+        c[0] as {
+          component: string;
+          enabled: boolean;
+          captureMap: string;
+          messageType: string;
+          notes: string;
+          appliesToType?: string;
+        },
     );
-    expect(calls.find((c) => c.component === 'TYPE')?.enabled).toBe(true);
-    expect(calls.find((c) => c.component === 'SENDER')?.enabled).toBe(false);
+    const typeRule = calls.find((c) => c.component === 'TYPE');
+    expect(typeRule).toMatchObject({
+      enabled: true,
+      messageType: 'SKYKING',
+      notes: 'AI-generated (#544)',
+    });
+    expect(calls.find((c) => c.component === 'SENDER')).toMatchObject({
+      enabled: false,
+      appliesToType: 'SKYKING',
+    });
     // captureMap stringified for the AWSJSON column.
-    expect(typeof calls[0]?.captureMap).toBe('string');
+    expect(typeof typeRule?.captureMap).toBe('string');
+  });
+
+  it('writes the remaining rules when one create fails (#544)', async () => {
+    const { client, ruleCreateSpy } = makeDataStub();
+    ruleCreateSpy
+      .mockResolvedValueOnce({ data: null, errors: [{ message: 'boom' }] })
+      .mockResolvedValueOnce({ data: { id: 'ok' }, errors: null });
+    const rules: ProposedRule[] = [
+      { component: 'TYPE', messageType: 'SKYKING', pattern: 'SKYKING', confidence: 0.95 },
+      { component: 'BODY', appliesToType: 'SKYKING', pattern: '(?<body>.+)', confidence: 0.9 },
+    ];
+    const bedrockFallback = vi.fn().mockResolvedValue({ ...fbSuccess, rules });
+    __setDeps({
+      dataClient: client,
+      rulesEngine: noRules,
+      bedrockFallback,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'm',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-rfail',
+        transcript: 'zzz',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    // First errored (logged, not thrown); second still attempted.
+    expect(ruleCreateSpy).toHaveBeenCalledTimes(2);
   });
 
   it('does not re-write rules on a redrive (prior bedrock attempt logged) (#544)', async () => {
