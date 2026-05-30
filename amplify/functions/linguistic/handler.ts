@@ -1,6 +1,8 @@
 import type { SQSEvent, SQSHandler } from 'aws-lambda';
 import { normalizeParsed } from './normalize';
 import { contentMatches, dedupWindow, deterministicMessageId } from './dedup';
+import { LinguisticRulesEngine, type RuleMatch } from './rules-engine';
+import { loadRulesFromDdb } from './load-rules-ddb';
 
 /**
  * Linguistic Lambda (#433 stage 4).
@@ -78,7 +80,32 @@ interface ClassifyResult {
   type: MessageType;
   confidence: number;
   rule: string;
+  /**
+   * Fields captured by a DDB rule's `captureMap` (#62/#460). Empty for
+   * the inline keyword fallback. `normalizeParsed` prefers these over
+   * re-extraction from the transcript.
+   */
+  fields?: { sender?: string; receiver?: string; body?: string };
 }
+
+/**
+ * Confidence assigned to a deterministic DDB-rule regex match. A
+ * configured rule is a high-trust signal — well above the 0.8 default
+ * auto-publish threshold. Per-type thresholding (#65) lands in a later
+ * slice; until then this fixed value drives `flaggedForReview`.
+ */
+const RULE_MATCH_CONFIDENCE = 0.9;
+
+const KNOWN_MESSAGE_TYPES: ReadonlySet<string> = new Set<MessageType>([
+  'SKYKING',
+  'SKYBIRD',
+  'SKYMASTER',
+  'ALLSTATIONS',
+  'RADIOCHECK',
+  'BACKEND',
+  'DISREGARDED',
+  'OTHER',
+]);
 
 export interface LinguisticDataClient {
   models: {
@@ -136,8 +163,14 @@ export interface LinguisticDataClient {
   };
 }
 
+/** Minimal rules-engine surface the handler depends on (test-injectable). */
+export interface RulesMatcher {
+  tryMatch(transcript: string): Promise<RuleMatch | null>;
+}
+
 export interface LinguisticDeps {
   dataClient?: LinguisticDataClient;
+  rulesEngine?: RulesMatcher;
   now?: () => Date;
   uuid?: () => string;
 }
@@ -150,6 +183,14 @@ export function __setDeps(deps: LinguisticDeps): void {
 
 export function __resetDeps(): void {
   injected = {};
+}
+
+let cachedRulesEngine: LinguisticRulesEngine | undefined;
+function rulesEngine(): RulesMatcher {
+  if (injected.rulesEngine) return injected.rulesEngine;
+  // One engine per cold start; its TTL cache spans hot invocations.
+  if (!cachedRulesEngine) cachedRulesEngine = new LinguisticRulesEngine(loadRulesFromDdb);
+  return cachedRulesEngine;
 }
 
 let cachedDataClient: LinguisticDataClient | undefined;
@@ -221,6 +262,50 @@ export function classify(transcript: string): ClassifyResult {
   return { type: 'OTHER', confidence: 0.3, rule: 'fallback' };
 }
 
+/**
+ * Classify via the admin-configurable DDB rules engine (#62/#460),
+ * falling back to the inline keyword `classify()` when no rule matches.
+ *
+ * The fallback is deliberate: with zero seeded `LinguisticRule` rows
+ * (or a transient loader error) the engine returns no match and the
+ * pipeline behaves exactly as before this slice — so shipping the
+ * wiring ahead of seeding the rules is non-regressive.
+ *
+ * A rule match wins and carries its `captureMap` fields through to
+ * `normalizeParsed`. An unknown `messageType` on a matched rule is
+ * treated as no-match (falls back) rather than writing a bad enum.
+ */
+export async function classifyWithRules(
+  transcript: string,
+  engine: RulesMatcher,
+): Promise<ClassifyResult> {
+  let match: RuleMatch | null = null;
+  try {
+    match = await engine.tryMatch(transcript);
+  } catch (err) {
+    // A rules-engine / loader failure must never sink a transcript —
+    // fall back to the inline classifier.
+    console.warn('linguistic: rules engine errored; using inline classifier', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return classify(transcript);
+  }
+  if (!match || !KNOWN_MESSAGE_TYPES.has(match.message.messageType)) {
+    return classify(transcript);
+  }
+  const f = match.message.fields;
+  return {
+    type: match.message.messageType as MessageType,
+    confidence: RULE_MATCH_CONFIDENCE,
+    rule: `rule:${match.ruleId}`,
+    fields: {
+      ...(f.sender ? { sender: f.sender } : {}),
+      ...(f.receiver ? { receiver: f.receiver } : {}),
+      ...(f.body ? { body: f.body } : {}),
+    },
+  };
+}
+
 interface RawLinguisticMessage {
   kind?: 'transcript' | 'transcribe-failure';
   recordingId?: string;
@@ -275,12 +360,19 @@ export function parseMessage(body: string): LinguisticQueueMessage {
 
 async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   const client = await dataClient();
-  const result = classify(msg.transcript);
+  const result = await classifyWithRules(msg.transcript, rulesEngine());
   // Turn the raw transcript into log-format fields: NATO-decode the
   // body, collapse double broadcasts, extract sender/receiver (#506).
-  // The raw transcript stays on the Recording row (source of truth);
-  // the Message carries the derived/normalized form.
-  const normalized = normalizeParsed({ type: result.type, transcript: msg.transcript });
+  // Rule-captured fields (#62) win over re-extraction. The raw
+  // transcript stays on the Recording row (source of truth); the
+  // Message carries the derived/normalized form.
+  const normalized = normalizeParsed({
+    type: result.type,
+    transcript: msg.transcript,
+    ...(result.fields?.sender ? { sender: result.fields.sender } : {}),
+    ...(result.fields?.receiver ? { receiver: result.fields.receiver } : {}),
+    ...(result.fields?.body ? { body: result.fields.body } : {}),
+  });
   // `||` not `??`: decodePhonetic returns "" for a body with no
   // decodable letters — fall back to the raw transcript.
   const canonical = normalized.body || msg.transcript;
