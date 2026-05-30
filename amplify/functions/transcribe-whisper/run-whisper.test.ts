@@ -52,10 +52,30 @@ describe('buildArgs', () => {
       'en',
       '-t',
       '4',
-      '-oj',
+      '-ojf',
       '-of',
       '/tmp/out',
     ]);
+  });
+
+  it('emits -ojf (full JSON) so the nested tokens[] array is written (#536)', () => {
+    const args = buildArgs({
+      inputPath: '/tmp/in.opus',
+      outputPrefix: '/tmp/out',
+      language: 'en',
+      threads: 4,
+      modelPath: '/opt/models/medium.en.bin',
+    });
+    // whisper.cpp plain `-oj` writes only per-segment text + offsets; the
+    // per-token `tokens[].{text,t0,t1,p}` array (which word-timestamps.mjs
+    // and transcription-confidence.mjs read) is emitted ONLY under
+    // `-ojf` / `--output-json-full`. Without it the word sidecar came out
+    // empty and scrub-to-text broke (#536). Pin the full flag here so the
+    // token array is never silently dropped again.
+    expect(args).toContain('-ojf');
+    // The plain flag must NOT be present standalone — whisper.cpp parses
+    // `-ojf` on its own (it implies `-oj`); a stray `-oj` is just noise.
+    expect(args).not.toContain('-oj');
   });
 
   it('does NOT emit -ml 1 — it would corrupt the natural-sentence transcript (#527)', () => {
