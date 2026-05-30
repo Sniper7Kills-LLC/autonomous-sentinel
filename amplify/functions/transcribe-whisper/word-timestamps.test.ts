@@ -62,16 +62,75 @@ describe('extractWordTimestamps (#527)', () => {
     expect(extractWordTimestamps(JSON.stringify({ transcription: 'nope' }))).toEqual({ words: [] });
   });
 
-  it('treats a segment with missing or null tokens[] as empty (no throw)', () => {
+  it('treats a segment with missing or null tokens[] (and no offsets) as empty (no throw)', () => {
     const json = JSON.stringify({
       transcription: [
         { text: 'a', tokens: null },
-        { text: 'b' }, // no tokens key
+        { text: 'b' }, // no tokens key, no offsets
         { text: 'c', tokens: [{ text: ' word', t0: 10, t1: 20 }] },
       ],
     });
     expect(extractWordTimestamps(json)).toEqual({
       words: [{ word: 'word', start: 0.1, end: 0.2 }],
+    });
+  });
+
+  it('falls back to one entry per segment from offsets when tokens[] is absent (#536)', () => {
+    // Plain `-oj` (pre-#536) shape: per-segment text + offsets (ms), NO
+    // tokens[]. The sidecar must still carry timing — at segment
+    // granularity — rather than coming out empty.
+    const json = JSON.stringify({
+      transcription: [
+        { text: ' Skyking do not answer', offsets: { from: 300, to: 2200 } },
+        { text: ' Alpha Bravo', offsets: { from: 2200, to: 3100 } },
+      ],
+    });
+    expect(extractWordTimestamps(json)).toEqual({
+      words: [
+        { word: 'Skyking do not answer', start: 0.3, end: 2.2 },
+        { word: 'Alpha Bravo', start: 2.2, end: 3.1 },
+      ],
+    });
+  });
+
+  it('prefers per-token timing over the segment fallback when tokens[] is present (#536)', () => {
+    // When the full JSON (`-ojf`) carries tokens, use them — do NOT also
+    // emit the whole-segment fallback entry (would duplicate the words).
+    const json = JSON.stringify({
+      transcription: [
+        {
+          text: ' Skyking answer',
+          offsets: { from: 0, to: 5000 },
+          tokens: [
+            { text: ' Skyking', t0: 30, t1: 95 },
+            { text: ' answer', t0: 100, t1: 160 },
+          ],
+        },
+      ],
+    });
+    expect(extractWordTimestamps(json)).toEqual({
+      words: [
+        { word: 'Skyking', start: 0.3, end: 0.95 },
+        { word: 'answer', start: 1.0, end: 1.6 },
+      ],
+    });
+  });
+
+  it('uses the segment fallback when tokens[] holds only meta/punctuation (#536)', () => {
+    const json = JSON.stringify({
+      transcription: [
+        {
+          text: ' Skyking',
+          offsets: { from: 100, to: 900 },
+          tokens: [
+            { text: '[_BEG_]', t0: 0, t1: 0 },
+            { text: ',', t0: 10, t1: 20 },
+          ],
+        },
+      ],
+    });
+    expect(extractWordTimestamps(json)).toEqual({
+      words: [{ word: 'Skyking', start: 0.1, end: 0.9 }],
     });
   });
 });

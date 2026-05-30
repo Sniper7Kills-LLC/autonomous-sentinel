@@ -66,7 +66,7 @@ export class WhisperError extends Error {
  * @returns {string[]}
  */
 export function buildArgs(opts) {
-  // whisper.cpp argv: `-ng -m model -f input -l lang -t threads -oj -of prefix`.
+  // whisper.cpp argv: `-ng -m model -f input -l lang -t threads -ojf -of prefix`.
   //
   // `-ng` (#455): disable GPU backend. Lambda runtime has no GPU.
   // whisper.cpp v1.8.x defaults to `use_gpu=1` which probes Vulkan/
@@ -92,12 +92,18 @@ export function buildArgs(opts) {
     String(opts.threads),
     // NOTE (#527): do NOT add `-ml 1` (`--max-len 1`). It forces each
     // JSON segment to a single token, which corrupts the natural-
-    // sentence transcript fed to linguistics. Per-word timestamps for
-    // scrub-to-text sync (#92) come from the nested
-    // `transcription[].tokens[].{t0,t1}` array, which `-oj` emits
-    // regardless — the handler derives the word sidecar from it via
-    // `word-timestamps.mjs`.
-    '-oj',
+    // sentence transcript fed to linguistics.
+    //
+    // `-ojf` (#536, NOT plain `-oj`): write the FULL JSON. Per-word
+    // timestamps for scrub-to-text sync (#92) come from the nested
+    // `transcription[].tokens[].{text,t0,t1,p}` array — and whisper.cpp
+    // v1.8.x only writes that array under `--output-json-full` (`-ojf`).
+    // Plain `-oj` emits per-segment `text` + `offsets` only, so the
+    // word sidecar came out empty `{words:[]}` and the audio player lost
+    // scrub-to-text (the #536 break). `-ojf` implies `-oj`, so the
+    // per-segment text the handler joins into the natural transcript is
+    // still present. `tokens[].p` also feeds transcription confidence (#581).
+    '-ojf',
     '-of',
     opts.outputPrefix,
   ];
