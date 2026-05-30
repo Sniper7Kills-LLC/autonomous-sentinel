@@ -52,8 +52,9 @@ coverage/
 .cache/
 .turbo/
 
-# ESLint cache — populated by the husky pre-commit hook
-# (`--cache --cache-location node_modules/.cache/eslint/`).
+# ESLint cache — populated by both the husky pre-commit hook (scoped,
+# per-workspace) and each workspace's `lint` script
+# (`--cache --cache-strategy content --cache-location node_modules/.cache/eslint/`).
 # `node_modules/.cache/` is already covered by `.cache/` above when
 # nested at the root, but workspace-local node_modules need the
 # explicit pattern.
