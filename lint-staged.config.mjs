@@ -16,6 +16,20 @@ import path from 'node:path';
  */
 export const WORKSPACES = ['web', 'amplify', 'upload-client'];
 
+/**
+ * Repo-root-relative lintable files that legitimately live OUTSIDE any
+ * workspace and lint against the root flat config. This is an explicit
+ * allowlist — anything lintable that is neither under a workspace nor listed
+ * here is treated as config drift and throws (see `bucketStagedFiles`), so a
+ * `.ts`/`.tsx` file under a brand-new top-level dir can never silently lint
+ * with the wrong (root) ruleset.
+ */
+export const ROOT_LINTABLE_ALLOWLIST = new Set([
+  'eslint.config.mjs',
+  'lint-staged.config.mjs',
+  'lint-staged.config.test.mjs',
+]);
+
 const LINTABLE = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
 const PRETTIER_ALL = /\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|ya?ml|css)$/;
 
@@ -59,10 +73,23 @@ export function bucketStagedFiles(absPaths, root = process.cwd()) {
     if (LINTABLE.test(rel)) {
       if (ws) {
         (byWorkspace[ws] ??= []).push(rel);
-      } else {
+      } else if (ROOT_LINTABLE_ALLOWLIST.has(rel)) {
         // Root-level tooling scripts keep their ESLint coverage via the root
         // flat config (cheap — no TypeScript program for `.mjs`/`.cjs`).
         rootLintable.push(rel);
+      } else {
+        // Config drift: a lintable file that belongs to no workspace and is
+        // not an approved root-level script would otherwise fall through to
+        // the root flat config and lint with the WRONG ruleset (no Next.js /
+        // React / Electron / Node-env layers). Fail the commit loudly so a new
+        // top-level dir gets added to WORKSPACES (or this allowlist)
+        // deliberately instead of being silently mis-linted.
+        throw new Error(
+          `lint-staged: staged lintable file "${rel}" resolves to no workspace and is ` +
+            `not in ROOT_LINTABLE_ALLOWLIST. Add its top-level dir to WORKSPACES in ` +
+            `lint-staged.config.mjs (and create <dir>/eslint.config.mjs), or add the ` +
+            `file to ROOT_LINTABLE_ALLOWLIST if it is a root-level tooling script.`,
+        );
       }
     } else if (PRETTIER_ALL.test(rel)) {
       prettierOnly.push(rel);

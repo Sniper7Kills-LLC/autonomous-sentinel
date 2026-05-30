@@ -31,6 +31,8 @@ jobs:
               - 'eslint.config.mjs'
               - 'lint-staged.config.mjs'
               - 'lint-staged.config.test.mjs'
+              - '.prettierrc.json'
+              - '.editorconfig'
               - 'amplify.yml'
               - '.github/workflows/ci.yml'
             web:

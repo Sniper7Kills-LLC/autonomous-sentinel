@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   bucketStagedFiles,
   buildCommands,
+  ROOT_LINTABLE_ALLOWLIST,
   toRepoRelative,
   WORKSPACES,
 } from './lint-staged.config.mjs';
@@ -54,6 +55,32 @@ test('root-level lintable scripts bucket as rootLintable (not a workspace, not p
   assert.deepEqual(byWorkspace, {});
   assert.deepEqual(rootLintable, ['lint-staged.config.mjs']);
   assert.deepEqual(prettierOnly, []);
+});
+
+test('a lintable file under an unrecognized top-level dir THROWS (config drift)', () => {
+  // e.g. a brand-new `services/foo.ts` not yet wired into WORKSPACES — must
+  // fail the commit rather than silently lint with the root ruleset.
+  assert.throws(
+    () => bucketStagedFiles([abs('services/foo.ts')], ROOT),
+    /resolves to no workspace and is not in ROOT_LINTABLE_ALLOWLIST/,
+  );
+});
+
+test('an unapproved root-level lintable file THROWS (config drift)', () => {
+  assert.throws(
+    () => bucketStagedFiles([abs('scratch.ts')], ROOT),
+    /resolves to no workspace and is not in ROOT_LINTABLE_ALLOWLIST/,
+  );
+});
+
+test('buildCommands propagates the config-drift throw', () => {
+  assert.throws(() => buildCommands([abs('newdir/thing.tsx')], ROOT), /ROOT_LINTABLE_ALLOWLIST/);
+});
+
+test('only approved root scripts are in the allowlist; non-lintable root files are unaffected', () => {
+  assert.ok(ROOT_LINTABLE_ALLOWLIST.has('eslint.config.mjs'));
+  // A non-lintable root file (e.g. a top-level README) never hits the guard.
+  assert.doesNotThrow(() => bucketStagedFiles([abs('README.md')], ROOT));
 });
 
 test('root-level lintable scripts lint against the root flat config (cheap, no TS program)', () => {
