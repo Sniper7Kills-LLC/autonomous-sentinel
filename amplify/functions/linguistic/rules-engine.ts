@@ -86,6 +86,16 @@ export interface RuleMatch {
   message: ParsedMessage;
 }
 
+/** A compact view of an active rule for the AI-refine context (#544b). */
+export interface RuleSummary {
+  id: string;
+  component: RuleComponent;
+  messageType: string;
+  appliesToType: string | null;
+  pattern: string;
+  confidence: number;
+}
+
 interface CompiledRule {
   id: string;
   re: RegExp;
@@ -156,6 +166,22 @@ export class LinguisticRulesEngine {
     const maxVersion = compiled.reduce((max, r) => Math.max(max, r.promptVersion), 0);
     this.cache = { compiled, loadedAt: now, maxVersion };
     return compiled;
+  }
+
+  /**
+   * Summarize the current active ruleset (#544b) so the AI fallback can
+   * refine existing rules rather than only generating fresh ones.
+   */
+  async snapshot(): Promise<RuleSummary[]> {
+    const compiled = await this.loadRules();
+    return compiled.map((r) => ({
+      id: r.id,
+      component: r.component,
+      messageType: r.messageType,
+      appliesToType: r.appliesToType,
+      pattern: r.re.source,
+      confidence: r.confidence,
+    }));
   }
 
   /**

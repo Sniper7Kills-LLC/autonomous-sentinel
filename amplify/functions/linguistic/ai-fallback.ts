@@ -223,6 +223,13 @@ export interface FallbackOpts {
   modelId?: string;
   promptVersion?: number;
   promptTemplate?: string;
+  /**
+   * Dynamic context appended to the rendered prompt at send time (#544b)
+   * — the failed rule-engine attempt + the current ruleset, so the model
+   * refines existing rules instead of only generating fresh ones. NOT
+   * part of the prompt-version hash (it changes every invocation).
+   */
+  context?: string;
 }
 
 const PARSED_EAM_TOOL_NAME = 'parsed_eam';
@@ -340,7 +347,10 @@ export async function tryBedrockFallback(
   if (!transcript || transcript.trim() === '') return null;
   const { client, modelId, promptVersion, promptTemplate } = resolveOpts(opts);
 
-  const userPrompt = promptTemplate.replace('{{TRANSCRIPT}}', transcript);
+  const rendered = promptTemplate.replace('{{TRANSCRIPT}}', transcript);
+  // Append the dynamic context (failed attempt + ruleset, #544b) after
+  // the rendered prompt — kept out of the prompt-version hash upstream.
+  const userPrompt = opts.context ? `${rendered}\n\n${opts.context}` : rendered;
   const initialMessages: BedrockMessage[] = [{ role: 'user', content: [{ text: userPrompt }] }];
 
   let retried = false;
