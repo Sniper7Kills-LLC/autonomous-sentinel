@@ -70,10 +70,33 @@ describe('parseDispatchMessage', () => {
     });
   });
 
-  it('rejects a message missing recordingId or audioKey', () => {
+  it('rejects a message missing recordingId or any audio key', () => {
     expect(parseDispatchMessage({ audioKey: 'k' })).toBeNull();
     expect(parseDispatchMessage({ recordingId: 'r' })).toBeNull();
     expect(parseDispatchMessage(null)).toBeNull();
+  });
+
+  it('falls back to originalKey as the audio source (#587 dispatcher message shape)', () => {
+    const msg = parseDispatchMessage({
+      recordingId: 'rec-1',
+      originalKey: 'recordings/originals/rec-1.wav',
+      contentHash: 'h',
+      enqueuedAt: '2026-05-30T00:00:00Z',
+    });
+    expect(msg).toEqual({
+      recordingId: 'rec-1',
+      audioKey: 'recordings/originals/rec-1.wav',
+      enqueuedAt: '2026-05-30T00:00:00Z',
+    });
+  });
+
+  it('prefers an explicit audioKey over originalKey (admin re-run on derivative)', () => {
+    const msg = parseDispatchMessage({
+      recordingId: 'rec-1',
+      audioKey: 'recordings/web/rec-1.opus',
+      originalKey: 'recordings/originals/rec-1.wav',
+    });
+    expect(msg?.audioKey).toBe('recordings/web/rec-1.opus');
   });
 });
 

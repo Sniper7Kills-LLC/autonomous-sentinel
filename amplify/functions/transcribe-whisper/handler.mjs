@@ -76,13 +76,47 @@ export async function handler(event) {
   if (!LINGUISTIC_QUEUE_URL) {
     throw new Error('whisper-handler: LINGUISTIC_QUEUE_URL env var is unset');
   }
-  const records = event?.Records ?? [];
-  for (const record of records) {
-    const body = parseBody(record);
-    if (!body) continue;
+  // #587: the transcribe-dispatch Lambda now Event-invokes this handler
+  // with the dispatch-message body as the payload. Keep the legacy SQS
+  // event shape working too (an in-flight queue message at deploy time,
+  // or a direct queue subscription in a sandbox) — `normalizeMessages`
+  // accepts both and yields a flat list of message bodies.
+  const bodies = normalizeMessages(event);
+  for (const body of bodies) {
     await processOne(body);
   }
   return { ok: true };
+}
+
+/**
+ * Normalizes the Lambda event into a flat list of dispatch-message
+ * bodies. Accepts two shapes:
+ *   1. SQS event `{ Records: [{ body: "<json>" }, …] }` — the legacy
+ *      direct queue subscription. Each `body` is JSON-parsed; an
+ *      unparseable record is logged + skipped (one bad message never
+ *      poisons a batch).
+ *   2. A direct dispatch payload `{ recordingId, originalKey?, … }` —
+ *      the #587 dispatcher Event-invokes with the message object itself
+ *      (already-parsed JSON). Returned as a single-element list.
+ *
+ * Exported for unit tests of the direct-invoke parsing.
+ */
+export function normalizeMessages(event) {
+  if (Array.isArray(event?.Records)) {
+    const out = [];
+    for (const record of event.Records) {
+      const body = parseBody(record);
+      if (body) out.push(body);
+    }
+    return out;
+  }
+  // Direct Event invocation: the dispatcher passes the parsed message
+  // object as the payload. Only treat it as a message when it carries a
+  // recordingId so a stray empty/keep-warm invoke is ignored.
+  if (event && typeof event === 'object' && typeof event.recordingId === 'string') {
+    return [event];
+  }
+  return [];
 }
 
 function parseBody(record) {

@@ -87,15 +87,28 @@ function s3Client(): S3Client {
  * Validates the dispatch message. Returns `null` (caller throws) when
  * a required field is missing so a malformed upstream message fails
  * loud instead of issuing a Transcribe job against an empty key.
+ *
+ * Audio key resolution (#587): the canonical transcribe-queue message
+ * the dispatcher forwards is `{recordingId, originalKey, contentHash,
+ * enqueuedAt}` (published by the preprocess Lambda). Amazon Transcribe
+ * decodes the ORIGINAL upload natively for max quality, so `originalKey`
+ * is the preferred media source. An explicit `audioKey` (e.g. an admin
+ * re-run on the web-canonical derivative) still wins when present.
  */
 export function parseDispatchMessage(raw: unknown): DispatchMessage | null {
   if (!raw || typeof raw !== 'object') return null;
   const obj = raw as Record<string, unknown>;
   if (typeof obj.recordingId !== 'string' || obj.recordingId.trim() === '') return null;
-  if (typeof obj.audioKey !== 'string' || obj.audioKey.trim() === '') return null;
+  const audioKey =
+    typeof obj.audioKey === 'string' && obj.audioKey.trim() !== ''
+      ? obj.audioKey
+      : typeof obj.originalKey === 'string' && obj.originalKey.trim() !== ''
+        ? obj.originalKey
+        : null;
+  if (!audioKey) return null;
   return {
     recordingId: obj.recordingId,
-    audioKey: obj.audioKey,
+    audioKey,
     enqueuedAt: typeof obj.enqueuedAt === 'string' ? obj.enqueuedAt : undefined,
   };
 }
