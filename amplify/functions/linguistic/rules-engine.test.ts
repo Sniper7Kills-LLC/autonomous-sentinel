@@ -28,6 +28,121 @@ function stubLoader(rules: LinguisticRule[]): RuleLoader {
   return () => Promise.resolve(rules);
 }
 
+describe('LinguisticRulesEngine — per-component composition (#548)', () => {
+  it('composes a SENDER component rule onto a TYPE match', async () => {
+    const engine = new LinguisticRulesEngine(
+      stubLoader([
+        makeRule({ id: 't', component: 'TYPE', messageType: 'SKYKING', pattern: 'SKYKING' }),
+        makeRule({
+          id: 's',
+          component: 'SENDER',
+          pattern: 'THIS IS (?<sender>\\w+)',
+          captureMap: { sender: 'sender' },
+        }),
+      ]),
+    );
+    const r = await engine.tryMatch('SKYKING THIS IS MAINSAIL');
+    expect(r?.message.messageType).toBe('SKYKING');
+    expect(r?.message.fields.sender).toBe('MAINSAIL');
+  });
+
+  it('skips a component rule whose appliesToType does not match', async () => {
+    const engine = new LinguisticRulesEngine(
+      stubLoader([
+        makeRule({ id: 't', component: 'TYPE', messageType: 'SKYKING', pattern: 'SKYKING' }),
+        makeRule({
+          id: 's',
+          component: 'SENDER',
+          appliesToType: 'ALLSTATIONS',
+          pattern: 'THIS IS (?<sender>\\w+)',
+          captureMap: { sender: 'sender' },
+        }),
+      ]),
+    );
+    const r = await engine.tryMatch('SKYKING THIS IS MAINSAIL');
+    expect(r?.message.fields.sender).toBeUndefined();
+  });
+
+  it('aggregates confidence to the min across the type + composed components', async () => {
+    const engine = new LinguisticRulesEngine(
+      stubLoader([
+        makeRule({
+          id: 't',
+          component: 'TYPE',
+          messageType: 'SKYKING',
+          pattern: 'SKYKING',
+          confidence: 0.9,
+        }),
+        makeRule({
+          id: 's',
+          component: 'SENDER',
+          pattern: 'THIS IS (?<sender>\\w+)',
+          captureMap: { sender: 'sender' },
+          confidence: 0.4,
+        }),
+      ]),
+    );
+    expect((await engine.tryMatch('SKYKING THIS IS MAINSAIL'))?.confidence).toBe(0.4);
+  });
+
+  it('leaves fields empty when only a TYPE rule matches (no component rules)', async () => {
+    const engine = new LinguisticRulesEngine(
+      stubLoader([
+        makeRule({
+          id: 't',
+          component: 'TYPE',
+          messageType: 'SKYKING',
+          pattern: 'SKYKING',
+          captureMap: {},
+        }),
+      ]),
+    );
+    const r = await engine.tryMatch('SKYKING THIS IS MAINSAIL');
+    expect(r?.message.messageType).toBe('SKYKING');
+    expect(r?.message.fields).toEqual({});
+  });
+
+  it('a component rule that captures nothing contributes nothing (no whole-match fallback)', async () => {
+    const engine = new LinguisticRulesEngine(
+      stubLoader([
+        makeRule({
+          id: 't',
+          component: 'TYPE',
+          messageType: 'SKYKING',
+          pattern: 'SKYKING',
+          captureMap: {},
+        }),
+        // Matches but has no capture group — must NOT set sender to the match.
+        makeRule({ id: 's', component: 'SENDER', pattern: 'THIS IS MAINSAIL', captureMap: {} }),
+      ]),
+    );
+    const r = await engine.tryMatch('SKYKING THIS IS MAINSAIL');
+    expect(r?.message.fields.sender).toBeUndefined();
+  });
+
+  it('does not overwrite a field the TYPE rule already captured', async () => {
+    const engine = new LinguisticRulesEngine(
+      stubLoader([
+        makeRule({
+          id: 't',
+          component: 'TYPE',
+          messageType: 'SKYKING',
+          pattern: 'SKYKING THIS IS (?<sender>\\w+)',
+          captureMap: { sender: 'sender' },
+        }),
+        makeRule({
+          id: 's',
+          component: 'SENDER',
+          pattern: 'IS (?<sender>\\w+)',
+          captureMap: { sender: 'sender' },
+        }),
+      ]),
+    );
+    const r = await engine.tryMatch('SKYKING THIS IS MAINSAIL');
+    expect(r?.message.fields.sender).toBe('MAINSAIL'); // from the TYPE rule, not re-extracted
+  });
+});
+
 describe('LinguisticRulesEngine — confidence (#543)', () => {
   it('returns the rule confidence on a match', async () => {
     const engine = new LinguisticRulesEngine(
