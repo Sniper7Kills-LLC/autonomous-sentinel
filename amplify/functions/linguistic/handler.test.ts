@@ -353,6 +353,59 @@ describe('linguistic — handler happy path', () => {
     );
   });
 
+  it('falls back to the 0.8 default gate when the threshold config load throws (#65)', async () => {
+    const { client, createSpy, configGetSpy } = makeDataStub();
+    configGetSpy.mockRejectedValueOnce(new Error('ddb unavailable'));
+    __setDeps({
+      dataClient: client,
+      rulesEngine: {
+        tryMatch: () =>
+          Promise.resolve({
+            ruleId: 'r',
+            promptVersion: 1,
+            message: { messageType: 'SKYKING', fields: {} },
+          }),
+      },
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-uuid-err',
+    });
+    await handler(
+      makeEvent({ recordingId: 'rec-err', transcript: 'x', enqueuedAt: '2026-05-24T17:55:00Z' }),
+      {} as never,
+      () => undefined,
+    );
+    // 0.9 >= default 0.8 → clean, even though config load failed.
+    expect(createSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ confidence: 0.9, flaggedForReview: false }),
+    );
+  });
+
+  it('falls back to the default gate when the threshold value is malformed (#65)', async () => {
+    // A non-JSON string value — JSON.parse fails, resolves to empty map.
+    const { client, createSpy } = makeDataStub([], 'not-json');
+    __setDeps({
+      dataClient: client,
+      rulesEngine: {
+        tryMatch: () =>
+          Promise.resolve({
+            ruleId: 'r',
+            promptVersion: 1,
+            message: { messageType: 'SKYKING', fields: {} },
+          }),
+      },
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-uuid-mal',
+    });
+    await handler(
+      makeEvent({ recordingId: 'rec-mal', transcript: 'x', enqueuedAt: '2026-05-24T17:55:00Z' }),
+      {} as never,
+      () => undefined,
+    );
+    expect(createSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ confidence: 0.9, flaggedForReview: false }),
+    );
+  });
+
   it('flags low-confidence Messages for review', async () => {
     const { client, createSpy } = makeDataStub();
     __setDeps({
