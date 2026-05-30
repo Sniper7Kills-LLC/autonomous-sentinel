@@ -6,6 +6,7 @@ import type {
   Tool,
 } from '@aws-sdk/client-bedrock-runtime';
 import type { DocumentType } from '@smithy/types';
+import { FALLBACK_SYSTEM_PROMPT } from './prompts/fallback-system-prompt';
 
 /**
  * Linguistic Logic Bedrock AI fallback (#63).
@@ -46,16 +47,10 @@ import type { DocumentType } from '@smithy/types';
 
 export const DEFAULT_FALLBACK_MODEL_ID = 'anthropic.claude-sonnet-4-7-20250115-v1:0';
 
-export const DEFAULT_PROMPT_TEMPLATE = [
-  'You are parsing a U.S. Air Force HFGCS Emergency Action Message (EAM)',
-  'transcript. Extract the structured fields and call the `parsed_eam` tool',
-  'with the result. Do not respond with prose; always call the tool.',
-  '',
-  'Transcript:',
-  '"""',
-  '{{TRANSCRIPT}}',
-  '"""',
-].join('\n');
+// The default lives in a git-reviewable module (not the DB). The handler
+// overrides it with the active `LinguisticPromptTemplate` body when one
+// exists (admin-edited, version-bumped).
+export const DEFAULT_PROMPT_TEMPLATE = FALLBACK_SYSTEM_PROMPT;
 
 /**
  * JSON Schema for the parsed-EAM tool output. Mirrors the Message
