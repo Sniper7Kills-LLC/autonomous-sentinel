@@ -35,6 +35,14 @@
  *     fallback (#63).
  */
 
+/**
+ * Which component of the parsed message a rule fills (#548). `TYPE`
+ * rules detect the message type (and may also extract fields via their
+ * `captureMap`, whole-message style); `SENDER`/`RECEIVER`/`BODY` rules
+ * extract that one field and are composed onto a type match.
+ */
+export type RuleComponent = 'TYPE' | 'SENDER' | 'RECEIVER' | 'BODY';
+
 export interface LinguisticRule {
   id: string;
   pattern: string;
@@ -45,10 +53,25 @@ export interface LinguisticRule {
   promptVersion: number;
   /** Per-rule match confidence in [0,1] (#543). Defaults to 0.9 when absent. */
   confidence?: number;
+  /** Component this rule fills (#548). Defaults to `TYPE`. */
+  component?: RuleComponent;
+  /**
+   * For a component rule (SENDER/RECEIVER/BODY): the message type it
+   * extracts from. Empty/absent = applies to every type. Ignored for
+   * TYPE rules (they assign `messageType`).
+   */
+  appliesToType?: string | null;
 }
 
 /** Default confidence for a rule that doesn't carry one. */
 export const DEFAULT_RULE_CONFIDENCE = 0.9;
+
+/** Component → parsed-message field name. */
+const COMPONENT_FIELD: Record<Exclude<RuleComponent, 'TYPE'>, string> = {
+  SENDER: 'sender',
+  RECEIVER: 'receiver',
+  BODY: 'body',
+};
 
 export interface ParsedMessage {
   messageType: string;
@@ -71,6 +94,8 @@ interface CompiledRule {
   priority: number;
   promptVersion: number;
   confidence: number;
+  component: RuleComponent;
+  appliesToType: string | null;
 }
 
 interface Cache {
@@ -150,22 +175,70 @@ export class LinguisticRulesEngine {
     if (typeof transcript !== 'string' || transcript.length === 0) {
       return null;
     }
-    const rules = await this.loadRules();
+    const rules = await this.loadRules(); // priority-desc
+
+    // 1. Type detection — first matching TYPE rule wins.
+    let typeRule: CompiledRule | undefined;
+    let typeM: RegExpMatchArray | undefined;
     for (const rule of rules) {
+      if (rule.component !== 'TYPE') continue;
       const m = transcript.match(rule.re);
-      if (!m) continue;
-      const fields = this.mapCaptures(m, rule.captureMap);
-      return {
-        ruleId: rule.id,
-        promptVersion: rule.promptVersion,
-        confidence: rule.confidence,
-        message: {
-          messageType: rule.messageType,
-          fields,
-        },
-      };
+      if (m) {
+        typeRule = rule;
+        typeM = m;
+        break;
+      }
     }
-    return null;
+    if (!typeRule || !typeM) return null;
+
+    const messageType = typeRule.messageType;
+    // The TYPE rule may also extract fields (whole-message style); those
+    // seed the result and are not overwritten by component rules.
+    const fields = this.mapCaptures(typeM, typeRule.captureMap);
+    const confidences = [typeRule.confidence];
+
+    // 2. Compose each missing field from its component rules (those that
+    //    apply to this type), first match wins.
+    for (const component of ['SENDER', 'RECEIVER', 'BODY'] as const) {
+      const field = COMPONENT_FIELD[component];
+      if (fields[field]) continue; // TYPE rule already filled it
+      for (const rule of rules) {
+        if (rule.component !== component) continue;
+        if (rule.appliesToType && rule.appliesToType !== messageType) continue;
+        const m = transcript.match(rule.re);
+        if (!m) continue;
+        const value = this.extractComponentValue(m, rule.captureMap, field);
+        if (value) {
+          fields[field] = value;
+          confidences.push(rule.confidence);
+          break;
+        }
+      }
+    }
+
+    return {
+      ruleId: typeRule.id,
+      promptVersion: typeRule.promptVersion,
+      // Aggregate: a shaky component drags the whole parse down so the
+      // #540 gate can route it to the AI.
+      confidence: Math.min(...confidences),
+      message: { messageType, fields },
+    };
+  }
+
+  /**
+   * Value a component rule contributes: the mapped field if its
+   * `captureMap` names one, else the first capture group, else the whole
+   * match. Trimmed; empty → no contribution.
+   */
+  private extractComponentValue(
+    match: RegExpMatchArray,
+    captureMap: Record<string, string>,
+    field: string,
+  ): string {
+    const mapped = this.mapCaptures(match, captureMap);
+    if (mapped[field]) return mapped[field];
+    return (match[1] ?? match[0] ?? '').trim();
   }
 
   private tryCompile(r: LinguisticRule): CompiledRule | null {
@@ -181,6 +254,8 @@ export class LinguisticRulesEngine {
           typeof r.confidence === 'number' && r.confidence >= 0 && r.confidence <= 1
             ? r.confidence
             : DEFAULT_RULE_CONFIDENCE,
+        component: r.component ?? 'TYPE',
+        appliesToType: r.appliesToType ?? null,
       };
     } catch (err) {
       // A single bad regex must NOT break the whole engine. Log +

@@ -48,6 +48,8 @@ interface RawRow {
   enabled?: boolean;
   promptVersion?: number;
   confidence?: number;
+  component?: string;
+  appliesToType?: string | null;
 }
 
 function toRule(raw: RawRow): LinguisticRule | null {
@@ -80,6 +82,14 @@ function toRule(raw: RawRow): LinguisticRule | null {
     promptVersion: raw.promptVersion ?? 1,
     // Confidence: engine clamps/defaults out-of-range, so pass through.
     ...(typeof raw.confidence === 'number' ? { confidence: raw.confidence } : {}),
+    // Component (#548): engine defaults to TYPE when absent/unknown.
+    ...(raw.component === 'TYPE' ||
+    raw.component === 'SENDER' ||
+    raw.component === 'RECEIVER' ||
+    raw.component === 'BODY'
+      ? { component: raw.component }
+      : {}),
+    ...(raw.appliesToType ? { appliesToType: raw.appliesToType } : {}),
   };
 }
 
