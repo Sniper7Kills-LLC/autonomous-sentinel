@@ -975,14 +975,17 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
     expect(bedrockFallback).not.toHaveBeenCalled();
   });
 
-  it('skips the paid Bedrock call when a prior success is already logged', async () => {
+  it('re-invokes Bedrock on redrive but does not double-append the attempt log', async () => {
+    // A prior bedrock success is already logged for this (prompt) key.
+    // The call is NOT skipped (the log lacks the parsed type, so a skip
+    // would mis-dedup) — but `appendAttempt` must not duplicate the entry.
     const transcript = 'unintelligible zzzz noise';
     const { rendered, promptVersion } = renderFallbackPrompt(transcript);
     const promptHash = hashPrompt(rendered);
-    const { client, getSpy } = makeDataStub();
+    const { client, getSpy, updateSpy } = makeDataStub();
     getSpy.mockResolvedValueOnce({
       data: {
-        id: 'rec-skip',
+        id: 'rec-redrive',
         broadcastedAt: null,
         linguisticAttempts: [
           {
@@ -1006,10 +1009,15 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
       uuid: () => 'm',
     });
     await handler(
-      makeEvent({ recordingId: 'rec-skip', transcript, enqueuedAt: '2026-05-24T17:55:00Z' }),
+      makeEvent({ recordingId: 'rec-redrive', transcript, enqueuedAt: '2026-05-24T17:55:00Z' }),
       {} as never,
       () => undefined,
     );
-    expect(bedrockFallback).not.toHaveBeenCalled();
+    // Re-invoked (correctness over the micro-cost-skip)...
+    expect(bedrockFallback).toHaveBeenCalledOnce();
+    // ...but the append is de-duplicated — log stays length 1.
+    const attempts = attemptsOf(updateSpy.mock.calls[0]?.[0]);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]?.resultHash).toBe('prev');
   });
 });

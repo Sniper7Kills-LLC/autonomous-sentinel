@@ -517,52 +517,42 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   // Bedrock AI fallback (#63) — runs ONLY when the rules engine AND the
   // inline keyword classifier both miss (the `OTHER`/'fallback' case),
   // so the paid model call is reserved for genuinely-unrecognized
-  // transcripts. `shouldSkip` short-circuits the call when a prior
-  // success for the same (provider, promptVersion, promptHash) is logged
-  // (idempotent + cost-saving on SQS redrive).
+  // transcripts.
   if (result.rule === 'fallback') {
     const {
       rendered,
       promptVersion: bedrockVersion,
       modelId,
     } = renderFallbackPrompt(msg.transcript);
-    const promptHash = hashPrompt(rendered);
     attemptProvider = BEDROCK_PROVIDER;
     attemptPromptVersion = bedrockVersion;
-    attemptPromptHash = promptHash;
-    if (
-      shouldSkip(existingAttempts, {
-        provider: BEDROCK_PROVIDER,
+    attemptPromptHash = hashPrompt(rendered);
+    // Always invoke on the fallback path. We deliberately do NOT skip the
+    // call when a prior bedrock success is logged: the attempt log stores
+    // only the result *hash*, not the parsed type/fields, so a skip would
+    // leave `result` as OTHER and the dedup below would create a SECOND
+    // (OTHER-typed) Message instead of linking to the prior bedrock-typed
+    // one. The deterministic-id dedup already makes a redrive idempotent
+    // (same parse → same id → link); re-invoking on a rare redrive is the
+    // safe trade. A cost-skip that reuses the stored parse is a follow-up.
+    const fb = await bedrockFallback(msg.transcript);
+    if (fb && KNOWN_MESSAGE_TYPES.has(fb.message.type)) {
+      result = {
+        type: fb.message.type as MessageType,
+        confidence: fb.message.confidence,
+        rule: `bedrock:${modelId}`,
         promptVersion: bedrockVersion,
-        promptHash,
-      })
-    ) {
-      // Already parsed by Bedrock at this prompt — the prior run published
-      // a Message; the deterministic-id dedup below links this redrive to
-      // it. Keep the existing log (no re-append, no re-pay).
-      console.info('linguistic: skipping Bedrock — prior success logged', {
-        recordingId: msg.recordingId,
-      });
+        fields: {
+          ...(fb.message.sender ? { sender: fb.message.sender } : {}),
+          ...(fb.message.receiver ? { receiver: fb.message.receiver } : {}),
+          ...(fb.message.body ? { body: fb.message.body } : {}),
+        },
+      };
     } else {
-      const fb = await bedrockFallback(msg.transcript);
-      if (fb && KNOWN_MESSAGE_TYPES.has(fb.message.type)) {
-        result = {
-          type: fb.message.type as MessageType,
-          confidence: fb.message.confidence,
-          rule: `bedrock:${modelId}`,
-          promptVersion: bedrockVersion,
-          fields: {
-            ...(fb.message.sender ? { sender: fb.message.sender } : {}),
-            ...(fb.message.receiver ? { receiver: fb.message.receiver } : {}),
-            ...(fb.message.body ? { body: fb.message.body } : {}),
-          },
-        };
-      } else {
-        // Bedrock couldn't parse it either — keep the OTHER result but log
-        // a FAILED bedrock attempt so a future bedrock-prompt bump (#66)
-        // reprocesses this recording.
-        attemptSuccess = false;
-      }
+      // Bedrock couldn't parse it either — keep the OTHER result but log
+      // a FAILED bedrock attempt so a future bedrock-prompt bump (#66)
+      // reprocesses this recording.
+      attemptSuccess = false;
     }
   }
 
