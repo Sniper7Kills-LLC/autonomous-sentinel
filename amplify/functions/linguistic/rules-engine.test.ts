@@ -28,6 +28,27 @@ function stubLoader(rules: LinguisticRule[]): RuleLoader {
   return () => Promise.resolve(rules);
 }
 
+describe('LinguisticRulesEngine — confidence (#543)', () => {
+  it('returns the rule confidence on a match', async () => {
+    const engine = new LinguisticRulesEngine(
+      stubLoader([makeRule({ id: 'c', pattern: 'SKYKING', confidence: 0.42 })]),
+    );
+    expect((await engine.tryMatch('SKYKING'))?.confidence).toBe(0.42);
+  });
+
+  it('defaults to 0.9 when the rule has no confidence', async () => {
+    const engine = new LinguisticRulesEngine(stubLoader([makeRule({ pattern: 'SKYKING' })]));
+    expect((await engine.tryMatch('SKYKING'))?.confidence).toBe(0.9);
+  });
+
+  it('defaults to 0.9 when the rule confidence is out of range', async () => {
+    const engine = new LinguisticRulesEngine(
+      stubLoader([makeRule({ pattern: 'SKYKING', confidence: 5 })]),
+    );
+    expect((await engine.tryMatch('SKYKING'))?.confidence).toBe(0.9);
+  });
+});
+
 describe('LinguisticRulesEngine — basic matching', () => {
   it('returns null when no rule matches', async () => {
     const engine = new LinguisticRulesEngine(
