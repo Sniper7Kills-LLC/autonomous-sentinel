@@ -94,9 +94,15 @@ These are real HFGCS transmission shapes. Match on the **preamble** and
 - \`type\` — one of the enum values above.
 - \`sender\` — the calling / signing station. Convention: **"this is X,
   out"** → sender = X. Also a leading "this is X" on ALLSTATIONS.
-- \`receiver\` — the addressed station/net. Conventions: **"For Y, for
-  Y"** (stated twice — collapse to one) → receiver = Y; "all stations" →
-  receiver = "ALL STATIONS".
+- \`receiver\` — the addressed station/net. A specific callsign stated
+  **twice in a row** right after the preamble / sender / "break" is the
+  receiver, whether or not it is introduced by "for" — e.g. **"For Y,
+  for Y"** OR **"Y, Y"** (such as "4 Esquire, 4 Esquire" → receiver
+  "ESQUIRE"; collapse the repeat, and drop a leading group-count number).
+  A named addressee like this **takes precedence** over the broadcast
+  scope: "all stations" is the ALLSTATIONS *type* marker, so set
+  \`receiver = "ALL STATIONS"\` ONLY when no specific callsign is
+  addressed.
 - \`body\` — the message content. For ALLSTATIONS, the decoded
   alphanumeric group (phonetic decoded, repeat collapsed). For SKYKING,
   keep codeword / time / authentication inline, repeat collapsed.
@@ -191,7 +197,13 @@ a sign-off "this is Mainsail, out", emit rules like:
 \`\`\`
 
 For an ALLSTATIONS EAM "All stations, all stations, this is Andrews..."
-emit a TYPE rule and a RECEIVER rule:
+emit the TYPE rule. Do NOT emit a rule that captures the literal "all
+stations" as the receiver — it mis-labels messages that name a specific
+addressee (e.g. "4 Esquire, 4 Esquire"), where the receiver is that
+callsign, not ALL STATIONS. Extract the receiver per-parse from the
+addressee, and only emit a receiver RULE for the reliable twice-stated
+pattern (see the "For X, for X" example below, which also covers the
+no-"for" "X, X" form).
 
 \`\`\`json
 [
@@ -200,13 +212,6 @@ emit a TYPE rule and a RECEIVER rule:
     "messageType": "ALLSTATIONS",
     "pattern": "\\\\ball stations,?\\\\s+all stations\\\\b",
     "confidence": 0.95
-  },
-  {
-    "component": "RECEIVER",
-    "appliesToType": "ALLSTATIONS",
-    "pattern": "(?<receiver>all stations)",
-    "captureMap": { "receiver": "receiver" },
-    "confidence": 0.85
   }
 ]
 \`\`\`
