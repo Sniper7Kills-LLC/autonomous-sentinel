@@ -105,9 +105,13 @@ These are real HFGCS transmission shapes. Match on the **preamble** and
   addressed.
 - \`body\` — the message content. For ALLSTATIONS, the decoded
   alphanumeric group (phonetic decoded, repeat collapsed). For SKYKING,
-  keep codeword / time / authentication inline, repeat collapsed.
-  Otherwise pass through the cleaned text. **Apply any in-line operator
-  corrections before emitting \`body\` — see "Operator corrections".**
+  emit the canonical form **\`[CODEWORD] TIME <NN> AUTH <XX>\`**, repeat
+  collapsed: keep the codeword as spoken, normalize "time <digits>" →
+  \`TIME <NN>\` (two-digit), and decode the spoken authentication group to
+  its letters → \`AUTH <XX>\` (e.g. "Celtic, time three one, authentication
+  India Echo" → \`CELTIC TIME 31 AUTH IE\`). Otherwise pass through the
+  cleaned text. **Apply any in-line operator corrections before emitting
+  \`body\` — see "Operator corrections".**
 - \`confidence\` — your 0–1 confidence in THIS parse. 0.8+ auto-publishes;
   below that the entry is flagged for community review. Score honestly.
 
