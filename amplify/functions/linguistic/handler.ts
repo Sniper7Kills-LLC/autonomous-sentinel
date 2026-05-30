@@ -366,17 +366,27 @@ function canonicalResultJson(parsed: {
   });
 }
 
-/** Coerce a Recording's `linguisticAttempts` (a.json()) to an array. */
+/**
+ * Coerce a Recording's `linguisticAttempts` (a.json()) to an array.
+ * AppSync returns AWSJSON parsed (array) on read; a JSON string is
+ * tolerated for older/seeded rows. A present-but-unusable value (an
+ * object, number, etc.) is warned — silently dropping a non-empty log
+ * would erase prior attempt history.
+ */
 function coerceAttempts(value: unknown): LinguisticAttempt[] {
+  if (value == null) return [];
   if (Array.isArray(value)) return value as LinguisticAttempt[];
   if (typeof value === 'string') {
     try {
       const parsed: unknown = JSON.parse(value);
       if (Array.isArray(parsed)) return parsed as LinguisticAttempt[];
     } catch {
-      // fall through
+      // fall through to the warn below
     }
   }
+  console.warn('linguistic: unusable linguisticAttempts value; treating as empty', {
+    type: typeof value,
+  });
   return [];
 }
 
