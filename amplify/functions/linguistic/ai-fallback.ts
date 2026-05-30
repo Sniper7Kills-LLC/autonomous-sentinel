@@ -23,9 +23,11 @@ import { FALLBACK_SYSTEM_PROMPT } from './prompts/fallback-system-prompt';
  * `LINGUISTIC_FALLBACK_MODEL_ID` env var so a Bedrock catalog
  * update doesn't require a redeploy.
  *
- * Default model: `anthropic.claude-sonnet-4-7-20250115-v1:0`
- * (Sonnet 4.7) — best cost-per-quality on structured-extraction
- * tasks per the Anthropic model docs.
+ * Default model: `us.anthropic.claude-sonnet-4-6` — the cross-region
+ * inference-profile id (Claude 4.x on Bedrock is not callable via the
+ * bare foundation-model id; on-demand requires the profile). Verified
+ * available in us-east-1 for this account; admin can swap it via the
+ * env var below as the catalog grows.
  *
  * Required env vars:
  *   - `LINGUISTIC_FALLBACK_MODEL_ID` (string, optional — default
@@ -45,7 +47,7 @@ import { FALLBACK_SYSTEM_PROMPT } from './prompts/fallback-system-prompt';
  * so vitest never hits AWS.
  */
 
-export const DEFAULT_FALLBACK_MODEL_ID = 'anthropic.claude-sonnet-4-7-20250115-v1:0';
+export const DEFAULT_FALLBACK_MODEL_ID = 'us.anthropic.claude-sonnet-4-6';
 
 // The default lives in a git-reviewable module (not the DB). The handler
 // overrides it with the active `LinguisticPromptTemplate` body when one

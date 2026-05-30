@@ -147,6 +147,14 @@ describe('tryBedrockFallback — happy path', () => {
     expect(await tryBedrockFallback('   ', { client })).toBeNull();
     expect(calls).toHaveLength(0);
   });
+
+  it('defaults to a cross-region inference-profile model id (#554)', () => {
+    // Claude 4.x on Bedrock is only callable via a cross-region inference
+    // profile (`us.`/`global.` prefix), never a bare foundation-model id.
+    // A bare/typo id throws "The provided model identifier is invalid" at
+    // runtime — lock the form so it can't regress silently.
+    expect(DEFAULT_FALLBACK_MODEL_ID).toMatch(/^(us|global|eu|apac)\.anthropic\./);
+  });
 });
 
 describe('tryBedrockFallback — env overrides', () => {
