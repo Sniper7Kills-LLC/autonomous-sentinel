@@ -112,11 +112,35 @@ export interface PreprocessQueueMessage {
   enqueuedAt: string;
 }
 
+/**
+ * `enqueueLinguistic` publishes a transcript message straight onto the
+ * linguistic SQS queue (#566 `reparseRecording`), skipping the
+ * preprocess + transcribe stages. The payload is the same
+ * `TranscriptQueueMessage` shape the linguistic Lambda already consumes,
+ * so the existing classifier / dedup path runs unchanged. Default
+ * implementation publishes via the AWS SDK against `LINGUISTIC_QUEUE_URL`.
+ */
+export type EnqueueLinguisticFn = (msg: TranscriptQueueMessage) => Promise<void>;
+
+/**
+ * Linguistic-stage queue message (re-parse). Mirrors the
+ * `TranscriptQueueMessage` the Whisper container publishes + the
+ * linguistic Lambda parses. `kind: 'transcript'` is explicit so the
+ * linguistic handler routes it to `processTranscript`.
+ */
+export interface TranscriptQueueMessage {
+  kind: 'transcript';
+  recordingId: string;
+  transcript: string;
+  enqueuedAt: string;
+}
+
 interface Deps {
   dataClient?: RecordingMutationsDataClient;
   audit?: AuditFn;
   now?: () => Date;
   enqueuePreprocess?: EnqueuePreprocessFn;
+  enqueueLinguistic?: EnqueueLinguisticFn;
 }
 
 let injected: Deps = {};
@@ -160,6 +184,27 @@ async function defaultEnqueuePreprocess(msg: PreprocessQueueMessage): Promise<vo
   const queueUrl = process.env.PREPROCESS_QUEUE_URL;
   if (!queueUrl) {
     console.warn('submitRecording: PREPROCESS_QUEUE_URL unset — pipeline kick-off skipped', {
+      recordingId: msg.recordingId,
+    });
+    return;
+  }
+  await getSqsClient().send(
+    new SendMessageCommand({
+      QueueUrl: queueUrl,
+      MessageBody: JSON.stringify(msg),
+    }),
+  );
+}
+
+/**
+ * Production implementation of {@link EnqueueLinguisticFn}. Reads the
+ * queue URL from `LINGUISTIC_QUEUE_URL` (wired in `amplify/backend.ts`
+ * against `pipelineQueues.linguistic.main.queueUrl`).
+ */
+async function defaultEnqueueLinguistic(msg: TranscriptQueueMessage): Promise<void> {
+  const queueUrl = process.env.LINGUISTIC_QUEUE_URL;
+  if (!queueUrl) {
+    console.warn('reparseRecording: LINGUISTIC_QUEUE_URL unset — re-parse enqueue skipped', {
       recordingId: msg.recordingId,
     });
     return;
@@ -519,6 +564,97 @@ async function dispatchReprocess(
   return after;
 }
 
+/**
+ * `reparseRecording` — moderator/admin re-runs ONLY the linguistic
+ * (AI parse) stage on a recording's stored transcript, skipping
+ * preprocess + transcribe (#566). Use case: re-parse after a model /
+ * prompt change without paying to re-transcribe the audio.
+ *
+ * Enqueues the stored `transcript` straight onto the linguistic SQS
+ * queue as the same `TranscriptQueueMessage` the Whisper container
+ * publishes, so the existing classifier + dedup + supersede path
+ * (#454/#556) runs unchanged. Writes a `RECORDING_REPROCESS` AuditLog
+ * entry (the linguistic re-run is the auditable action; the row itself
+ * is not mutated here).
+ *
+ * Guards: caller must be moderator or admin; the Recording must exist,
+ * not be soft-deleted, and carry a non-empty `transcript` (a recording
+ * that never transcribed has nothing to re-parse).
+ */
+async function dispatchReparse(
+  event: Parameters<AppSyncResolverHandler<Record<string, unknown>, RecordingRow | null>>[0],
+  deps: {
+    client: RecordingMutationsDataClient;
+    audit: AuditFn;
+    now: () => Date;
+    enqueueLinguistic: EnqueueLinguisticFn;
+  },
+): Promise<RecordingRow | null> {
+  if (!isModeratorOrAdmin(event.identity)) {
+    throw new Error('reparseRecording: caller is not in the moderator or admin group');
+  }
+  const actorSub = identitySub(event.identity);
+  if (!actorSub) {
+    throw new Error('reparseRecording: caller has no identity sub');
+  }
+
+  const targetId =
+    typeof event.arguments.recordingId === 'string' ? event.arguments.recordingId : '';
+  const reason = typeof event.arguments.reason === 'string' ? event.arguments.reason : '';
+  if (!targetId) {
+    throw new Error('reparseRecording: recordingId argument is required');
+  }
+
+  const fetched = await deps.client.models.Recording.get({ id: targetId });
+  const before = fetched.data;
+  if (!before) {
+    throw new Error(`reparseRecording: Recording row not found for id=${targetId}`);
+  }
+  if (before.deletedAt) {
+    throw new Error(`reparseRecording: Recording ${targetId} is deleted and cannot be re-parsed`);
+  }
+  const transcript = typeof before.transcript === 'string' ? before.transcript : '';
+  if (!transcript) {
+    throw new Error(
+      `reparseRecording: Recording ${targetId} has no stored transcript — re-transcribe (reprocessRecording) first`,
+    );
+  }
+
+  const ts = deps.now().toISOString();
+
+  // Enqueue onto the linguistic queue FIRST — the functional re-parse
+  // must complete even if the audit write hiccups. Same payload shape the
+  // Whisper container publishes, so the linguistic Lambda's
+  // processTranscript runs unchanged (#454 dedup + #556 supersede).
+  await deps.enqueueLinguistic({
+    kind: 'transcript',
+    recordingId: targetId,
+    transcript,
+    enqueuedAt: ts,
+  });
+
+  // Audit best-effort — a failed audit must not strand a re-parse already
+  // on the queue or surface as a client error. The row is not mutated, so
+  // before == after; the AuditLog records the action + actor.
+  try {
+    await deps.audit(auditContextFrom(event), {
+      action: 'RECORDING_REPROCESS',
+      targetType: 'Recording',
+      targetId,
+      before: snapshot(before),
+      after: snapshot(before),
+      reason: reason ? reason : 'Re-parse transcript (linguistic stage only) (#566)',
+    });
+  } catch (err) {
+    console.error('reparseRecording: audit write failed (re-parse still enqueued)', {
+      recordingId: targetId,
+      err: String(err),
+    });
+  }
+
+  return before;
+}
+
 // `_context` / `_callback` are declared explicitly (vs. the
 // shorter `async (event) => …` form) so the test fixtures that
 // pass all three Lambda-runtime arguments don't trip CodeQL's
@@ -534,6 +670,8 @@ export const handler: AppSyncResolverHandler<Record<string, unknown>, RecordingR
   const now = injected.now ?? (() => new Date());
   const enqueuePreprocess: EnqueuePreprocessFn =
     injected.enqueuePreprocess ?? defaultEnqueuePreprocess;
+  const enqueueLinguistic: EnqueueLinguisticFn =
+    injected.enqueueLinguistic ?? defaultEnqueueLinguistic;
   const deps = { client, audit: auditFn, now };
 
   // AppSync's pipeline-function payload puts `fieldName` at the top level
@@ -549,6 +687,8 @@ export const handler: AppSyncResolverHandler<Record<string, unknown>, RecordingR
       return dispatchSubmit(event, { client, now, enqueuePreprocess });
     case 'reprocessRecording':
       return dispatchReprocess(event, { client, audit: auditFn, now, enqueuePreprocess });
+    case 'reparseRecording':
+      return dispatchReparse(event, { client, audit: auditFn, now, enqueueLinguistic });
     default:
       throw new Error(`recordingMutations: unsupported fieldName "${field}"`);
   }

@@ -19,6 +19,11 @@ import {
   type FallbackResult,
   type ProposedRule,
 } from './ai-fallback';
+import {
+  audit as defaultAudit,
+  type AuditContext,
+  type AuditOptions,
+} from '../../data/audit-log-helper';
 
 /**
  * Linguistic Lambda (#433 stage 4).
@@ -142,6 +147,31 @@ export interface LinguisticDataClient {
       }) => Promise<{ data: { id?: string } | null; errors?: unknown }>;
       delete: (input: { id: string }) => Promise<{ data: unknown; errors?: unknown }>;
       /**
+       * Read the prior (M_old) Message on a re-run (#556). Its
+       * `submitterId` distinguishes a pipeline-created message (null) from
+       * a recording-less manual submission (set) — the latter is never
+       * superseded by a re-run.
+       */
+      get: (input: { id: string }) => Promise<{
+        data: {
+          id: string;
+          submitterId?: string | null;
+          deletedAt?: string | null;
+        } | null;
+        errors?: unknown;
+      }>;
+      /**
+       * Soft-delete the superseded M_old on a re-run that produced a
+       * genuinely different parse (#556). Sets `deletedAt` (+ `deletedBy`
+       * = null: a re-run is a system action, the AuditLog carries the
+       * actor when one exists).
+       */
+      update: (input: {
+        id: string;
+        deletedAt?: string | null;
+        deletedReason?: string | null;
+      }) => Promise<{ data: unknown; errors?: unknown }>;
+      /**
        * Dedup candidate lookup (#454) — Messages of the same type within
        * the broadcast-time window, excluding soft-deleted. Uses the
        * generic `list` (filter) rather than the type GSI query: Amplify
@@ -175,6 +205,9 @@ export interface LinguisticDataClient {
         id: string;
         messageId?: string | null;
         transcript?: string | null;
+        // Stable broadcast time persisted on first pipeline run so re-runs
+        // reuse it and an identical re-parse stays idempotent (#556).
+        broadcastedAt?: string | null;
         transcriptionStatus?: string;
         transcriptionStatusUpdatedAt?: string;
         transcriptionFailed?: boolean;
@@ -186,6 +219,15 @@ export interface LinguisticDataClient {
         // AuditLog.diff precedent; AppSync returns it parsed on read.
         linguisticAttempts?: string;
       }) => Promise<{ data: unknown; errors?: unknown }>;
+      /**
+       * GSI accessor auto-generated for `i('messageId')` on Recording
+       * (#556). Used to count a superseded M_old's remaining Recordings:
+       * a re-run only deletes M_old when this Recording is its ONLY one.
+       */
+      listRecordingByMessageId: (input: { messageId: string }) => Promise<{
+        data: Array<{ id: string; deletedAt?: string | null }> | null;
+        errors?: unknown;
+      }>;
     };
     LinguisticConfig: {
       get: (input: { key: string }) => Promise<{
@@ -225,11 +267,16 @@ export interface RulesMatcher {
   snapshot?(): Promise<RuleSummary[]>;
 }
 
+/** AuditLog writer (#556 supersede-on-re-run). Injected in tests. */
+export type LinguisticAuditFn = (ctx: AuditContext, opts: AuditOptions) => Promise<string>;
+
 export interface LinguisticDeps {
   dataClient?: LinguisticDataClient;
   rulesEngine?: RulesMatcher;
   /** Bedrock AI fallback (#63). Injected in tests; defaults to the real call. */
   bedrockFallback?: (transcript: string, opts?: FallbackOpts) => Promise<FallbackResult | null>;
+  /** AuditLog writer for the M_old supersede entry (#556). */
+  audit?: LinguisticAuditFn;
   now?: () => Date;
   uuid?: () => string;
 }
@@ -467,6 +514,112 @@ function bedrockFallback(transcript: string, opts?: FallbackOpts): Promise<Fallb
   return (injected.bedrockFallback ?? tryBedrockFallback)(transcript, opts);
 }
 
+/** Resolve the AuditLog writer (injected in tests, real helper in prod). */
+function auditFn(ctx: AuditContext, opts: AuditOptions): Promise<string> {
+  return (injected.audit ?? defaultAudit)(ctx, opts);
+}
+
+/**
+ * Supersede the prior Message (M_old) on a re-run that produced a
+ * genuinely different parse (#556 revised semantics).
+ *
+ * A re-run does NOT mutate M_old in place — it creates/links a FRESH
+ * Message via the normal dedup path, then this routine soft-deletes the
+ * now-orphaned M_old, but ONLY when removing it is safe:
+ *
+ *   - M_old must differ from the new target (an identical re-parse keeps
+ *     the same deterministic id and never reaches here).
+ *   - M_old must be a pipeline-created message — `submitterId` unset.
+ *     A recording-less / manual submission is never auto-deleted.
+ *   - This Recording must be M_old's ONLY (non-deleted) Recording. If
+ *     other SDR captures still point at M_old (multi-SDR), it stays.
+ *
+ * Best-effort: a soft-delete or audit hiccup must never sink the
+ * transcript — the fresh Message is already published.
+ */
+async function supersedePriorMessage(
+  client: LinguisticDataClient,
+  priorMessageId: string,
+  newMessageId: string,
+  recordingId: string,
+): Promise<void> {
+  if (!priorMessageId || priorMessageId === newMessageId) return;
+  try {
+    const old = await client.models.Message.get({ id: priorMessageId });
+    const oldRow = old.data;
+    // Already gone, or query miss → nothing to supersede.
+    if (!oldRow || oldRow.deletedAt) return;
+    // Recording-less / manual submission → never auto-delete (#556).
+    if (oldRow.submitterId) {
+      console.info('linguistic: prior Message is recording-less; not superseding', {
+        recordingId,
+        priorMessageId,
+      });
+      return;
+    }
+    // Count M_old's live Recordings. If anything other than this one
+    // still points at it (multi-SDR), leave it standing.
+    const siblings = await client.models.Recording.listRecordingByMessageId({
+      messageId: priorMessageId,
+    });
+    const live = (siblings.data ?? []).filter((r) => !r.deletedAt);
+    const onlyThisOne = live.length === 0 || live.every((r) => r.id === recordingId);
+    if (!onlyThisOne) {
+      console.info('linguistic: prior Message has other Recordings; not superseding', {
+        recordingId,
+        priorMessageId,
+        liveRecordings: live.length,
+      });
+      return;
+    }
+
+    const ts = nowDate().toISOString();
+    const deleted = await client.models.Message.update({
+      id: priorMessageId,
+      deletedAt: ts,
+      deletedReason: `Superseded by re-run of Recording ${recordingId} (#556)`,
+    });
+    if (deleted.errors) {
+      console.warn('linguistic: failed to soft-delete superseded Message', {
+        recordingId,
+        priorMessageId,
+        errors: deleted.errors,
+      });
+      return;
+    }
+    try {
+      await auditFn(
+        { identity: null, request: { headers: {} } },
+        {
+          action: 'MESSAGE_DELETE',
+          targetType: 'Message',
+          targetId: priorMessageId,
+          before: { id: priorMessageId, deletedAt: null },
+          after: { id: priorMessageId, deletedAt: ts },
+          reason: `Superseded by re-run of Recording ${recordingId} (new Message ${newMessageId})`,
+        },
+      );
+    } catch (err) {
+      console.error('linguistic: supersede audit write failed (delete still applied)', {
+        recordingId,
+        priorMessageId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+    console.info('linguistic: superseded prior Message on re-run', {
+      recordingId,
+      priorMessageId,
+      newMessageId,
+    });
+  } catch (err) {
+    console.error('linguistic: supersede check failed (transcript still published)', {
+      recordingId,
+      priorMessageId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 /**
  * Stable JSON of the parsed result for the attempt `resultHash` —
  * fixed key order + omitted blanks so the same parse always hashes the
@@ -662,7 +815,16 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   // the paid Bedrock call below, and `broadcastedAt` drives the dedup
   // window. Falls back to enqueuedAt when absent (testing-portal upload).
   const rec = await client.models.Recording.get({ id: msg.recordingId });
-  const broadcastTime = rec.data?.broadcastedAt ?? msg.enqueuedAt;
+  // Stable broadcast time (#556): persisted on the FIRST pipeline run and
+  // reused on every re-run, so the deterministic id + dedup window don't
+  // shift when a testing-portal re-run carries a fresh `enqueuedAt`. When
+  // absent we fall back to `enqueuedAt` AND persist it below, so the next
+  // run reads the same value and an identical re-parse stays idempotent.
+  const persistedBroadcastedAt = rec.data?.broadcastedAt ?? null;
+  const broadcastTime = persistedBroadcastedAt ?? msg.enqueuedAt;
+  // The Message this Recording pointed at before this run (M_old). On a
+  // re-run that produces a different parse we supersede it (#556).
+  const priorMessageId = rec.data?.messageId ?? null;
   const existingAttempts = coerceAttempts(rec.data?.linguisticAttempts);
 
   const engine = rulesEngine();
@@ -909,6 +1071,10 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
     transcript: msg.transcript,
     transcriptionStatus: 'PUBLISHED',
     transcriptionStatusUpdatedAt: ts,
+    // Persist a stable broadcast time on the FIRST run only (#556), so
+    // every subsequent re-run reuses it and an unchanged re-parse maps to
+    // the same deterministic Message id (no churn).
+    ...(persistedBroadcastedAt ? {} : { broadcastedAt: broadcastTime }),
     // Persist the appended attempt log (#64). Stringified for AWSJSON.
     linguisticAttempts: JSON.stringify(attempts),
     ...(msg.wordTimestampsKey ? { wordTimestampsKey: msg.wordTimestampsKey } : {}),
@@ -934,6 +1100,15 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
     throw new Error(
       `linguistic: Recording.update returned errors: ${JSON.stringify(updated.errors)}`,
     );
+  }
+
+  // Re-run supersede (#556): the Recording now points at the fresh
+  // Message. If it previously pointed at a DIFFERENT pipeline-created
+  // Message that this Recording was the sole owner of, soft-delete that
+  // orphaned M_old. Runs only after the link succeeds so we never delete
+  // a Message the Recording still references. Best-effort inside.
+  if (priorMessageId && targetMessageId && priorMessageId !== targetMessageId) {
+    await supersedePriorMessage(client, priorMessageId, targetMessageId, msg.recordingId);
   }
 
   console.info('linguistic: published Message', {

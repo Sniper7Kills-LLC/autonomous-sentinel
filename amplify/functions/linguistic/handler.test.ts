@@ -32,8 +32,14 @@ interface DataStub {
   createSpy: ReturnType<typeof vi.fn>;
   updateSpy: ReturnType<typeof vi.fn>;
   deleteSpy: ReturnType<typeof vi.fn>;
+  /** Message.get — reads M_old on a re-run (#556). */
+  msgGetSpy: ReturnType<typeof vi.fn>;
+  /** Message.update — soft-deletes superseded M_old (#556). */
+  msgUpdateSpy: ReturnType<typeof vi.fn>;
   getSpy: ReturnType<typeof vi.fn>;
   listSpy: ReturnType<typeof vi.fn>;
+  /** Recording.listRecordingByMessageId — counts M_old siblings (#556). */
+  recByMsgSpy: ReturnType<typeof vi.fn>;
   configGetSpy: ReturnType<typeof vi.fn>;
   promptListSpy: ReturnType<typeof vi.fn>;
   ruleCreateSpy: ReturnType<typeof vi.fn>;
@@ -52,11 +58,19 @@ function makeDataStub(
   const createSpy = vi.fn().mockResolvedValue({ data: { id: 'msg-uuid-1' }, errors: null });
   const updateSpy = vi.fn().mockResolvedValue({ data: {}, errors: null });
   const deleteSpy = vi.fn().mockResolvedValue({ data: {}, errors: null });
-  // Recording.get → no broadcastedAt (testing-portal upload) by default.
+  // Message.get → M_old lookup on a re-run (#556). Default: no prior
+  // message exists (first run), so the supersede path is never entered.
+  const msgGetSpy = vi.fn().mockResolvedValue({ data: null, errors: null });
+  // Message.update → soft-delete of a superseded M_old (#556).
+  const msgUpdateSpy = vi.fn().mockResolvedValue({ data: {}, errors: null });
+  // Recording.get → no broadcastedAt (testing-portal upload), no prior
+  // messageId (first run) by default.
   const getSpy = vi
     .fn()
-    .mockResolvedValue({ data: { id: 'rec', broadcastedAt: null }, errors: null });
+    .mockResolvedValue({ data: { id: 'rec', broadcastedAt: null, messageId: null }, errors: null });
   const listSpy = vi.fn().mockResolvedValue({ data: candidates, errors: null });
+  // Recording.listRecordingByMessageId → M_old sibling count (#556).
+  const recByMsgSpy = vi.fn().mockResolvedValue({ data: [], errors: null });
   const configGetSpy = vi.fn().mockImplementation(() => {
     return Promise.resolve({
       data: confidenceValue === null ? null : { value: confidenceValue },
@@ -73,8 +87,14 @@ function makeDataStub(
         create: createSpy as never,
         delete: deleteSpy as never,
         list: listSpy as never,
+        get: msgGetSpy as never,
+        update: msgUpdateSpy as never,
       },
-      Recording: { get: getSpy as never, update: updateSpy as never },
+      Recording: {
+        get: getSpy as never,
+        update: updateSpy as never,
+        listRecordingByMessageId: recByMsgSpy as never,
+      },
       LinguisticConfig: { get: configGetSpy as never },
       LinguisticPromptTemplate: {
         list: promptListSpy as never,
@@ -87,8 +107,11 @@ function makeDataStub(
     createSpy,
     updateSpy,
     deleteSpy,
+    msgGetSpy,
+    msgUpdateSpy,
     getSpy,
     listSpy,
+    recByMsgSpy,
     configGetSpy,
     promptListSpy,
     ruleCreateSpy,
@@ -1470,5 +1493,294 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
     const attempts = attemptsOf(updateSpy.mock.calls[0]?.[0]);
     expect(attempts).toHaveLength(1);
     expect(attempts[0]?.resultHash).toBe('prev');
+  });
+});
+
+describe('linguistic — re-run supersede + stable broadcast time (#556)', () => {
+  /** Recording.get fixture carrying a prior messageId + broadcastedAt. */
+  function recState(
+    getSpy: ReturnType<typeof vi.fn>,
+    state: { messageId?: string | null; broadcastedAt?: string | null },
+  ): void {
+    getSpy.mockResolvedValue({
+      data: { id: 'rec', broadcastedAt: null, messageId: null, ...state },
+      errors: null,
+    });
+  }
+
+  it('persists broadcastedAt on the FIRST run when absent (stable time)', async () => {
+    const { client, updateSpy } = makeDataStub();
+    __setDeps({
+      dataClient: client,
+      bedrockFallback: bedrockOk({ type: 'SKYKING', body: 'skyking do not answer' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-first',
+        transcript: 'skyking skyking do not answer',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    // First run with no stored broadcastedAt → enqueuedAt is persisted so
+    // the next run reuses it.
+    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ broadcastedAt: '2026-05-24T17:55:00Z' }),
+    );
+  });
+
+  it('reuses the stored broadcastedAt (does NOT re-persist) on a re-run', async () => {
+    const stub = makeDataStub();
+    // Stored broadcast time from the first run; the re-run carries a LATER
+    // enqueuedAt that must be ignored for the deterministic id.
+    recState(stub.getSpy, {
+      messageId: 'm-same',
+      broadcastedAt: '2026-05-24T13:00:00Z',
+    });
+    // M_old read for the supersede check — keep it a no-op delete target
+    // so this test stays focused on the broadcast-time behaviour.
+    stub.msgGetSpy.mockResolvedValue({
+      data: { id: 'm-same', submitterId: null, deletedAt: null },
+      errors: null,
+    });
+    stub.recByMsgSpy.mockResolvedValue({ data: [{ id: 'rec', deletedAt: null }], errors: null });
+    __setDeps({
+      dataClient: stub.client,
+      bedrockFallback: bedrockOk({ type: 'SKYKING', body: 'skyking do not answer' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec',
+        transcript: 'skyking skyking do not answer',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    // Message is created with the STORED broadcast time, not the re-run
+    // enqueuedAt — so an identical re-parse hits the same deterministic id.
+    expect(stub.createSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ broadcastTs: '2026-05-24T13:00:00Z' }),
+    );
+    // The re-run does not overwrite the persisted broadcastedAt.
+    expect(stub.updateSpy.mock.calls[0]?.[0]).not.toHaveProperty('broadcastedAt');
+  });
+
+  it('identical re-parse is idempotent: same Message id, no supersede', async () => {
+    const stub = makeDataStub();
+    // The dedup query returns the existing message so the Recording
+    // re-links to it (same id) → priorMessageId === targetMessageId, and
+    // the supersede path is never entered.
+    stub.listSpy.mockResolvedValue({
+      data: [{ id: 'm-existing', type: 'SKYKING', body: 'skyking do not answer' }],
+      errors: null,
+    });
+    recState(stub.getSpy, {
+      messageId: 'm-existing',
+      broadcastedAt: '2026-05-24T13:00:00Z',
+    });
+    __setDeps({
+      dataClient: stub.client,
+      bedrockFallback: bedrockOk({ type: 'SKYKING', body: 'skyking do not answer' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec',
+        transcript: 'skyking skyking do not answer',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    // Re-linked to the same Message → no create, no supersede delete.
+    expect(stub.createSpy).not.toHaveBeenCalled();
+    expect(stub.msgUpdateSpy).not.toHaveBeenCalled();
+  });
+
+  it('soft-deletes M_old when it is single-audio + pipeline-created', async () => {
+    const stub = makeDataStub();
+    recState(stub.getSpy, {
+      messageId: 'm-old',
+      broadcastedAt: '2026-05-24T13:00:00Z',
+    });
+    // M_old: pipeline-created (no submitterId), not deleted.
+    stub.msgGetSpy.mockResolvedValue({
+      data: { id: 'm-old', submitterId: null, deletedAt: null },
+      errors: null,
+    });
+    // Only this Recording references M_old.
+    stub.recByMsgSpy.mockResolvedValue({
+      data: [{ id: 'rec', deletedAt: null }],
+      errors: null,
+    });
+    const auditSpy = vi.fn().mockResolvedValue('audit-1');
+    __setDeps({
+      dataClient: stub.client,
+      audit: auditSpy,
+      // New parse differs → new deterministic id ≠ m-old.
+      bedrockFallback: bedrockOk({ type: 'SKYKING', body: 'totally different body now' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec',
+        transcript: 'totally different body now',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    // M_old soft-deleted with deletedAt + audit.
+    expect(stub.msgUpdateSpy).toHaveBeenCalledOnce();
+    expect(stub.msgUpdateSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ id: 'm-old', deletedAt: '2026-05-24T18:00:00.000Z' }),
+    );
+    expect(auditSpy).toHaveBeenCalledOnce();
+    expect(auditSpy.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        action: 'MESSAGE_DELETE',
+        targetType: 'Message',
+        targetId: 'm-old',
+      }),
+    );
+  });
+
+  it('does NOT delete M_old when other Recordings reference it (multi-SDR)', async () => {
+    const stub = makeDataStub();
+    recState(stub.getSpy, {
+      messageId: 'm-old',
+      broadcastedAt: '2026-05-24T13:00:00Z',
+    });
+    stub.msgGetSpy.mockResolvedValue({
+      data: { id: 'm-old', submitterId: null, deletedAt: null },
+      errors: null,
+    });
+    // A sibling SDR capture still points at M_old.
+    stub.recByMsgSpy.mockResolvedValue({
+      data: [
+        { id: 'rec', deletedAt: null },
+        { id: 'rec-sibling', deletedAt: null },
+      ],
+      errors: null,
+    });
+    const auditSpy = vi.fn().mockResolvedValue('audit-1');
+    __setDeps({
+      dataClient: stub.client,
+      audit: auditSpy,
+      bedrockFallback: bedrockOk({ type: 'SKYKING', body: 'totally different body now' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec',
+        transcript: 'totally different body now',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(stub.msgUpdateSpy).not.toHaveBeenCalled();
+    expect(auditSpy).not.toHaveBeenCalled();
+  });
+
+  it('does NOT delete M_old when it was a recording-less / manual submission', async () => {
+    const stub = makeDataStub();
+    recState(stub.getSpy, {
+      messageId: 'm-old',
+      broadcastedAt: '2026-05-24T13:00:00Z',
+    });
+    // M_old carries a submitterId → recording-less / manual submission.
+    stub.msgGetSpy.mockResolvedValue({
+      data: { id: 'm-old', submitterId: 'user-sub-123', deletedAt: null },
+      errors: null,
+    });
+    stub.recByMsgSpy.mockResolvedValue({
+      data: [{ id: 'rec', deletedAt: null }],
+      errors: null,
+    });
+    const auditSpy = vi.fn().mockResolvedValue('audit-1');
+    __setDeps({
+      dataClient: stub.client,
+      audit: auditSpy,
+      bedrockFallback: bedrockOk({ type: 'SKYKING', body: 'totally different body now' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec',
+        transcript: 'totally different body now',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(stub.msgUpdateSpy).not.toHaveBeenCalled();
+    expect(auditSpy).not.toHaveBeenCalled();
+  });
+
+  it('does NOT delete M_old when it is already soft-deleted', async () => {
+    const stub = makeDataStub();
+    recState(stub.getSpy, {
+      messageId: 'm-old',
+      broadcastedAt: '2026-05-24T13:00:00Z',
+    });
+    stub.msgGetSpy.mockResolvedValue({
+      data: { id: 'm-old', submitterId: null, deletedAt: '2026-05-20T00:00:00Z' },
+      errors: null,
+    });
+    const auditSpy = vi.fn().mockResolvedValue('audit-1');
+    __setDeps({
+      dataClient: stub.client,
+      audit: auditSpy,
+      bedrockFallback: bedrockOk({ type: 'SKYKING', body: 'totally different body now' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec',
+        transcript: 'totally different body now',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(stub.msgUpdateSpy).not.toHaveBeenCalled();
+    expect(auditSpy).not.toHaveBeenCalled();
+  });
+
+  it('publishes the fresh Message even when the supersede check throws', async () => {
+    const stub = makeDataStub();
+    recState(stub.getSpy, {
+      messageId: 'm-old',
+      broadcastedAt: '2026-05-24T13:00:00Z',
+    });
+    stub.msgGetSpy.mockRejectedValue(new Error('ddb blip'));
+    __setDeps({
+      dataClient: stub.client,
+      bedrockFallback: bedrockOk({ type: 'SKYKING', body: 'totally different body now' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await expect(
+      handler(
+        makeEvent({
+          recordingId: 'rec',
+          transcript: 'totally different body now',
+          enqueuedAt: '2026-05-24T17:55:00Z',
+        }),
+        {} as never,
+        () => undefined,
+      ),
+    ).resolves.not.toThrow();
+    // Fresh Message still created + Recording still PUBLISHED.
+    expect(stub.createSpy).toHaveBeenCalledOnce();
+    expect(stub.updateSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ transcriptionStatus: 'PUBLISHED' }),
+    );
+    errSpy.mockRestore();
   });
 });

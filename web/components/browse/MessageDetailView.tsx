@@ -8,6 +8,7 @@ import { FieldVoteAffordance } from '@/components/validation/FieldVoteAffordance
 import { AbuseReportButton } from '@/components/abuse/AbuseReportButton';
 import { useSessionState } from '@/components/account/SessionGreeting';
 import { DebugDetailsPanel } from './DebugDetailsPanel';
+import { RecordingAdminControls } from './RecordingAdminControls';
 import { getMessage } from '@/lib/messages/query';
 import { listRecordingsForMessage, type DisplayRecording } from '@/lib/messages/recordings';
 import type { DisplayMessage } from '@/lib/messages/types';
@@ -178,6 +179,7 @@ export function MessageDetailView({ messageId }: MessageDetailViewProps) {
                   transcriptionFailed={r.transcriptionFailed}
                   signedIn={session.signedIn}
                 />
+                <RecordingAdminControls recordingId={r.id} hasTranscript={Boolean(r.transcript)} />
               </article>
             ))}
           </div>

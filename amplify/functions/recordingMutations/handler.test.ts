@@ -257,6 +257,132 @@ describe('recordingMutations — reprocessRecording (#505)', () => {
   });
 });
 
+describe('recordingMutations — reparseRecording (#566)', () => {
+  beforeEach(() => {
+    __resetDeps();
+  });
+
+  const transcribedRecording: RecordingRow = {
+    id: 'rec-ok-1',
+    contentHash: 'abc123',
+    originalKey: 'recordings/originals/abc123.wav',
+    transcript: 'skyking skyking do not answer',
+    transcriptionStatus: 'PUBLISHED',
+    transcriptionFailed: false,
+    messageId: 'msg-old-1',
+  };
+
+  function modEvent(args: Record<string, unknown> = {}, group = 'moderator') {
+    return makeEvent({
+      fieldName: 'reparseRecording',
+      arguments: { recordingId: 'rec-ok-1', ...args },
+      identity: {
+        sub: 'cog-mod-002',
+        issuer: 'https://cognito',
+        username: 'mod',
+        claims: {},
+        sourceIp: ['203.0.113.9'],
+        defaultAuthStrategy: 'ALLOW',
+        groups: [group],
+      } as never,
+    });
+  }
+
+  it('moderator: enqueues the stored transcript onto the linguistic queue + audits', async () => {
+    const { client, updateSpy, auditSpy } = makeStubs({ existing: transcribedRecording });
+    const enqueueLinguistic = vi.fn((_msg: unknown) => Promise.resolve());
+    __setDeps({
+      dataClient: client,
+      audit: auditSpy,
+      enqueueLinguistic,
+      now: () => new Date('2026-05-30T12:00:00Z'),
+    });
+
+    const out = await handler(modEvent({ reason: 'new prompt' }), {} as Context, () => undefined);
+
+    // Re-parse does NOT touch the Recording row (no preprocess/transcribe).
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(enqueueLinguistic).toHaveBeenCalledOnce();
+    expect(enqueueLinguistic.mock.calls[0]?.[0]).toEqual({
+      kind: 'transcript',
+      recordingId: 'rec-ok-1',
+      transcript: 'skyking skyking do not answer',
+      enqueuedAt: '2026-05-30T12:00:00.000Z',
+    });
+    expect(auditSpy).toHaveBeenCalledOnce();
+    expect(auditSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'RECORDING_REPROCESS', targetId: 'rec-ok-1' }),
+    );
+    expect(out?.id).toBe('rec-ok-1');
+  });
+
+  it('admin: allowed', async () => {
+    const { client, auditSpy } = makeStubs({ existing: transcribedRecording });
+    const enqueueLinguistic = vi.fn((_msg: unknown) => Promise.resolve());
+    __setDeps({ dataClient: client, audit: auditSpy, enqueueLinguistic });
+    await expect(
+      handler(modEvent({}, 'admin'), {} as Context, () => undefined),
+    ).resolves.toBeTruthy();
+    expect(enqueueLinguistic).toHaveBeenCalledOnce();
+  });
+
+  it('member: rejected (not mod/admin)', async () => {
+    const { client, auditSpy } = makeStubs({ existing: transcribedRecording });
+    const enqueueLinguistic = vi.fn((_msg: unknown) => Promise.resolve());
+    __setDeps({ dataClient: client, audit: auditSpy, enqueueLinguistic });
+    await expect(handler(modEvent({}, 'member'), {} as Context, () => undefined)).rejects.toThrow(
+      /moderator|admin/i,
+    );
+    expect(enqueueLinguistic).not.toHaveBeenCalled();
+  });
+
+  it('rejects a recording with no stored transcript', async () => {
+    const noTranscript: RecordingRow = {
+      ...transcribedRecording,
+      transcript: null,
+    };
+    const { client, auditSpy } = makeStubs({ existing: noTranscript });
+    const enqueueLinguistic = vi.fn((_msg: unknown) => Promise.resolve());
+    __setDeps({ dataClient: client, audit: auditSpy, enqueueLinguistic });
+    await expect(handler(modEvent({}), {} as Context, () => undefined)).rejects.toThrow(
+      /transcript/i,
+    );
+    expect(enqueueLinguistic).not.toHaveBeenCalled();
+  });
+
+  it('rejects when the recording does not exist', async () => {
+    const { client, auditSpy } = makeStubs({ existing: null });
+    const enqueueLinguistic = vi.fn((_msg: unknown) => Promise.resolve());
+    __setDeps({ dataClient: client, audit: auditSpy, enqueueLinguistic });
+    await expect(handler(modEvent({}), {} as Context, () => undefined)).rejects.toThrow(
+      /not found/i,
+    );
+    expect(enqueueLinguistic).not.toHaveBeenCalled();
+  });
+
+  it('rejects a soft-deleted recording', async () => {
+    const deleted: RecordingRow = { ...transcribedRecording, deletedAt: '2026-05-29T00:00:00Z' };
+    const { client, auditSpy } = makeStubs({ existing: deleted });
+    const enqueueLinguistic = vi.fn((_msg: unknown) => Promise.resolve());
+    __setDeps({ dataClient: client, audit: auditSpy, enqueueLinguistic });
+    await expect(handler(modEvent({}), {} as Context, () => undefined)).rejects.toThrow(/deleted/i);
+    expect(enqueueLinguistic).not.toHaveBeenCalled();
+  });
+
+  it('still returns the row when the audit write fails (re-parse already enqueued)', async () => {
+    const { client } = makeStubs({ existing: transcribedRecording });
+    const enqueueLinguistic = vi.fn((_msg: unknown) => Promise.resolve());
+    const failingAudit = vi.fn(() => Promise.reject(new Error('audit down')));
+    __setDeps({ dataClient: client, audit: failingAudit, enqueueLinguistic });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const out = await handler(modEvent({}), {} as Context, () => undefined);
+    expect(enqueueLinguistic).toHaveBeenCalledOnce();
+    expect(out?.id).toBe('rec-ok-1');
+    errSpy.mockRestore();
+  });
+});
+
 describe('recordingMutations — softDeleteRecording', () => {
   beforeEach(() => {
     __resetDeps();
