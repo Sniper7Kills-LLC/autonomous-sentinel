@@ -27,6 +27,9 @@
 
 export const JOB_NAME_PREFIX = 'eam-';
 
+/** Amazon Transcribe's hard cap on a transcription job name. */
+export const JOB_NAME_MAX_LENGTH = 200;
+
 /** Chars Transcribe forbids in a job name collapse to `_`. */
 function sanitiseRecordingId(recordingId: string): string {
   return recordingId.replace(/[^0-9a-zA-Z._-]/g, '_');
@@ -58,11 +61,20 @@ export function buildJobName(recordingId: string, opts: BuildJobNameOpts = {}): 
     .padStart(6, '0')}`;
   const name = `${JOB_NAME_PREFIX}${safe}-${suffix}`;
   // Transcribe caps job names at 200 chars. A UUID recordingId
-  // (36 chars) + `eam-` + suffix is well under, but a pathological
-  // legacy id could overflow — truncate defensively. Truncation can
-  // only drop trailing suffix chars, never the embedded id, because
-  // the id sits before the suffix.
-  return name.slice(0, 200);
+  // (36 chars) + `eam-` + suffix is ~60 chars — nowhere near the cap.
+  // We must NOT silently `slice(0, 200)`: that would chop the trailing
+  // `-<ts>-<rand>` suffix, leaving `recordingIdFromJobName` unable to
+  // strip the (now-missing) suffix and so decoding the wrong/partial
+  // id. For a pathologically long id we fail loudly instead — the
+  // caller's retry/DLQ path surfaces it rather than the finalizer
+  // silently mis-attributing a transcript. Real recordingIds never
+  // trip this.
+  if (name.length > JOB_NAME_MAX_LENGTH) {
+    throw new Error(
+      `buildJobName: encoded job name (${name.length} chars) exceeds Transcribe's ${JOB_NAME_MAX_LENGTH}-char limit for recordingId of length ${recordingId.length}`,
+    );
+  }
+  return name;
 }
 
 /**

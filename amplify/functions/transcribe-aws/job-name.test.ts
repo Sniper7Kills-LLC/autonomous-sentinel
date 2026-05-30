@@ -31,10 +31,29 @@ describe('buildJobName', () => {
     expect(recordingIdFromJobName(b)).toBe(id);
   });
 
-  it('caps the job name at 200 chars', () => {
+  it('throws rather than emit an undecodable name when the id would overflow the 200-char cap', () => {
     const longId = 'x'.repeat(500);
-    const name = buildJobName(longId, { now: () => 1, rand: () => 0 });
+    expect(() => buildJobName(longId, { now: () => 1, rand: () => 0 })).toThrow(/200-char/);
+  });
+
+  it('round-trips a long-but-fitting id exactly (no partial-id decode)', () => {
+    // ~150-char id still fits under the cap → decode returns it verbatim.
+    const longId = 'rec-' + 'a'.repeat(150);
+    const name = buildJobName(longId, { now: () => 1700000000000, rand: () => 0.5 });
     expect(name.length).toBeLessThanOrEqual(200);
+    expect(recordingIdFromJobName(name)).toBe(longId);
+  });
+
+  it('for any id, buildJobName→decode returns the exact id or throws — never a wrong/partial id', () => {
+    for (const id of ['a', 'rec-123', '11111111-2222-3333-4444-555555555555', 'x'.repeat(140)]) {
+      let name: string;
+      try {
+        name = buildJobName(id, { now: () => 1, rand: () => 0 });
+      } catch {
+        continue; // throwing is an acceptable outcome (overflow)
+      }
+      expect(recordingIdFromJobName(name)).toBe(id);
+    }
   });
 
   it('throws on an empty recordingId', () => {

@@ -3,6 +3,7 @@ import {
   BASE_VOCAB,
   VOCAB_HASH_LENGTH,
   VOCAB_NAME_PREFIX,
+  buildVocabTableTsv,
   canonicaliseCallsigns,
   computeVocabHash,
   unionWithBaseVocab,
@@ -180,5 +181,37 @@ describe('vocabChanged', () => {
     expect(fakePrev.slice(0, VOCAB_HASH_LENGTH)).toBe(next.short);
     expect(fakePrev).not.toBe(next.full);
     expect(vocabChanged(fakePrev, next)).toBe(true);
+  });
+});
+
+describe('TSV injection hardening', () => {
+  it('a callsign containing a newline does not add a broken row — one row per term', () => {
+    const tsv = computeVocabHash(['FOO\nBAR']).tableTsv;
+    const lines = tsv.split('\n').filter((l) => l.length > 0);
+    // Header + one row per term. Every non-empty line must have exactly
+    // one tab (Phrase\tDisplayAs) — a leaked newline/tab would create a
+    // line with 0 or 2 tabs.
+    expect(lines[0]).toBe('Phrase\tDisplayAs');
+    for (const line of lines) {
+      expect(line.split('\t')).toHaveLength(2);
+    }
+    // The injected callsign survives as a single sanitised phrase.
+    expect(tsv).toContain('FOO-BAR');
+  });
+
+  it('buildVocabTableTsv strips tab/newline/CR from Phrase and DisplayAs cells', () => {
+    const tsv = buildVocabTableTsv([{ phrase: 'EVIL\tPHRASE', displayAs: 'line1\nline2\rline3' }]);
+    const lines = tsv.split('\n').filter((l) => l.length > 0);
+    // Header + exactly one data row despite the embedded newline/CR.
+    expect(lines).toHaveLength(2);
+    expect(lines[1]!.split('\t')).toHaveLength(2);
+    expect(lines[1]).toBe('EVIL PHRASE\tline1 line2 line3');
+  });
+
+  it('every generated TSV line has exactly one tab (full base ∪ callsigns table)', () => {
+    const tsv = computeVocabHash(['SKY KING', 'BACK\tBONE']).tableTsv;
+    for (const line of tsv.split('\n').filter((l) => l.length > 0)) {
+      expect((line.match(/\t/g) ?? []).length).toBe(1);
+    }
   });
 });

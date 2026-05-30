@@ -214,15 +214,33 @@ export function buildVocabTable(callsigns: readonly (string | null | undefined)[
 }
 
 /**
+ * Strips the TSV structural characters (`\t`, `\n`, `\r`) from a cell
+ * value, replacing each run with a single space and trimming. Defends
+ * the serialisation boundary against TSV injection: a callsign /
+ * DisplayAs carrying a tab or newline would otherwise split a logical
+ * term across multiple TSV columns / rows and corrupt the whole table.
+ * Upstream canonicalisation already collapses whitespace in the Phrase
+ * token, but this guards every cell unconditionally.
+ */
+function sanitiseTsvCell(value: string): string {
+  return value
+    .replace(/[\t\n\r]+/g, ' ')
+    .replace(/ {2,}/g, ' ')
+    .trim();
+}
+
+/**
  * Serialises vocab rows to the Transcribe table-format TSV body:
  * a `Phrase<TAB>DisplayAs` header followed by one tab-separated row
  * per term. A row with no DisplayAs leaves that cell empty (Transcribe
- * then renders the Phrase verbatim — fine for single words).
+ * then renders the Phrase verbatim — fine for single words). Every cell
+ * is sanitised so no Phrase / DisplayAs value can inject a stray tab or
+ * newline and break the one-row-per-term structure.
  */
 export function buildVocabTableTsv(rows: readonly VocabRow[]): string {
   const lines = ['Phrase\tDisplayAs'];
   for (const r of rows) {
-    lines.push(`${r.phrase}\t${r.displayAs ?? ''}`);
+    lines.push(`${sanitiseTsvCell(r.phrase)}\t${sanitiseTsvCell(r.displayAs ?? '')}`);
   }
   return `${lines.join('\n')}\n`;
 }
