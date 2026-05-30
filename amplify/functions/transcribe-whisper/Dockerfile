@@ -121,9 +121,13 @@ RUN chmod +x /usr/local/bin/ffmpeg
 COPY package.json ${LAMBDA_TASK_ROOT}/
 RUN cd ${LAMBDA_TASK_ROOT} && npm install --omit=dev --no-package-lock
 
-COPY handler.mjs ${LAMBDA_TASK_ROOT}/handler.mjs
-COPY run-whisper.mjs ${LAMBDA_TASK_ROOT}/run-whisper.mjs
-COPY opus-transcode.mjs ${LAMBDA_TASK_ROOT}/opus-transcode.mjs
+# Copy ALL runtime ESM modules with a glob, not an explicit per-file
+# list: a new handler module (e.g. word-timestamps.mjs, #527) added to
+# an existing `import` but missed here ships an image whose handler.mjs
+# crashes at init with ERR_MODULE_NOT_FOUND. `*.mjs` matches the runtime
+# modules only — test files are `.test.ts` and type decls are `.d.mts`,
+# so neither is bundled.
+COPY *.mjs ${LAMBDA_TASK_ROOT}/
 
 # Build identity baked into the image so the handler can log which
 # build is actually running (#442 follow-up). Defaults survive a
