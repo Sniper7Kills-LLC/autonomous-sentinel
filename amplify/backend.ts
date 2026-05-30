@@ -853,6 +853,25 @@ linguisticLambda.addEventSource(
   new SqsEventSource(pipelineQueues.linguistic.main, { batchSize: 1 }),
 );
 
+// LinguisticRule rules-engine reads (#62/#460). `load-rules-ddb.ts`
+// Scans the LinguisticRule table directly via the DDB SDK (the engine
+// caches the result per cold start, TTL-refreshed), so the handler
+// needs the table name + a Scan grant. This is separate from the
+// AppSync Amplify Data path used for Message/Recording writes. With no
+// seeded rules the engine returns no match and the handler falls back
+// to its inline classifier — non-regressive until rules are curated.
+const linguisticRuleTable = backend.data.resources.tables['LinguisticRule'];
+if (!linguisticRuleTable) {
+  throw new Error('backend: LinguisticRule table not found on data resources');
+}
+linguisticLambda.addEnvironment('LINGUISTIC_RULE_TABLE_NAME', linguisticRuleTable.tableName);
+linguisticLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:Scan'],
+    resources: [linguisticRuleTable.tableArn],
+  }),
+);
+
 // LinguisticConfig audit + reprocess-on-bump wiring (#481).
 //
 // A DynamoDB stream on the LinguisticConfig table drives the
