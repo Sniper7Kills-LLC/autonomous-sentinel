@@ -16,6 +16,7 @@ describe('toDisplayRecording', () => {
       webCanonicalKey: 'recordings/web/r1.opus',
       wordTimestampsKey: 'recordings/web/r1.words.json',
       peaksJsonKey: 'recordings/web/r1.peaks.json',
+      transcriptionConfidence: 0.73,
     });
     expect(r.frequencyKhz).toBe(11175);
     expect(r.modulation).toBe('USB');
@@ -24,6 +25,7 @@ describe('toDisplayRecording', () => {
     expect(r.webCanonicalKey).toBe('recordings/web/r1.opus');
     expect(r.wordTimestampsKey).toBe('recordings/web/r1.words.json');
     expect(r.peaksJsonKey).toBe('recordings/web/r1.peaks.json');
+    expect(r.transcriptionConfidence).toBe(0.73);
   });
 
   it('treats undefined fields as null/false', () => {
@@ -35,6 +37,7 @@ describe('toDisplayRecording', () => {
     expect(r.webCanonicalKey).toBeNull();
     expect(r.wordTimestampsKey).toBeNull();
     expect(r.peaksJsonKey).toBeNull();
+    expect(r.transcriptionConfidence).toBeNull();
     expect(r.linguisticAttempts).toEqual([]);
   });
 
