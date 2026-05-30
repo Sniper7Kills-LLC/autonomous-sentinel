@@ -28,6 +28,7 @@ describe('classifyWithRules (#460 slice 1 — rules engine wiring)', () => {
       type: 'SKYKING',
       confidence: 0.9,
       rule: 'rule:skyking-v3',
+      promptVersion: 3,
       fields: { sender: 'MAINSAIL', body: 'ALFA BRAVO' },
     });
   });

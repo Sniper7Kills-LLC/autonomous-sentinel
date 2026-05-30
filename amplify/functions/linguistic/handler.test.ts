@@ -791,3 +791,94 @@ describe('linguistic — deleted-Recording tombstone (#459)', () => {
     errSpy.mockRestore();
   });
 });
+
+describe('linguistic — attempt log (#64)', () => {
+  function parseAttempts(call: unknown): Array<Record<string, unknown>> {
+    const input = call as { linguisticAttempts?: string };
+    return JSON.parse(input.linguisticAttempts ?? '[]') as Array<Record<string, unknown>>;
+  }
+
+  it('appends a successful rules-path attempt onto the Recording', async () => {
+    const { client, updateSpy } = makeDataStub();
+    __setDeps({
+      dataClient: client,
+      rulesEngine: {
+        tryMatch: () =>
+          Promise.resolve({
+            ruleId: 'skyking-v3',
+            promptVersion: 3,
+            message: { messageType: 'SKYKING', fields: {} },
+          }),
+      },
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'm',
+    });
+    await handler(
+      makeEvent({ recordingId: 'rec-a', transcript: 'noise', enqueuedAt: '2026-05-24T17:55:00Z' }),
+      {} as never,
+      () => undefined,
+    );
+    const attempts = parseAttempts(updateSpy.mock.calls[0]?.[0]);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toMatchObject({
+      provider: 'rules',
+      promptVersion: 3,
+      promptHash: null,
+      success: true,
+      ts: '2026-05-24T18:00:00.000Z',
+    });
+    expect(typeof attempts[0]?.resultHash).toBe('string');
+  });
+
+  it('records promptVersion null for the inline-fallback path', async () => {
+    const { client, updateSpy } = makeDataStub();
+    __setDeps({ dataClient: client, now: () => new Date('2026-05-24T18:00:00Z'), uuid: () => 'm' });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-b',
+        transcript: 'Skyking, do not answer',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    const attempts = parseAttempts(updateSpy.mock.calls[0]?.[0]);
+    expect(attempts[0]).toMatchObject({ provider: 'rules', promptVersion: null });
+  });
+
+  it('does not double-append on redrive when a matching success already exists', async () => {
+    const { client, updateSpy, getSpy } = makeDataStub();
+    // Recording already carries a successful (rules, null, null) attempt.
+    getSpy.mockResolvedValueOnce({
+      data: {
+        id: 'rec-c',
+        broadcastedAt: null,
+        linguisticAttempts: [
+          {
+            provider: 'rules',
+            promptVersion: null,
+            promptHash: null,
+            resultHash: 'prev',
+            success: true,
+            ts: '2026-05-24T17:00:00.000Z',
+          },
+        ],
+      },
+      errors: null,
+    });
+    __setDeps({ dataClient: client, now: () => new Date('2026-05-24T18:00:00Z'), uuid: () => 'm' });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-c',
+        transcript: 'Skyking, do not answer',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    const attempts = parseAttempts(updateSpy.mock.calls[0]?.[0]);
+    // shouldSkip → no new entry; the prior one is persisted unchanged.
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]?.resultHash).toBe('prev');
+  });
+});
