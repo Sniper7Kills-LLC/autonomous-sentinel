@@ -362,33 +362,48 @@ export async function tryBedrockFallback(
   let parsed: unknown = null;
   let firstResponse: ConverseCommandOutput | null = null;
 
+  // First attempt, with ONE retry on a transient Converse throw (#577).
+  // Bedrock intermittently throws "Bedrock is unable to process your
+  // request." / throttling on the first call; a single retry usually
+  // clears it. Without this the transcript fell back to inline type-only
+  // despite being perfectly parseable.
   try {
     firstResponse = await client.send(new ConverseCommand(buildInput(modelId, initialMessages)));
-    parsed = extractToolUse(firstResponse);
   } catch (err) {
-    console.warn('ai-fallback: Bedrock Converse threw on first attempt', {
+    console.warn('ai-fallback: Bedrock Converse threw on first attempt; retrying once', {
       modelId,
       error: err instanceof Error ? err.message : String(err),
     });
-    return null;
+    try {
+      firstResponse = await client.send(new ConverseCommand(buildInput(modelId, initialMessages)));
+    } catch (err2) {
+      console.warn('ai-fallback: Bedrock Converse threw on transient retry; giving up', {
+        modelId,
+        error: err2 instanceof Error ? err2.message : String(err2),
+      });
+      return null;
+    }
   }
+  parsed = extractToolUse(firstResponse);
 
   if (!isParsedEam(parsed)) {
-    // Corrective retry — append the previous attempt + a system-
-    // shaped user message telling the model the response was off-
-    // schema. One retry only; persistent failure -> null.
+    // Corrective retry (#577) — re-ask as a FRESH single user turn with an
+    // appended instruction. We deliberately do NOT append the prior
+    // assistant `tool_use` turn: the Converse API requires a following
+    // `tool_result` block for any `tool_use`, so a plain-text correction
+    // is rejected ("tool_use ids were found without tool_result blocks")
+    // and the old retry ALWAYS failed. A fresh ask sidesteps the coupling.
     retried = true;
     const correctiveMessages: BedrockMessage[] = [
-      ...initialMessages,
-      ...(firstResponse?.output?.message ? [firstResponse.output.message] : []),
       {
         role: 'user',
         content: [
           {
             text:
-              'The previous response did not call the `parsed_eam` tool with a valid ' +
-              'JSON object matching the schema. Required fields: `type` (string ' +
-              'from the enum) and `confidence` (number 0-1). Call the tool now.',
+              `${userPrompt}\n\n` +
+              'IMPORTANT: your previous response did not call the `parsed_eam` tool ' +
+              'with a valid JSON object. Call `parsed_eam` now with at least `type` ' +
+              '(a string from the enum) and `confidence` (a number 0-1).',
           },
         ],
       },

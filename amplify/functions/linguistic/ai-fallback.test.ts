@@ -241,13 +241,30 @@ describe('tryBedrockFallback — schema-invalid retry', () => {
 });
 
 describe('tryBedrockFallback — Bedrock errors', () => {
-  it('returns null when Bedrock throws on the first attempt (no SQS-retry spam)', async () => {
+  it('retries once and returns null when both attempts throw (no SQS-retry spam) (#577)', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    // Stub clamps to the last response → both the first attempt and the
+    // transient retry throw → null after 2 calls.
     const { client, calls } = makeStubClient([new Error('ThrottlingException')]);
     const result = await tryBedrockFallback('test', { client });
     expect(result).toBeNull();
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
     expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('retries once and succeeds on a transient first-attempt throw (#577)', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { client, calls } = makeStubClient([
+      new Error('Bedrock is unable to process your request.'),
+      toolUseResponse({ type: 'SKYKING', confidence: 0.9 }),
+    ]);
+    const result = await tryBedrockFallback('skyking skyking do not answer', { client });
+    expect(result).not.toBeNull();
+    expect(result?.message.type).toBe('SKYKING');
+    // Transient retry is NOT the schema-corrective retry.
+    expect(result?.retried).toBe(false);
+    expect(calls).toHaveLength(2);
     warnSpy.mockRestore();
   });
 
