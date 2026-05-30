@@ -17,6 +17,7 @@ import {
   softDeleteRecording,
   submitRecording,
   reprocessRecording,
+  reparseRecording,
 } from './models/recording';
 import { Sdr, listSdrPublic } from './models/sdr';
 import { listSdrPublicLambda } from '../functions/listSdrPublicLambda/resource';
@@ -134,6 +135,9 @@ export const schema = a
 
     // Recording moderator/admin reprocess from stored audio — issue #505
     reprocessRecording,
+
+    // Recording moderator/admin AI re-parse of stored transcript — issue #566
+    reparseRecording,
 
     // Comment submit + soft-delete — issue #32 + #314 (verb rename
     // from `createComment` so it does not collide with the auto-
