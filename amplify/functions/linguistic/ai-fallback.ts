@@ -23,14 +23,14 @@ import { FALLBACK_SYSTEM_PROMPT } from './prompts/fallback-system-prompt';
  * `LINGUISTIC_FALLBACK_MODEL_ID` env var so a Bedrock catalog
  * update doesn't require a redeploy.
  *
- * Default model: `us.anthropic.claude-haiku-4-5-20251001-v1:0` — the
- * cross-region inference-profile id (Claude 4.x on Bedrock is not
- * callable via the bare foundation-model id; on-demand requires the
- * profile). Haiku 4.5 is ~3x cheaper than Sonnet 4.6 on in+out tokens
- * and is sufficient for structured EAM extraction + rule generation
- * given the few-shot fallback prompt (#557). Verified available in
- * us-east-1 for this account; admin can swap to Sonnet (or any model)
- * via the env var below if rule quality needs it.
+ * Default model: `us.anthropic.claude-opus-4-8` — the cross-region
+ * inference-profile id (Claude 4.x on Bedrock is not callable via the
+ * bare foundation-model id; on-demand requires the profile). Opus 4.8
+ * is the highest-quality tier, chosen for parse + rule-generation
+ * accuracy on noisy ASR transcripts (#565); the fallback only fires on
+ * a rules-engine miss, so volume is bounded. Verified available in
+ * us-east-1 for this account; admin can swap to a cheaper model (Haiku
+ * 4.5 / Sonnet 4.6) via the env var below to trade quality for cost.
  *
  * Required env vars:
  *   - `LINGUISTIC_FALLBACK_MODEL_ID` (string, optional — default
@@ -50,7 +50,7 @@ import { FALLBACK_SYSTEM_PROMPT } from './prompts/fallback-system-prompt';
  * so vitest never hits AWS.
  */
 
-export const DEFAULT_FALLBACK_MODEL_ID = 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
+export const DEFAULT_FALLBACK_MODEL_ID = 'us.anthropic.claude-opus-4-8';
 
 // The default lives in a git-reviewable module (not the DB). The handler
 // overrides it with the active `LinguisticPromptTemplate` body when one
