@@ -6,6 +6,7 @@ import {
   GetVocabularyCommand,
   CreateVocabularyCommand,
 } from '@aws-sdk/client-transcribe';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { DynamoDBClient, ScanCommand } from '@aws-sdk/client-dynamodb';
 import { marshall } from '@aws-sdk/util-dynamodb';
 import {
@@ -31,6 +32,7 @@ import { computeVocabHash } from './vocab';
  */
 
 const transcribeMock = mockClient(TranscribeClient);
+const s3Mock = mockClient(S3Client);
 const ddbMock = mockClient(DynamoDBClient);
 
 const ENV = {
@@ -45,7 +47,9 @@ function setEnv() {
 
 beforeEach(() => {
   transcribeMock.reset();
+  s3Mock.reset();
   ddbMock.reset();
+  s3Mock.on(PutObjectCommand).resolves({});
   setEnv();
   __resetDeps();
   __resetCallsignCache();
@@ -98,7 +102,7 @@ describe('handler — StartTranscriptionJob', () => {
     expect(recordingIdFromJobName(input.TranscriptionJobName)).toBe('rec-abc');
   });
 
-  it('creates the custom vocabulary when GetVocabulary 404s; first job warms up without it (vocab is async PENDING)', async () => {
+  it('creates a TABLE-format custom vocab when GetVocabulary 404s: uploads the TSV + references VocabularyFileUri; first job warms up without it', async () => {
     transcribeMock.on(GetVocabularyCommand).rejects(notFound());
     transcribeMock.on(CreateVocabularyCommand).resolves({});
     transcribeMock.on(StartTranscriptionJobCommand).resolves({});
@@ -108,12 +112,26 @@ describe('handler — StartTranscriptionJob', () => {
 
     await handler({ recordingId: 'rec-1', audioKey: 'k.wav', enqueuedAt: 't' });
 
+    const expectedVocab = computeVocabHash(callsigns);
+
+    // The table TSV is staged in S3 under pipeline-temp/vocab/<short>.tsv.
+    const puts = s3Mock.commandCalls(PutObjectCommand);
+    expect(puts).toHaveLength(1);
+    const putInput = puts[0]!.args[0].input;
+    expect(putInput.Bucket).toBe(ENV.RECORDINGS_BUCKET);
+    expect(putInput.Key).toBe(`pipeline-temp/vocab/${expectedVocab.short}.tsv`);
+    expect(putInput.Body).toBe(expectedVocab.tableTsv);
+
+    // CreateVocabulary points at the staged table file (table format),
+    // not a `Phrases` list.
     const created = transcribeMock.commandCalls(CreateVocabularyCommand);
     expect(created).toHaveLength(1);
-    const expectedVocab = computeVocabHash(callsigns);
     expect(created[0]!.args[0].input.VocabularyName).toBe(expectedVocab.vocabName);
     expect(created[0]!.args[0].input.LanguageCode).toBe('en-US');
-    expect(created[0]!.args[0].input.Phrases).toEqual(expectedVocab.canonicalised);
+    expect(created[0]!.args[0].input.VocabularyFileUri).toBe(
+      `s3://${ENV.RECORDINGS_BUCKET}/pipeline-temp/vocab/${expectedVocab.short}.tsv`,
+    );
+    expect(created[0]!.args[0].input.Phrases).toBeUndefined();
 
     // CreateVocabulary returns PENDING server-side; referencing a
     // not-READY vocab makes StartTranscriptionJob throw. So the
@@ -148,16 +166,20 @@ describe('handler — StartTranscriptionJob', () => {
     expect(transcribeMock.commandCalls(StartTranscriptionJobCommand)).toHaveLength(1);
   });
 
-  it('skips vocab entirely when the callsign dictionary is empty', async () => {
+  it('still ensures the BASE_VOCAB-only vocab when the callsign dictionary is empty', async () => {
+    // The static base (NATO phonetics + digit words + collective
+    // callsigns) is the highest-value part of the vocab, so an empty
+    // dynamic dictionary must NOT skip vocab — it builds the base-only
+    // vocab. Vocab name == computeVocabHash([]).vocabName (base ∪ ∅).
+    transcribeMock.on(GetVocabularyCommand).resolves({ VocabularyState: 'READY' });
     transcribeMock.on(StartTranscriptionJobCommand).resolves({});
     __setDeps({ loadCallsigns: () => Promise.resolve([]) });
 
     await handler({ recordingId: 'rec-4', audioKey: 'k.wav', enqueuedAt: 't' });
 
-    expect(transcribeMock.commandCalls(GetVocabularyCommand)).toHaveLength(0);
-    expect(transcribeMock.commandCalls(CreateVocabularyCommand)).toHaveLength(0);
+    expect(transcribeMock.commandCalls(GetVocabularyCommand)).toHaveLength(1);
     const job = transcribeMock.commandCalls(StartTranscriptionJobCommand)[0]!.args[0].input;
-    expect(job.Settings?.VocabularyName).toBeUndefined();
+    expect(job.Settings?.VocabularyName).toBe(computeVocabHash([]).vocabName);
   });
 
   it('throws on a malformed dispatch message so SQS / invoker can redrive', async () => {
@@ -200,12 +222,15 @@ describe('handler — production Callsign loader (no injected loadCallsigns)', (
     expect(ddbMock.commandCalls(ScanCommand)).toHaveLength(1);
   });
 
-  it('skips vocab (no Scan) when CALLSIGN_TABLE_NAME is unset', async () => {
+  it('does not Scan when CALLSIGN_TABLE_NAME is unset but still applies the BASE_VOCAB-only vocab', async () => {
+    // No table → loader returns [] (no Scan) → but the static base
+    // still yields a usable vocab (base ∪ ∅), so the job references it.
+    transcribeMock.on(GetVocabularyCommand).resolves({ VocabularyState: 'READY' });
     transcribeMock.on(StartTranscriptionJobCommand).resolves({});
     await handler({ recordingId: 'rec-noenv', audioKey: 'k.wav', enqueuedAt: 't' });
     expect(ddbMock.commandCalls(ScanCommand)).toHaveLength(0);
     const job = transcribeMock.commandCalls(StartTranscriptionJobCommand)[0]!.args[0].input;
-    expect(job.Settings?.VocabularyName).toBeUndefined();
+    expect(job.Settings?.VocabularyName).toBe(computeVocabHash([]).vocabName);
   });
 });
 

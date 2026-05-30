@@ -1087,18 +1087,23 @@ transcribeAwsFn.addToRolePolicy(
   }),
 );
 
-// We call StartTranscriptionJob WITHOUT a DataAccessRoleArn, so Amazon
-// Transcribe reads the input audio + writes the output JSON using THIS
-// Lambda's role. Grant read on the audio prefixes (the dispatcher
-// passes the ORIGINAL upload key for max quality, but also allow the
-// web-canonical prefix for an admin re-run on the derivative) and
-// write on the pipeline-temp output prefix.
+// We call StartTranscriptionJob / CreateVocabulary WITHOUT a
+// DataAccessRoleArn, so Amazon Transcribe reads the input audio, reads
+// the table-format vocabulary TSV, and writes the output JSON using
+// THIS Lambda's role. Grant:
+//   - GetObject on the audio prefixes (dispatcher passes the ORIGINAL
+//     upload key for max quality; web-canonical allowed for an admin
+//     re-run on the derivative) AND on `pipeline-temp/*` (Transcribe
+//     reads the staged vocab table file at CreateVocabulary time).
+//   - PutObject on `pipeline-temp/*` (the handler stages the vocab TSV
+//     there; Transcribe also writes the job output JSON there).
 transcribeAwsFn.addToRolePolicy(
   new PolicyStatement({
     actions: ['s3:GetObject'],
     resources: [
       `${mediaBucket.bucketArn}/recordings/originals/*`,
       `${mediaBucket.bucketArn}/recordings/web/*`,
+      `${mediaBucket.bucketArn}/pipeline-temp/*`,
     ],
   }),
 );

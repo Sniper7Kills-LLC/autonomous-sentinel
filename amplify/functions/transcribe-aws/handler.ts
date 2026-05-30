@@ -4,6 +4,7 @@ import {
   GetVocabularyCommand,
   CreateVocabularyCommand,
 } from '@aws-sdk/client-transcribe';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { DynamoDBClient, ScanCommand, type AttributeValue } from '@aws-sdk/client-dynamodb';
 import { unmarshall } from '@aws-sdk/util-dynamodb';
 import { computeVocabHash } from './vocab';
@@ -20,12 +21,13 @@ import { buildJobName } from './job-name';
  *
  * Steps per invoke:
  *   1. Parse + validate the dispatch message.
- *   2. Best-effort ensure the custom vocabulary exists: compute a
- *      stable hash from the callsign dictionary (`vocab.ts`),
- *      `GetVocabulary` by the hash-derived name, `CreateVocabulary`
- *      on a 404. Vocab is purely a quality boost — any failure here
- *      is swallowed and the job runs WITHOUT a custom vocab so a DDB
- *      hiccup or vocab-state race never blocks transcription.
+ *   2. Best-effort ensure the table-format custom vocabulary exists:
+ *      build the term table (BASE_VOCAB ∪ BASE_PROWORDS ∪ callsigns)
+ *      + its hash (`vocab.ts`), `GetVocabulary` by the hash-derived
+ *      name, and on a 404 upload the table TSV to S3 + `CreateVocabulary`
+ *      from `VocabularyFileUri`. Vocab is purely a quality boost — any
+ *      failure here is swallowed and the job runs WITHOUT a custom vocab
+ *      so a DDB hiccup or vocab-state race never blocks transcription.
  *   3. `StartTranscriptionJob` against the recording audio in S3
  *      (`s3://<RECORDINGS_BUCKET>/<audioKey>`), language `en-US`,
  *      output to `pipeline-temp/<recordingId>/transcribe.json`, job
@@ -52,6 +54,8 @@ export interface DispatchMessage {
 
 export interface TranscribeAwsDeps {
   transcribe?: TranscribeClient;
+  /** S3 client — uploads the table-format vocab TSV for `VocabularyFileUri`. */
+  s3?: S3Client;
   /** Loads the callsign dictionary for the custom vocabulary. */
   loadCallsigns?: () => Promise<string[]>;
   /** Injectable clock / randomness for deterministic job names in tests. */
@@ -74,6 +78,11 @@ function transcribeClient(): TranscribeClient {
   return injected.transcribe ?? (cachedTranscribe ??= new TranscribeClient({}));
 }
 
+let cachedS3: S3Client | undefined;
+function s3Client(): S3Client {
+  return injected.s3 ?? (cachedS3 ??= new S3Client({}));
+}
+
 /**
  * Validates the dispatch message. Returns `null` (caller throws) when
  * a required field is missing so a malformed upstream message fails
@@ -93,17 +102,30 @@ export function parseDispatchMessage(raw: unknown): DispatchMessage | null {
 
 /**
  * Best-effort custom-vocabulary ensure. Returns the vocab name to set
- * on the job, or `undefined` when there is no usable vocab (empty
- * dictionary, or any failure along the way — vocab is a nice-to-have).
+ * on the job, or `undefined` when there is no usable vocab (any failure
+ * along the way — vocab is a nice-to-have, never a blocker).
+ *
+ * Uses Transcribe's TABLE format (`VocabularyFileUri`) so multi-word
+ * EAM prowords ("do not answer", …) are biasable: the table TSV from
+ * `computeVocabHash().tableTsv` is uploaded to S3, then
+ * `CreateVocabulary` is created from it. `CreateVocabulary` is async
+ * server-side (PENDING → READY), so the creating job runs without the
+ * vocab; the next job for the same term-set hash reuses the now-READY
+ * vocab.
  */
 async function ensureVocabulary(): Promise<string | undefined> {
   try {
     const loader = injected.loadCallsigns ?? loadCallsignsFromDdb;
-    const callsigns = await loader();
-    if (!Array.isArray(callsigns) || callsigns.length === 0) return undefined;
+    const loaded = await loader();
+    // An empty / failed callsign load is fine — the term table still
+    // unions the static BASE_VOCAB + BASE_PROWORDS, so the vocab is
+    // worthwhile even before any callsign is seeded.
+    const callsigns = Array.isArray(loaded) ? loaded : [];
 
     const vocab = computeVocabHash(callsigns);
-    if (vocab.canonicalised.length === 0) return undefined;
+    // Defensive: the base set is non-empty, so this never trips today —
+    // guards a future where someone empties the base constants.
+    if (vocab.rows.length === 0) return undefined;
 
     const client = transcribeClient();
     try {
@@ -119,22 +141,41 @@ async function ensureVocabulary(): Promise<string | undefined> {
       }
       return vocab.vocabName;
     } catch (err) {
-      // 404 → first time we've seen this dictionary hash; create it.
-      // `CreateVocabulary` is async server-side (state PENDING → READY),
-      // so this job runs without the vocab; the NEXT job for the same
-      // dictionary reuses the now-READY vocab. That one-job warm-up cost
-      // is acceptable vs blocking the pipeline waiting for READY.
+      // 404 → first time we've seen this term-set hash; create it.
       if (isNotFound(err)) {
+        const bucket = process.env.RECORDINGS_BUCKET;
+        if (!bucket) {
+          // No bucket to stage the table TSV → can't create a table-
+          // format vocab. Skip (best-effort) rather than throw.
+          console.warn('transcribe-aws: RECORDINGS_BUCKET unset; cannot stage vocab table', {
+            vocabName: vocab.vocabName,
+          });
+          return undefined;
+        }
+        const tempPrefix = process.env.PIPELINE_TEMP_PREFIX ?? 'pipeline-temp';
+        // Hash-named so the table object is content-addressed + stable;
+        // lives under pipeline-temp (7-day lifecycle) — Transcribe reads
+        // it once at CreateVocabulary time, so transient is fine.
+        const vocabFileKey = `${tempPrefix}/vocab/${vocab.short}.tsv`;
+        await s3Client().send(
+          new PutObjectCommand({
+            Bucket: bucket,
+            Key: vocabFileKey,
+            Body: vocab.tableTsv,
+            ContentType: 'text/tab-separated-values',
+          }),
+        );
         await client.send(
           new CreateVocabularyCommand({
             VocabularyName: vocab.vocabName,
             LanguageCode: 'en-US',
-            Phrases: vocab.canonicalised,
+            VocabularyFileUri: `s3://${bucket}/${vocabFileKey}`,
           }),
         );
-        console.info('transcribe-aws: created custom vocab (PENDING); first job runs without it', {
+        console.info('transcribe-aws: created table-format custom vocab (PENDING)', {
           vocabName: vocab.vocabName,
-          phrases: vocab.canonicalised.length,
+          rows: vocab.rows.length,
+          vocabFileKey,
         });
         return undefined;
       }
