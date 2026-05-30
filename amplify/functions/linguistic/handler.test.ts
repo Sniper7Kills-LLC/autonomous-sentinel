@@ -11,6 +11,8 @@ import {
   type RulesMatcher,
 } from './handler';
 import type { RuleMatch } from './rules-engine';
+import { renderFallbackPrompt } from './ai-fallback';
+import { hashPrompt } from './attempts';
 
 /**
  * Linguistic Lambda contract (#433 stage 4):
@@ -878,6 +880,143 @@ describe('linguistic — attempt log (#64)', () => {
     );
     const attempts = parseAttempts(updateSpy.mock.calls[0]?.[0]);
     // shouldSkip → no new entry; the prior one is persisted unchanged.
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]?.resultHash).toBe('prev');
+  });
+});
+
+describe('linguistic — Bedrock AI fallback (#63)', () => {
+  const fbSuccess = {
+    message: { type: 'SKYKING', confidence: 0.92, sender: 'MAINSAIL', body: 'ALFA BRAVO' },
+    modelId: 'anthropic.claude-test',
+    promptVersion: 1,
+    retried: false,
+  };
+  // rules engine that never matches → inline classifier runs.
+  const noRules: RulesMatcher = { tryMatch: () => Promise.resolve(null) };
+
+  function attemptsOf(call: unknown): Array<Record<string, unknown>> {
+    const input = call as { linguisticAttempts?: string };
+    return JSON.parse(input.linguisticAttempts ?? '[]') as Array<Record<string, unknown>>;
+  }
+
+  it('invokes Bedrock when rules + inline classifier both miss; uses its parse', async () => {
+    const { client, createSpy, updateSpy } = makeDataStub();
+    const bedrockFallback = vi.fn().mockResolvedValue(fbSuccess);
+    __setDeps({
+      dataClient: client,
+      rulesEngine: noRules,
+      bedrockFallback,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'm',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-bed',
+        transcript: 'unintelligible zzzz noise',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(bedrockFallback).toHaveBeenCalledOnce();
+    expect(createSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ type: 'SKYKING', confidence: 0.92, sender: 'MAINSAIL' }),
+    );
+    const attempts = attemptsOf(updateSpy.mock.calls[0]?.[0]);
+    expect(attempts[0]).toMatchObject({ provider: 'bedrock', promptVersion: 1, success: true });
+    expect(typeof attempts[0]?.promptHash).toBe('string');
+  });
+
+  it('logs a FAILED bedrock attempt and keeps OTHER when Bedrock returns null', async () => {
+    const { client, createSpy, updateSpy } = makeDataStub();
+    const bedrockFallback = vi.fn().mockResolvedValue(null);
+    __setDeps({
+      dataClient: client,
+      rulesEngine: noRules,
+      bedrockFallback,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'm',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-bedfail',
+        transcript: 'unintelligible zzzz noise',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(bedrockFallback).toHaveBeenCalledOnce();
+    expect(createSpy.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ type: 'OTHER' }));
+    const attempts = attemptsOf(updateSpy.mock.calls[0]?.[0]);
+    expect(attempts[0]).toMatchObject({ provider: 'bedrock', success: false, resultHash: null });
+  });
+
+  it('does NOT invoke Bedrock when the inline classifier recognizes the type', async () => {
+    const { client } = makeDataStub();
+    const bedrockFallback = vi.fn().mockResolvedValue(fbSuccess);
+    __setDeps({
+      dataClient: client,
+      rulesEngine: noRules,
+      bedrockFallback,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'm',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-known',
+        transcript: 'Skyking, Skyking, do not answer',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(bedrockFallback).not.toHaveBeenCalled();
+  });
+
+  it('re-invokes Bedrock on redrive but does not double-append the attempt log', async () => {
+    // A prior bedrock success is already logged for this (prompt) key.
+    // The call is NOT skipped (the log lacks the parsed type, so a skip
+    // would mis-dedup) — but `appendAttempt` must not duplicate the entry.
+    const transcript = 'unintelligible zzzz noise';
+    const { rendered, promptVersion } = renderFallbackPrompt(transcript);
+    const promptHash = hashPrompt(rendered);
+    const { client, getSpy, updateSpy } = makeDataStub();
+    getSpy.mockResolvedValueOnce({
+      data: {
+        id: 'rec-redrive',
+        broadcastedAt: null,
+        linguisticAttempts: [
+          {
+            provider: 'bedrock',
+            promptVersion,
+            promptHash,
+            resultHash: 'prev',
+            success: true,
+            ts: '2026-05-24T17:00:00.000Z',
+          },
+        ],
+      },
+      errors: null,
+    });
+    const bedrockFallback = vi.fn().mockResolvedValue(fbSuccess);
+    __setDeps({
+      dataClient: client,
+      rulesEngine: noRules,
+      bedrockFallback,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'm',
+    });
+    await handler(
+      makeEvent({ recordingId: 'rec-redrive', transcript, enqueuedAt: '2026-05-24T17:55:00Z' }),
+      {} as never,
+      () => undefined,
+    );
+    // Re-invoked (correctness over the micro-cost-skip)...
+    expect(bedrockFallback).toHaveBeenCalledOnce();
+    // ...but the append is de-duplicated — log stays length 1.
+    const attempts = attemptsOf(updateSpy.mock.calls[0]?.[0]);
     expect(attempts).toHaveLength(1);
     expect(attempts[0]?.resultHash).toBe('prev');
   });

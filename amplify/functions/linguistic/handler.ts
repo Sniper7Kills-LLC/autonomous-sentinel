@@ -6,11 +6,13 @@ import { loadRulesFromDdb } from './load-rules-ddb';
 import { type ConfidenceConfig, isFlagged } from './threshold';
 import {
   appendAttempt,
+  hashPrompt,
   hashResult,
   shouldSkip,
   type LinguisticAttempt,
   type LinguisticProvider,
 } from './attempts';
+import { renderFallbackPrompt, tryBedrockFallback, type FallbackResult } from './ai-fallback';
 
 /**
  * Linguistic Lambda (#433 stage 4).
@@ -204,6 +206,8 @@ export interface RulesMatcher {
 export interface LinguisticDeps {
   dataClient?: LinguisticDataClient;
   rulesEngine?: RulesMatcher;
+  /** Bedrock AI fallback (#63). Injected in tests; defaults to the real call. */
+  bedrockFallback?: (transcript: string) => Promise<FallbackResult | null>;
   now?: () => Date;
   uuid?: () => string;
 }
@@ -346,6 +350,13 @@ export async function classifyWithRules(
 
 /** Provider for the rules path attempt log (#64). */
 const RULES_PROVIDER: LinguisticProvider = 'rules';
+/** Provider for the Bedrock AI-fallback attempt log (#63/#64). */
+const BEDROCK_PROVIDER: LinguisticProvider = 'bedrock';
+
+/** Resolve the Bedrock fallback (injected in tests, real call in prod). */
+function bedrockFallback(transcript: string): Promise<FallbackResult | null> {
+  return (injected.bedrockFallback ?? tryBedrockFallback)(transcript);
+}
 
 /**
  * Stable JSON of the parsed result for the attempt `resultHash` —
@@ -484,13 +495,70 @@ export function parseMessage(body: string): LinguisticQueueMessage {
 
 async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   const client = await dataClient();
-  const result = await classifyWithRules(msg.transcript, rulesEngine());
   // Per-type confidence threshold (#65) — admin-tunable via the
   // CONFIDENCE_THRESHOLDS LinguisticConfig row; falls back to 0.8.
   const confidenceConfig = await loadConfidenceConfig(client);
+
+  // Fetch the Recording first: its `linguisticAttempts` log (#64) gates
+  // the paid Bedrock call below, and `broadcastedAt` drives the dedup
+  // window. Falls back to enqueuedAt when absent (testing-portal upload).
+  const rec = await client.models.Recording.get({ id: msg.recordingId });
+  const broadcastTime = rec.data?.broadcastedAt ?? msg.enqueuedAt;
+  const existingAttempts = coerceAttempts(rec.data?.linguisticAttempts);
+
+  let result = await classifyWithRules(msg.transcript, rulesEngine());
+
+  // Attempt provenance — rules path by default; switched to bedrock below.
+  let attemptProvider: LinguisticProvider = RULES_PROVIDER;
+  let attemptPromptVersion: number | null = result.promptVersion ?? null;
+  let attemptPromptHash: string | null = null;
+  let attemptSuccess = true;
+
+  // Bedrock AI fallback (#63) — runs ONLY when the rules engine AND the
+  // inline keyword classifier both miss (the `OTHER`/'fallback' case),
+  // so the paid model call is reserved for genuinely-unrecognized
+  // transcripts.
+  if (result.rule === 'fallback') {
+    const {
+      rendered,
+      promptVersion: bedrockVersion,
+      modelId,
+    } = renderFallbackPrompt(msg.transcript);
+    attemptProvider = BEDROCK_PROVIDER;
+    attemptPromptVersion = bedrockVersion;
+    attemptPromptHash = hashPrompt(rendered);
+    // Always invoke on the fallback path. We deliberately do NOT skip the
+    // call when a prior bedrock success is logged: the attempt log stores
+    // only the result *hash*, not the parsed type/fields, so a skip would
+    // leave `result` as OTHER and the dedup below would create a SECOND
+    // (OTHER-typed) Message instead of linking to the prior bedrock-typed
+    // one. The deterministic-id dedup already makes a redrive idempotent
+    // (same parse → same id → link); re-invoking on a rare redrive is the
+    // safe trade. A cost-skip that reuses the stored parse is a follow-up.
+    const fb = await bedrockFallback(msg.transcript);
+    if (fb && KNOWN_MESSAGE_TYPES.has(fb.message.type)) {
+      result = {
+        type: fb.message.type as MessageType,
+        confidence: fb.message.confidence,
+        rule: `bedrock:${modelId}`,
+        promptVersion: bedrockVersion,
+        fields: {
+          ...(fb.message.sender ? { sender: fb.message.sender } : {}),
+          ...(fb.message.receiver ? { receiver: fb.message.receiver } : {}),
+          ...(fb.message.body ? { body: fb.message.body } : {}),
+        },
+      };
+    } else {
+      // Bedrock couldn't parse it either — keep the OTHER result but log
+      // a FAILED bedrock attempt so a future bedrock-prompt bump (#66)
+      // reprocesses this recording.
+      attemptSuccess = false;
+    }
+  }
+
   // Turn the raw transcript into log-format fields: NATO-decode the
   // body, collapse double broadcasts, extract sender/receiver (#506).
-  // Rule-captured fields (#62) win over re-extraction. The raw
+  // Rule/Bedrock-captured fields win over re-extraction. The raw
   // transcript stays on the Recording row (source of truth); the
   // Message carries the derived/normalized form.
   const normalized = normalizeParsed({
@@ -505,38 +573,35 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   const canonical = normalized.body || msg.transcript;
   const ts = nowDate().toISOString();
 
-  // Real broadcast time drives both `Message.broadcastTs` and the dedup
-  // window. Falls back to enqueuedAt when the Recording has no
-  // broadcastedAt (e.g. testing-portal uploads).
-  const rec = await client.models.Recording.get({ id: msg.recordingId });
-  const broadcastTime = rec.data?.broadcastedAt ?? msg.enqueuedAt;
-
-  // Attempt log (#64). Append a successful rules-path attempt unless an
-  // identical `(provider, promptVersion, promptHash)` success already
-  // exists (idempotent on SQS redrive). The rules path has no prompt, so
-  // `promptHash` is null. This log is the substrate the reprocess-on-bump
+  // Attempt log (#64) — record this invocation's provenance unless an
+  // identical success is already logged. `resultHash` is null on a
+  // failed attempt. This log is the substrate the reprocess-on-bump
   // gate (#66/#481) reads to decide which recordings to re-run.
-  const promptVersion = result.promptVersion ?? null;
-  const skipKey = { provider: RULES_PROVIDER, promptVersion, promptHash: null };
-  const existingAttempts = coerceAttempts(rec.data?.linguisticAttempts);
-  const resultHash = hashResult(
-    canonicalResultJson({
-      type: result.type,
-      body: canonical,
-      sender: normalized.sender,
-      receiver: normalized.receiver,
-    }),
-  );
+  const skipKey = {
+    provider: attemptProvider,
+    promptVersion: attemptPromptVersion,
+    promptHash: attemptPromptHash,
+  };
+  const resultHash = attemptSuccess
+    ? hashResult(
+        canonicalResultJson({
+          type: result.type,
+          body: canonical,
+          sender: normalized.sender,
+          receiver: normalized.receiver,
+        }),
+      )
+    : null;
   const attempts = shouldSkip(existingAttempts, skipKey)
     ? existingAttempts
     : appendAttempt(
         existingAttempts,
         {
-          provider: RULES_PROVIDER,
-          promptVersion,
-          promptHash: null,
+          provider: attemptProvider,
+          promptVersion: attemptPromptVersion,
+          promptHash: attemptPromptHash,
           resultHash,
-          success: true,
+          success: attemptSuccess,
         },
         { now: nowDate },
       );

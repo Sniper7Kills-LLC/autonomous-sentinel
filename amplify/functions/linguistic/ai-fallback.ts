@@ -169,6 +169,24 @@ function resolveOpts(opts: FallbackOpts): {
   return { client, modelId, promptVersion, promptTemplate };
 }
 
+/**
+ * Render the fallback prompt (template + transcript) without invoking
+ * Bedrock, plus the resolved model/version. The handler hashes the
+ * rendered string for the #64 attempt log so an SQS redrive of the same
+ * recording can `shouldSkip` the (paid) Bedrock call.
+ */
+export function renderFallbackPrompt(
+  transcript: string,
+  opts: FallbackOpts = {},
+): { rendered: string; promptVersion: number; modelId: string } {
+  const { modelId, promptVersion, promptTemplate } = resolveOpts(opts);
+  return {
+    rendered: promptTemplate.replace('{{TRANSCRIPT}}', transcript),
+    promptVersion,
+    modelId,
+  };
+}
+
 interface RequiredEam {
   type: string;
   confidence: number;
