@@ -1012,6 +1012,12 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
         promptVersion: 7,
       }),
     );
+    // Scoped to the Bedrock parse promptId (active is per-promptId).
+    expect(promptListSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        filter: { promptId: { eq: 'linguistic-parse-bedrock' }, isActive: { eq: true } },
+      }),
+    );
   });
 
   it('re-invokes Bedrock on redrive but does not double-append the attempt log', async () => {

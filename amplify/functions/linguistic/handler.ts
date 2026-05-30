@@ -201,7 +201,9 @@ export interface LinguisticDataClient {
       }>;
     };
     LinguisticPromptTemplate: {
-      list: (input?: { filter?: { isActive: { eq: boolean } } }) => Promise<{
+      list: (input?: {
+        filter?: { promptId: { eq: string }; isActive: { eq: boolean } };
+      }) => Promise<{
         data: Array<{ body?: string | null; version?: number | null }> | null;
         errors?: unknown;
       }>;
@@ -412,6 +414,9 @@ function coerceAttempts(value: unknown): LinguisticAttempt[] {
   return [];
 }
 
+/** Logical promptId for the Bedrock parse prompt (one active version). */
+const BEDROCK_PARSE_PROMPT_ID = 'linguistic-parse-bedrock';
+
 /**
  * Resolve the active Bedrock prompt template (self-improving loop). Reads
  * the `LinguisticPromptTemplate` row with `isActive=true` so an admin's
@@ -424,7 +429,9 @@ async function loadActivePromptTemplate(
 ): Promise<{ body?: string; version?: number }> {
   try {
     const res = await client.models.LinguisticPromptTemplate.list({
-      filter: { isActive: { eq: true } },
+      // Active is per-promptId — scope to the Bedrock parse prompt so a
+      // future second promptId (e.g. rule generation) can't be picked up.
+      filter: { promptId: { eq: BEDROCK_PARSE_PROMPT_ID }, isActive: { eq: true } },
     });
     if (res.errors || !res.data || res.data.length === 0) return {};
     // The model mandates one active row per promptId; if several slip
