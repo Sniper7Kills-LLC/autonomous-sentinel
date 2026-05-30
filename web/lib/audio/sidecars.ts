@@ -35,11 +35,13 @@ export interface PeaksData {
 
 /**
  * Parse a word-timestamps JSON payload. Accepts:
+ *   - `{ words: [{word, start, end}, ...] }` — the canonical sidecar the
+ *     transcribe pipeline now writes (#527; times in seconds).
  *   - `[{word, start, end}, ...]`
- *   - `{ words: [{word, start, end}, ...] }`
  *   - `{ segments: [{ words: [...] }, ...] }` (whisper-style nested)
  *   - `{ transcription: [{ text, offsets: { from, to } }, ...] }`
- *     (whisper.cpp `-oj` with `-ml 1` — offsets are ms)
+ *     (legacy whisper.cpp `-oj` with `-ml 1` — offsets in ms; kept so
+ *     sidecars written before #527 still parse)
  */
 export function parseWordTimestamps(raw: unknown): WordTimestamp[] {
   if (Array.isArray(raw)) return raw.map(normalizeWord).filter(isValidWord);
