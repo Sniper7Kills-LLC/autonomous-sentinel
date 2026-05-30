@@ -1143,7 +1143,7 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
       expect.objectContaining({ flaggedForReview: true }),
     );
     expect(updateSpy.mock.calls[0]?.[0]).toEqual(
-      expect.objectContaining({ transcriptionStatus: 'PARSE_FAILED' }),
+      expect.objectContaining({ transcriptionStatus: 'PARSE_FAILED', transcriptionFailed: true }),
     );
   });
 

@@ -1083,13 +1083,22 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
 
   // Link the Recording → Message + advance status in one update. A Message
   // is always published (the inline fallback still yields a typed row), but
-  // when the AI parse failed (#579) the Recording lands PARSE_FAILED — the
-  // flagged Message is linked for review/re-run, not presented as clean.
+  // when the AI parse failed on a fresh create (#579) the Recording lands
+  // PARSE_FAILED — the flagged Message is linked for review/re-run, not
+  // presented as clean. `transcriptionFailed` mirrors the markFailed()
+  // contract so the manual-transcript gate (transcriptRevisionMutations)
+  // treats it like any other failed parse; cleared on a successful publish
+  // so a recovering re-run resets it.
+  const aiParseFailed = !attemptSuccess && createdFresh;
   const updated = await client.models.Recording.update({
     id: msg.recordingId,
     messageId: targetMessageId,
     transcript: msg.transcript,
-    transcriptionStatus: !attemptSuccess && createdFresh ? 'PARSE_FAILED' : 'PUBLISHED',
+    transcriptionStatus: aiParseFailed ? 'PARSE_FAILED' : 'PUBLISHED',
+    transcriptionFailed: aiParseFailed,
+    failedReason: aiParseFailed
+      ? 'AI parse failed; inline fallback published + flagged for review (#579)'
+      : null,
     transcriptionStatusUpdatedAt: ts,
     // Persist a stable broadcast time on the FIRST run only (#556), so
     // every subsequent re-run reuses it and an unchanged re-parse maps to
