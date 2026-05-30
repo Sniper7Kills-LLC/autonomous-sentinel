@@ -19,6 +19,8 @@ import { data } from './data/resource';
 import { storage } from './storage/resource';
 import { preprocess } from './functions/preprocess/resource';
 import { linguistic } from './functions/linguistic/resource';
+import { transcribeAws } from './functions/transcribe-aws/resource';
+import { transcribeAwsFinalizer } from './functions/transcribe-aws-finalizer/resource';
 import { postConfirmation } from './functions/postConfirmation/resource';
 import { preTokenGeneration } from './functions/preTokenGeneration/resource';
 import { preAuth } from './functions/preAuth/resource';
@@ -53,6 +55,8 @@ const backend = defineBackend({
   storage,
   preprocess,
   linguistic,
+  transcribeAws,
+  transcribeAwsFinalizer,
   postConfirmation,
   preTokenGeneration,
   preAuth,
@@ -1015,4 +1019,129 @@ backend.addOutput({
     linguisticReprocessQueueUrl: reprocessQueue.queueUrl,
     linguisticReprocessDlqUrl: reprocessDlq.queueUrl,
   },
+});
+
+// Amazon Transcribe backend (c) + async finalizer (#585, epic #582).
+//
+// Two Lambdas, both in a dedicated `backend.createStack` so their
+// EventBridge rule + cross-resource refs (media bucket, linguistic
+// queue, Callsign table) don't close a nested-stack CFN cycle (per
+// project memory: iterate cycle fixes via `ampx sandbox --once`).
+//
+// Flow once the #582b dispatcher lands:
+//   dispatcher --Event invoke--> transcribeAws --StartTranscriptionJob-->
+//     Amazon Transcribe --(EventBridge "Transcribe Job State Change")-->
+//       transcribeAwsFinalizer --SendMessage--> linguistic queue
+//
+// DEFERRED to #582b: the backend Lambda is NOT subscribed to the
+// transcribe SQS queue here. The #582b dispatcher owns routing a
+// recording to the chosen backend (it resolves the backend ARN via
+// `transcribe-dispatch/selector.ts` and Event-invokes it). Until then
+// this Lambda is deployable-but-unsubscribed — admins/tests can invoke
+// it directly with a `{recordingId, audioKey, enqueuedAt}` payload.
+// The escalation gate (#582c) is also out of scope.
+const transcribeAwsStack = backend.createStack('TranscribeAwsStack');
+const transcribeAwsFn = backend.transcribeAws.resources.lambda as LambdaFunction;
+const transcribeAwsFinalizerFn = backend.transcribeAwsFinalizer.resources.lambda as LambdaFunction;
+
+// Reserved-concurrency cap (#68) — bounds worst-case Transcribe spend
+// from a runaway pipeline. Env-tunable via `CONCURRENCY_TRANSCRIBE_AMAZON`.
+(transcribeAwsFn.node.defaultChild as CfnFunction).reservedConcurrentExecutions =
+  getConcurrencyCap('TRANSCRIBE_AMAZON');
+
+// --- backend Lambda env + IAM ---------------------------------------
+transcribeAwsFn.addEnvironment('RECORDINGS_BUCKET', mediaBucket.bucketName);
+transcribeAwsFn.addEnvironment('PIPELINE_TEMP_PREFIX', 'pipeline-temp');
+
+// Callsign dictionary → custom vocabulary. `CALLSIGN_TABLE_NAME`
+// wires the table at synth; the handler Scans it (bounded, hand-
+// curated table — same Scan rationale as `load-rules-ddb.ts`). When
+// the env var / grant is absent the handler skips vocab and still
+// transcribes (best-effort), so this wiring is non-blocking.
+const callsignTable = backend.data.resources.tables['Callsign'];
+if (!callsignTable) {
+  throw new Error('backend: Callsign table not found on data resources');
+}
+transcribeAwsFn.addEnvironment('CALLSIGN_TABLE_NAME', callsignTable.tableName);
+transcribeAwsFn.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:Scan'],
+    resources: [callsignTable.tableArn],
+  }),
+);
+
+// Transcribe control-plane: start jobs, poll a job (finalizer / future
+// dispatcher), and manage the callsign custom vocabulary. Job + vocab
+// names are account/region-scoped strings, not ARNs Transcribe exposes
+// for resource-level IAM, so the resource is `*` (standard for these
+// Transcribe actions).
+transcribeAwsFn.addToRolePolicy(
+  new PolicyStatement({
+    actions: [
+      'transcribe:StartTranscriptionJob',
+      'transcribe:GetTranscriptionJob',
+      'transcribe:CreateVocabulary',
+      'transcribe:GetVocabulary',
+    ],
+    resources: ['*'],
+  }),
+);
+
+// We call StartTranscriptionJob WITHOUT a DataAccessRoleArn, so Amazon
+// Transcribe reads the input audio + writes the output JSON using THIS
+// Lambda's role. Grant read on the audio prefixes (the dispatcher
+// passes the ORIGINAL upload key for max quality, but also allow the
+// web-canonical prefix for an admin re-run on the derivative) and
+// write on the pipeline-temp output prefix.
+transcribeAwsFn.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['s3:GetObject'],
+    resources: [
+      `${mediaBucket.bucketArn}/recordings/originals/*`,
+      `${mediaBucket.bucketArn}/recordings/web/*`,
+    ],
+  }),
+);
+transcribeAwsFn.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['s3:PutObject'],
+    resources: [`${mediaBucket.bucketArn}/pipeline-temp/*`],
+  }),
+);
+
+// --- finalizer Lambda env + IAM -------------------------------------
+transcribeAwsFinalizerFn.addEnvironment('RECORDINGS_BUCKET', mediaBucket.bucketName);
+transcribeAwsFinalizerFn.addEnvironment('PIPELINE_TEMP_PREFIX', 'pipeline-temp');
+transcribeAwsFinalizerFn.addEnvironment(
+  'LINGUISTIC_QUEUE_URL',
+  pipelineQueues.linguistic.main.queueUrl,
+);
+// Read the job output JSON; publish the canonical transcript/failure
+// to the linguistic queue (the linguistic Lambda owns all Recording
+// writes so the portal subscription fires — same contract as Whisper).
+transcribeAwsFinalizerFn.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['s3:GetObject'],
+    resources: [`${mediaBucket.bucketArn}/pipeline-temp/*`],
+  }),
+);
+pipelineQueues.linguistic.main.grantSendMessages(transcribeAwsFinalizerFn);
+
+// EventBridge rule: Amazon Transcribe emits a "Transcribe Job State
+// Change" event on every job transition. Scope to terminal states so
+// the finalizer only fires once per job. The rule lives in the
+// dedicated stack alongside the finalizer — no cross-stack edge, no
+// cycle. `aws.transcribe` events land on the default event bus
+// automatically (no bus wiring needed).
+new Rule(transcribeAwsStack, 'TranscribeJobStateChangeRule', {
+  description:
+    'Routes Amazon Transcribe COMPLETED/FAILED job-state events to the transcribe-aws finalizer (#585).',
+  eventPattern: {
+    source: ['aws.transcribe'],
+    detailType: ['Transcribe Job State Change'],
+    detail: {
+      TranscriptionJobStatus: ['COMPLETED', 'FAILED'],
+    },
+  },
+  targets: [new LambdaTarget(transcribeAwsFinalizerFn)],
 });
