@@ -8,7 +8,7 @@
   "scripts": {
     "sandbox": "ampx sandbox",
     "deploy": "ampx pipeline-deploy",
-    "lint": "eslint . --max-warnings=0 --cache --cache-strategy content --cache-location node_modules/.cache/eslint/",
+    "lint": "eslint . --max-warnings=0 --cache --cache-strategy content --cache-location .eslintcache",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

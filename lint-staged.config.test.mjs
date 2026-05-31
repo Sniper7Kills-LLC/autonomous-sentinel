@@ -130,7 +130,7 @@ test('eslint commands use content-strategy caching in the workspace cache dir', 
   for (const c of cmds) {
     assert.ok(c.includes('--cache-strategy content'), `must use content cache strategy: ${c}`);
     assert.ok(
-      c.includes('--cache-location amplify/node_modules/.cache/eslint/'),
+      c.includes('--cache-location amplify/.eslintcache'),
       `must cache in the workspace dir: ${c}`,
     );
   }

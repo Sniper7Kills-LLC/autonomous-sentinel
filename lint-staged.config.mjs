@@ -137,7 +137,7 @@ export function buildCommands(absPaths, root = process.cwd()) {
   if (rootLintable.length > 0) {
     const quoted = rootLintable.map(quote).join(' ');
     commands.push(
-      `eslint --fix --max-warnings=0 --cache --cache-strategy content --cache-location node_modules/.cache/eslint/ --config eslint.config.mjs ${quoted}`,
+      `eslint --fix --max-warnings=0 --cache --cache-strategy content --cache-location .eslintcache --config eslint.config.mjs ${quoted}`,
     );
   }
 
@@ -154,7 +154,7 @@ export function buildCommands(absPaths, root = process.cwd()) {
       // workspace; this monorepo's amplify program alone pulls in ~7.6k
       // node_modules .d.ts files from @aws-sdk/aws-cdk). Content keying keeps
       // the cache warm across reformatting, dropping repeat lints to ~5s.
-      `eslint --fix --max-warnings=0 --cache --cache-strategy content --cache-location ${ws}/node_modules/.cache/eslint/ --config ${ws}/eslint.config.mjs ${quoted}`,
+      `eslint --fix --max-warnings=0 --cache --cache-strategy content --cache-location ${ws}/.eslintcache --config ${ws}/eslint.config.mjs ${quoted}`,
     );
   }
 
