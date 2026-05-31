@@ -15,7 +15,7 @@ import { parse } from 'yaml';
  *     schedule (default-setup parity — catches CVEs disclosed against
  *     dependencies after merge),
  *   - language is `javascript-typescript` (covers all three workspaces),
- *   - uses the official `github/codeql-action/{init,analyze}@v3` actions,
+ *   - uses the official `github/codeql-action/{init,analyze}@v4` actions,
  *   - declares the security-events write permission required for
  *     uploading findings to the Security tab.
  */
@@ -68,15 +68,15 @@ describe('codeql.yml — analysis configuration', () => {
     expect(langs).toContain('javascript-typescript');
   });
 
-  it('uses the official github/codeql-action/init@v3 step', () => {
+  it('uses the official github/codeql-action/init@v4 step', () => {
     const init = steps.find((s) => s.uses?.startsWith('github/codeql-action/init'));
-    expect(init?.uses).toMatch(/^github\/codeql-action\/init@v3/);
+    expect(init?.uses).toMatch(/^github\/codeql-action\/init@v4/);
     expect(init?.with?.languages).toBeTruthy();
   });
 
-  it('uses the official github/codeql-action/analyze@v3 step', () => {
+  it('uses the official github/codeql-action/analyze@v4 step', () => {
     const analyze = steps.find((s) => s.uses?.startsWith('github/codeql-action/analyze'));
-    expect(analyze?.uses).toMatch(/^github\/codeql-action\/analyze@v3/);
+    expect(analyze?.uses).toMatch(/^github\/codeql-action\/analyze@v4/);
   });
 });
 
