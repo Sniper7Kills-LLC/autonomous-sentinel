@@ -18,7 +18,9 @@ import {
   type FallbackOpts,
   type FallbackResult,
   type ProposedRule,
+  type TranscriptForReconcile,
 } from './ai-fallback';
+import { coerceTranscripts, upsertTranscript, selectPrimary } from './transcripts';
 import {
   audit as defaultAudit,
   type AuditContext,
@@ -79,6 +81,15 @@ interface TranscriptQueueMessage {
   kind: 'transcript';
   recordingId: string;
   transcript: string;
+  /**
+   * Which transcription backend produced this transcript (#593):
+   * `whisper-local`, `amazon-transcribe`, … Used to key the per-backend
+   * `Recording.transcripts` collection (UPSERT by backend, never replace
+   * the other backends' entries). Absent on legacy/in-flight messages
+   * published before #593 — defaults to `whisper-local` (the only
+   * historical producer) so old messages still slot into the collection.
+   */
+  backend?: string;
   /** S3 key of the per-word timestamps JSON sidecar (#92). */
   wordTimestampsKey?: string;
   /** Web-canonical Opus key + size, set when the Whisper container
@@ -201,6 +212,9 @@ export interface LinguisticDataClient {
           broadcastedAt?: string | null;
           messageId?: string | null;
           linguisticAttempts?: unknown;
+          // Per-backend transcript collection (#593) — a.json(), read back
+          // as a parsed array (or a JSON string on older rows).
+          transcripts?: unknown;
         } | null;
         errors?: unknown;
       }>;
@@ -208,6 +222,9 @@ export interface LinguisticDataClient {
         id: string;
         messageId?: string | null;
         transcript?: string | null;
+        // Per-backend transcript collection (#593). Written as a JSON
+        // string (AWSJSON), mirroring the linguisticAttempts precedent.
+        transcripts?: string;
         // Stable broadcast time persisted on first pipeline run so re-runs
         // reuse it and an identical re-parse stays idempotent (#556).
         broadcastedAt?: string | null;
@@ -772,6 +789,7 @@ interface RawLinguisticMessage {
   kind?: 'transcript' | 'transcribe-failure';
   recordingId?: string;
   transcript?: string;
+  backend?: string;
   wordTimestampsKey?: string;
   webCanonicalKey?: string;
   canonicalSizeBytes?: number;
@@ -807,6 +825,12 @@ export function parseMessage(body: string): LinguisticQueueMessage {
     kind: 'transcript',
     recordingId: parsed.recordingId,
     transcript: parsed.transcript,
+    // Default legacy/in-flight messages (no `backend`) to whisper-local —
+    // the sole historical transcript producer (#593).
+    backend:
+      typeof parsed.backend === 'string' && parsed.backend.length > 0
+        ? parsed.backend
+        : 'whisper-local',
     wordTimestampsKey:
       typeof parsed.wordTimestampsKey === 'string' && parsed.wordTimestampsKey.length > 0
         ? parsed.wordTimestampsKey
@@ -853,8 +877,37 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   const priorMessageId = rec.data?.messageId ?? null;
   const existingAttempts = coerceAttempts(rec.data?.linguisticAttempts);
 
+  // Multi-transcript collection (#593): UPSERT this backend's transcript
+  // into the Recording's `transcripts` (keyed by backend, leaving the
+  // other backends' entries intact), then pick the primary/active one.
+  // The primary mirrors the top-level `transcript`/`transcriptionConfidence`
+  // for back-compat with every existing reader. A single-whisper recording
+  // yields exactly one entry → primary === this transcript, so the default
+  // path is unchanged.
+  const backend = msg.backend ?? 'whisper-local';
+  const nowTs = nowDate().toISOString();
+  const existingTranscripts = coerceTranscripts(rec.data?.transcripts);
+  const transcriptsCollection = upsertTranscript(existingTranscripts, {
+    backend,
+    transcript: msg.transcript,
+    transcriptionConfidence:
+      typeof msg.transcriptionConfidence === 'number' ? msg.transcriptionConfidence : null,
+    ...(msg.wordTimestampsKey ? { wordTimestampsKey: msg.wordTimestampsKey } : {}),
+    ts: nowTs,
+  });
+  const primary = selectPrimary(transcriptsCollection) ?? {
+    backend,
+    transcript: msg.transcript,
+    transcriptionConfidence:
+      typeof msg.transcriptionConfidence === 'number' ? msg.transcriptionConfidence : null,
+    ts: nowTs,
+  };
+  // The parse runs over the PRIMARY (best) transcript; when >1 backend is
+  // present the Bedrock fallback additionally reconciles across all of them.
+  const parseTranscript = primary.transcript;
+
   const engine = rulesEngine();
-  let result = await classifyWithRules(msg.transcript, engine);
+  let result = await classifyWithRules(parseTranscript, engine);
 
   // Attempt provenance — rules path by default; switched to bedrock below.
   let attemptProvider: LinguisticProvider = RULES_PROVIDER;
@@ -875,15 +928,27 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
     // git-reviewed markdown default) and thread it through both the hash
     // (for the attempt skip key) and the model call.
     const tmpl = await loadActivePromptTemplate(client);
+    // Pass ALL of the Recording's transcripts (labelled by backend +
+    // confidence) to the fallback (#593). When >1, the rendered prompt
+    // gains the "Multiple transcripts — reconcile" section and the model
+    // reads across the independent ASR sources. With a single transcript
+    // this is a one-element list → no reconcile section → byte-identical
+    // single-source prompt + hash, so the default path is unchanged.
+    const reconcileTranscripts: TranscriptForReconcile[] = transcriptsCollection.map((t) => ({
+      backend: t.backend,
+      transcript: t.transcript,
+      transcriptionConfidence: t.transcriptionConfidence ?? null,
+    }));
     const fbOpts: FallbackOpts = {
       ...(tmpl.body ? { promptTemplate: tmpl.body } : {}),
       ...(typeof tmpl.version === 'number' ? { promptVersion: tmpl.version } : {}),
+      transcripts: reconcileTranscripts,
     };
     const {
       rendered,
       promptVersion: bedrockVersion,
       modelId,
-    } = renderFallbackPrompt(msg.transcript, fbOpts);
+    } = renderFallbackPrompt(parseTranscript, fbOpts);
     attemptProvider = BEDROCK_PROVIDER;
     attemptPromptVersion = bedrockVersion;
     // Hash the BASE rendered prompt (template + transcript) only — the
@@ -910,7 +975,7 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
     // one. The deterministic-id dedup already makes a redrive idempotent
     // (same parse → same id → link); re-invoking on a rare redrive is the
     // safe trade. A cost-skip that reuses the stored parse is a follow-up.
-    const fb = await bedrockFallback(msg.transcript, fbOpts);
+    const fb = await bedrockFallback(parseTranscript, fbOpts);
     // Log the raw Bedrock parse for debugging (#560) — the attempt log
     // stores only hashes, so without this the model's actual output
     // (body, fields, proposed rules) is invisible in CloudWatch.
@@ -976,14 +1041,14 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   // Message carries the derived/normalized form.
   const normalized = normalizeParsed({
     type: result.type,
-    transcript: msg.transcript,
+    transcript: parseTranscript,
     ...(result.fields?.sender ? { sender: result.fields.sender } : {}),
     ...(result.fields?.receiver ? { receiver: result.fields.receiver } : {}),
     ...(result.fields?.body ? { body: result.fields.body } : {}),
   });
   // `||` not `??`: decodePhonetic returns "" for a body with no
-  // decodable letters — fall back to the raw transcript.
-  const canonical = normalized.body || msg.transcript;
+  // decodable letters — fall back to the primary transcript.
+  const canonical = normalized.body || parseTranscript;
   const ts = nowDate().toISOString();
 
   // Attempt log (#64) — record this invocation's provenance unless an
@@ -1106,10 +1171,27 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   // treats it like any other failed parse; cleared on a successful publish
   // so a recovering re-run resets it.
   const aiParseFailed = !attemptSuccess && createdFresh;
+  // Primary transcript fields the top-level columns mirror for back-compat
+  // (#593). `primary` is the highest-confidence entry across all backends;
+  // for a single-whisper recording it IS this transcript, so these writes
+  // are identical to the pre-#593 behaviour.
+  //
+  // Word timestamps are ASR-backend-SPECIFIC (whisper token offsets vs
+  // Amazon Transcribe item times), so the top-level `wordTimestampsKey`
+  // MUST come from the primary's OWN entry — never fall back to the
+  // just-arrived `msg` when the primary is a different backend, or the
+  // primary transcript text would be paired with the wrong backend's
+  // timestamps (scrub-to-text mismatch). Each transcripts[] entry carries
+  // its own key; the whisper entry's key is populated from
+  // `msg.wordTimestampsKey` at UPSERT time above, so the single-whisper
+  // default path still surfaces it.
+  const primaryWordTimestampsKey = primary.wordTimestampsKey ?? undefined;
   const updated = await client.models.Recording.update({
     id: msg.recordingId,
     messageId: targetMessageId,
-    transcript: msg.transcript,
+    transcript: primary.transcript,
+    // Per-backend transcript collection (#593), stringified for AWSJSON.
+    transcripts: JSON.stringify(transcriptsCollection),
     transcriptionStatus: aiParseFailed ? 'PARSE_FAILED' : 'PUBLISHED',
     transcriptionFailed: aiParseFailed,
     failedReason: aiParseFailed
@@ -1122,16 +1204,17 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
     ...(persistedBroadcastedAt ? {} : { broadcastedAt: broadcastTime }),
     // Persist the appended attempt log (#64). Stringified for AWSJSON.
     linguisticAttempts: JSON.stringify(attempts),
-    ...(msg.wordTimestampsKey ? { wordTimestampsKey: msg.wordTimestampsKey } : {}),
+    ...(primaryWordTimestampsKey ? { wordTimestampsKey: primaryWordTimestampsKey } : {}),
     // Web-canonical Opus produced by the Whisper container (#514).
     ...(msg.webCanonicalKey ? { webCanonicalKey: msg.webCanonicalKey } : {}),
     ...(typeof msg.canonicalSizeBytes === 'number'
       ? { canonicalSizeBytes: msg.canonicalSizeBytes }
       : {}),
-    // Overall whisper transcription confidence (#581) — only when the
-    // container carried it. Distinct from Message.confidence (parse).
-    ...(typeof msg.transcriptionConfidence === 'number'
-      ? { transcriptionConfidence: msg.transcriptionConfidence }
+    // Overall transcription confidence (#581/#593) — mirror the PRIMARY
+    // transcript's confidence (best across backends). Distinct from
+    // Message.confidence (parse). Only when the primary carries a value.
+    ...(typeof primary.transcriptionConfidence === 'number'
+      ? { transcriptionConfidence: primary.transcriptionConfidence }
       : {}),
   });
   if (updated.errors) {

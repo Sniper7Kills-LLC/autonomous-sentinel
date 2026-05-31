@@ -93,6 +93,32 @@ export const Recording = a
     // is the linguistic-PARSE confidence. Feeds the low-confidence Amazon
     // Transcribe escalation gate (#582) + the moderator debug panel (#561).
     transcriptionConfidence: a.float(),
+    // Per-backend transcript collection (#593). A JSON array of
+    // `{ backend, transcript, transcriptionConfidence, wordTimestampsKey?, ts }`
+    // entries — one per transcription backend that has run on this
+    // Recording (whisper-local, amazon-transcribe, …). A Recording is
+    // now allowed MULTIPLE independent ASR passes side by side so the
+    // Bedrock parse can reconcile across them (whisper "Oxtra" vs
+    // Transcribe "Foxtrot").
+    //
+    // Model choice (#593, owner-confirmable): a `transcripts` JSON ARRAY
+    // on the Recording rather than a new `Transcript` child model. The
+    // collection is tiny (a handful of backends, never paginated), is
+    // read-and-rewritten wholesale by the linguistic Lambda on every
+    // transcript arrival, and has no independent authz/query surface —
+    // so a child model would add a table + GSI + resolver round-trips
+    // for no benefit. The linguistic handler UPSERTS by `backend` (never
+    // replaces the other backends' entries).
+    //
+    // Back-compat: the top-level `transcript` / `transcriptionConfidence`
+    // above remain the "primary/active" transcript every existing reader
+    // (web detail panel, reparse, REST) already consumes. The linguistic
+    // handler keeps them in sync with the best entry in `transcripts`
+    // (primary = highest `transcriptionConfidence`; ties / missing
+    // confidence break to the most-recently-arrived entry) so a
+    // single-whisper recording behaves exactly as before — `transcripts`
+    // simply holds one entry.
+    transcripts: a.json(),
     // Append-only log of linguistic attempts. Written by #64.
     linguisticAttempts: a.json(),
 

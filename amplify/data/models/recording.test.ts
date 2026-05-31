@@ -60,6 +60,19 @@ describe('Recording model — soft-delete columns present (#29)', () => {
   });
 });
 
+describe('Recording model — multi-transcript collection (#593)', () => {
+  it('carries a `transcripts` JSON field alongside the primary transcript columns', () => {
+    const fields = recordingModel.data.fields;
+    expect(Object.keys(fields)).toEqual(
+      expect.arrayContaining(['transcripts', 'transcript', 'transcriptionConfidence']),
+    );
+    // `transcripts` is the per-backend collection (a.json()); the existing
+    // top-level `transcript` / `transcriptionConfidence` stay as the
+    // primary/active for back-compat with every current reader.
+    expect(fields.transcripts?.data?.fieldType).toBe('AWSJSON');
+  });
+});
+
 describe('softDeleteRecording mutation (#29)', () => {
   it('is a GraphQL mutation', () => {
     expect(softDeleteOp.data.typeName).toBe('Mutation');
