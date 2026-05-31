@@ -1175,7 +1175,17 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   // (#593). `primary` is the highest-confidence entry across all backends;
   // for a single-whisper recording it IS this transcript, so these writes
   // are identical to the pre-#593 behaviour.
-  const primaryWordTimestampsKey = primary.wordTimestampsKey ?? msg.wordTimestampsKey ?? undefined;
+  //
+  // Word timestamps are ASR-backend-SPECIFIC (whisper token offsets vs
+  // Amazon Transcribe item times), so the top-level `wordTimestampsKey`
+  // MUST come from the primary's OWN entry — never fall back to the
+  // just-arrived `msg` when the primary is a different backend, or the
+  // primary transcript text would be paired with the wrong backend's
+  // timestamps (scrub-to-text mismatch). Each transcripts[] entry carries
+  // its own key; the whisper entry's key is populated from
+  // `msg.wordTimestampsKey` at UPSERT time above, so the single-whisper
+  // default path still surfaces it.
+  const primaryWordTimestampsKey = primary.wordTimestampsKey ?? undefined;
   const updated = await client.models.Recording.update({
     id: msg.recordingId,
     messageId: targetMessageId,

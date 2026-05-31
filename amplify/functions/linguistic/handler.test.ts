@@ -1611,19 +1611,28 @@ describe('linguistic — multi-transcript collection + reconcile (#593)', () => 
         recordingId: 'rec',
         transcript: 'SOLO TRANSCRIPT',
         transcriptionConfidence: 0.71,
+        wordTimestampsKey: 'wts/whisper/rec.json',
         enqueuedAt: '2026-05-24T17:55:00Z',
       }),
       {} as never,
       () => undefined,
     );
-    const update = updateSpy.mock.calls[0]?.[0] as { transcript?: string };
+    const update = updateSpy.mock.calls[0]?.[0] as {
+      transcript?: string;
+      wordTimestampsKey?: string;
+    };
     expect(update.transcript).toBe('SOLO TRANSCRIPT');
+    // Default single-whisper path still surfaces the top-level
+    // wordTimestampsKey — sourced from the entry's own key (set from
+    // msg.wordTimestampsKey at UPSERT time), not a msg fallback.
+    expect(update.wordTimestampsKey).toBe('wts/whisper/rec.json');
     const transcripts = transcriptsOf(update);
     expect(transcripts).toHaveLength(1);
     expect(transcripts[0]).toMatchObject({
       backend: 'whisper-local',
       transcript: 'SOLO TRANSCRIPT',
       transcriptionConfidence: 0.71,
+      wordTimestampsKey: 'wts/whisper/rec.json',
     });
   });
 
@@ -1640,6 +1649,7 @@ describe('linguistic — multi-transcript collection + reconcile (#593)', () => 
             backend: 'whisper-local',
             transcript: 'OXTRA HOTEL',
             transcriptionConfidence: 0.7,
+            wordTimestampsKey: 'wts/whisper/rec.json',
             ts: '2026-05-24T17:00:00Z',
           },
         ],
@@ -1654,13 +1664,15 @@ describe('linguistic — multi-transcript collection + reconcile (#593)', () => 
       now: () => new Date('2026-05-24T18:00:00Z'),
       uuid: () => 'm',
     });
-    // amazon-transcribe arrives with a higher-confidence reading.
+    // amazon-transcribe arrives with a higher-confidence reading + its own
+    // (backend-specific) word-timestamps key.
     await handler(
       makeEvent({
         recordingId: 'rec',
         transcript: 'FOXTROT HOTEL',
         backend: 'amazon-transcribe',
         transcriptionConfidence: 0.9,
+        wordTimestampsKey: 'wts/amazon/rec.json',
         enqueuedAt: '2026-05-24T17:55:00Z',
       }),
       {} as never,
@@ -1669,6 +1681,7 @@ describe('linguistic — multi-transcript collection + reconcile (#593)', () => 
     const update = updateSpy.mock.calls[0]?.[0] as {
       transcript?: string;
       transcriptionConfidence?: number;
+      wordTimestampsKey?: string;
     };
     const transcripts = transcriptsOf(update);
     expect(transcripts).toHaveLength(2);
@@ -1678,6 +1691,10 @@ describe('linguistic — multi-transcript collection + reconcile (#593)', () => 
     // Primary = highest confidence → amazon-transcribe mirrors the top-level.
     expect(update.transcript).toBe('FOXTROT HOTEL');
     expect(update.transcriptionConfidence).toBe(0.9);
+    // Word timestamps are backend-specific: the top-level key MUST be the
+    // PRIMARY (amazon-transcribe) entry's key, NOT the whisper key — pairing
+    // the amazon transcript with whisper offsets would break scrub-to-text.
+    expect(update.wordTimestampsKey).toBe('wts/amazon/rec.json');
     // Bedrock got BOTH transcripts to reconcile across.
     const fbOpts = bedrockFallback.mock.calls[0]?.[1] as {
       transcripts?: Array<{ backend: string }>;
