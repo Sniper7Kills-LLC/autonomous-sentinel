@@ -2083,13 +2083,17 @@ describe('linguistic — low-confidence Amazon Transcribe escalation (#588)', ()
       () => undefined,
     );
     expect(escalateSpy).toHaveBeenCalledOnce();
-    expect(escalateSpy.mock.calls[0]?.[0]).toEqual(
+    const escMsg = escalateSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(escMsg).toEqual(
       expect.objectContaining({
         recordingId: 'rec',
         originalKey: 'recordings/originals/abc.wav',
         backendOverride: 'amazon-transcribe',
       }),
     );
+    // contentHash is OMITTED on a re-transcribe (the recording already
+    // exists; an empty-string dedup-key value would be a bug — see review).
+    expect(escMsg).not.toHaveProperty('contentHash');
     // The escalatedAt loop-guard marker is persisted on the Recording.
     expect(stub.updateSpy.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({ escalatedAt: '2026-05-24T18:00:00.000Z' }),

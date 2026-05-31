@@ -213,10 +213,9 @@ export interface LinguisticDataClient {
           broadcastedAt?: string | null;
           messageId?: string | null;
           // Source media for the low-confidence Amazon Transcribe escalation
-          // re-enqueue (#588): the dispatcher forwards `{recordingId,
-          // originalKey, contentHash}` to the backend.
+          // re-enqueue (#588): the dispatcher forwards `originalKey` to the
+          // backend, which reads it to fetch the audio.
           originalKey?: string | null;
-          contentHash?: string | null;
           // Low-confidence escalation marker (#588). Its presence is the
           // loop guard — an already-escalated recording is never escalated
           // again (never bounce whisper↔transcribe).
@@ -306,18 +305,21 @@ export interface RulesMatcher {
 export type LinguisticAuditFn = (ctx: AuditContext, opts: AuditOptions) => Promise<string>;
 
 /**
- * Transcribe-queue escalation message (#588). Mirrors the
- * `{recordingId, originalKey, contentHash, enqueuedAt}` shape the
- * preprocess Lambda publishes, plus a `backendOverride` so the dispatcher
- * (#587/#589) routes this re-transcription to the chosen backend
- * (`amazon-transcribe`). Carries the source media keys because the
- * dispatcher forwards the body verbatim to the backend, which reads
- * `originalKey` to fetch the audio.
+ * Transcribe-queue escalation message (#588). Carries `recordingId` +
+ * `originalKey` (the dispatcher forwards the body verbatim to the backend,
+ * which reads `originalKey` to fetch the audio) plus a `backendOverride`
+ * so the dispatcher (#587/#589) routes this re-transcription to
+ * `amazon-transcribe`.
+ *
+ * `contentHash` is intentionally OMITTED: on a re-transcribe the Recording
+ * already exists, and neither the dispatcher (`parseDispatchMessage` reads
+ * only `recordingId` + `backendOverride`) nor the transcribe-aws backend
+ * (reads `recordingId` + `originalKey`) consumes it. Sending an empty
+ * string would publish a bogus dedup-key value; sending nothing is correct.
  */
 export interface TranscribeEscalationMessage {
   recordingId: string;
   originalKey: string;
-  contentHash: string;
   enqueuedAt: string;
   backendOverride: string;
 }
@@ -682,7 +684,6 @@ async function maybeEscalate(opts: {
   transcriptionConfidence: number | null | undefined;
   threshold: number;
   originalKey: string | null | undefined;
-  contentHash: string | null | undefined;
   alreadyEscalatedAt: string | null | undefined;
   transcripts: { backend: string }[];
   ts: string;
@@ -710,7 +711,6 @@ async function maybeEscalate(opts: {
     await escalateFn({
       recordingId: opts.recordingId,
       originalKey,
-      contentHash: typeof opts.contentHash === 'string' ? opts.contentHash : '',
       enqueuedAt: opts.ts,
       backendOverride: ESCALATION_BACKEND,
     });
@@ -1113,7 +1113,6 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
       typeof msg.transcriptionConfidence === 'number' ? msg.transcriptionConfidence : null,
     threshold: escalationThreshold,
     originalKey: rec.data?.originalKey,
-    contentHash: rec.data?.contentHash,
     alreadyEscalatedAt: rec.data?.escalatedAt,
     transcripts: existingTranscripts,
     ts: nowTs,
