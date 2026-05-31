@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import type { AppSyncResolverEvent, Context } from 'aws-lambda';
 import {
   handler,
@@ -62,7 +62,7 @@ function makeStubs(opts: { existing?: CommentRow[] } = {}): {
   getSpy: ReturnType<typeof vi.fn>;
   createSpy: ReturnType<typeof vi.fn>;
   updateSpy: ReturnType<typeof vi.fn>;
-  auditSpy: ReturnType<typeof vi.fn>;
+  auditSpy: Mock<() => Promise<string>>;
   newId: () => string;
 } {
   const rows = new Map<string, CommentRow>();
@@ -88,7 +88,7 @@ function makeStubs(opts: { existing?: CommentRow[] } = {}): {
     rows.set(input.id, merged);
     return Promise.resolve({ data: merged, errors: undefined });
   });
-  const auditSpy = vi.fn(() => Promise.resolve('audit-id'));
+  const auditSpy = vi.fn<() => Promise<string>>(() => Promise.resolve('audit-id'));
   return {
     client: { models: { Comment: { get: getSpy, create: createSpy, update: updateSpy } } },
     getSpy,
@@ -262,7 +262,7 @@ describe('commentMutations — softDeleteComment', () => {
     expect(patch.deletedAt).toBe('2026-05-17T00:30:00.000Z');
     expect(patch.body).toBe('[removed]');
 
-    const [, opts] = auditSpy.mock.calls[0] as [unknown, Record<string, unknown>];
+    const [, opts] = auditSpy.mock.calls[0] as unknown as [unknown, Record<string, unknown>];
     expect(opts.action).toBe('COMMENT_DELETE');
     expect(opts.targetType).toBe('Comment');
     expect(opts.targetId).toBe('c-1');
@@ -405,7 +405,7 @@ describe('commentMutations — softDeleteComment', () => {
       arguments: { commentId: 'c-n', reason: '' },
     });
     await handler(event, {} as Context, () => undefined);
-    const [, opts] = auditSpy.mock.calls[0] as [unknown, Record<string, unknown>];
+    const [, opts] = auditSpy.mock.calls[0] as unknown as [unknown, Record<string, unknown>];
     expect(opts.reason).toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, type Mock } from 'vitest';
 import type { SQSEvent } from 'aws-lambda';
 
 import {
@@ -2323,12 +2323,16 @@ describe('linguistic — low-confidence Amazon Transcribe escalation (#588)', ()
   it('respects an admin-tuned threshold from the LinguisticConfig row', async () => {
     // Threshold raised to 0.9 → a 0.7-confidence whisper transcript now escalates.
     const stub = escalationStub();
-    stub.configGetSpy.mockImplementation(({ key }: { key: string }) =>
-      Promise.resolve({
+    (
+      stub.configGetSpy as Mock<
+        (input: { key: string }) => Promise<{ data: { value: number } | null; errors: null }>
+      >
+    ).mockImplementation(({ key }) => {
+      return Promise.resolve({
         data: key === 'WHISPER_ESCALATION_THRESHOLD' ? { value: 0.9 } : null,
         errors: null,
-      }),
-    );
+      });
+    });
     const escalateSpy = vi.fn((_msg: unknown) => Promise.resolve());
     __setDeps({
       dataClient: stub.client,

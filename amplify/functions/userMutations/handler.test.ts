@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import type { AppSyncResolverEvent, Context } from 'aws-lambda';
-import { handler, __setDeps } from './handler';
+import { handler, __setDeps, type UserMutationsDataClient } from './handler';
 
 /**
  * Lambda-resolver tests for the `selfDelete` + `banUser` custom mutations
@@ -111,7 +111,7 @@ describe('userMutations handler — selfDelete', () => {
   let userUpdateSpy: ReturnType<typeof vi.fn>;
   let sdrListSpy: ReturnType<typeof vi.fn>;
   let sdrUpdateSpy: ReturnType<typeof vi.fn>;
-  let auditSpy: ReturnType<typeof vi.fn>;
+  let auditSpy: Mock<() => Promise<string>>;
 
   beforeEach(() => {
     users = new Map<string, UserRow>([
@@ -149,7 +149,7 @@ describe('userMutations handler — selfDelete', () => {
       sdrs.set(input.id, merged);
       return Promise.resolve({ data: merged, errors: undefined });
     });
-    auditSpy = vi.fn(() => Promise.resolve('audit-id-1'));
+    auditSpy = vi.fn<() => Promise<string>>(() => Promise.resolve('audit-id-1'));
 
     __setDeps({
       dataClient: {
@@ -168,7 +168,7 @@ describe('userMutations handler — selfDelete', () => {
             update: sdrUpdateSpy,
           },
         },
-      },
+      } as unknown as UserMutationsDataClient,
       audit: auditSpy,
     });
   });
@@ -199,7 +199,7 @@ describe('userMutations handler — selfDelete', () => {
     await handler(event, {} as Context, () => undefined);
 
     expect(auditSpy).toHaveBeenCalledOnce();
-    const [, opts] = auditSpy.mock.calls[0] as [unknown, Record<string, unknown>];
+    const [, opts] = auditSpy.mock.calls[0] as unknown as [unknown, Record<string, unknown>];
     expect(opts.action).toBe('USER_PII_BLANK');
     expect(opts.targetType).toBe('User');
     expect(opts.targetId).toBe('cognito-sub-actor-123');
@@ -218,7 +218,7 @@ describe('userMutations handler — selfDelete', () => {
     const event = makeEvent({ fieldName: 'selfDelete', arguments: {} });
     await handler(event, {} as Context, () => undefined);
 
-    const [auditCtx] = auditSpy.mock.calls[0] as [
+    const [auditCtx] = auditSpy.mock.calls[0] as unknown as [
       { identity?: { sub?: string }; request?: { headers?: Record<string, string> } },
       unknown,
     ];
@@ -373,7 +373,7 @@ describe('userMutations handler — selfDelete', () => {
       const event = makeEvent({ fieldName: 'selfDelete', arguments: {} });
       await handler(event, {} as Context, () => undefined);
 
-      const auditCalls = auditSpy.mock.calls.map((c) => c[1] as Record<string, unknown>);
+      const auditCalls = auditSpy.mock.calls.map((c) => (c as unknown[])[1] as Record<string, unknown>);
       const sdrAudits = auditCalls.filter((a) => a.targetType === 'Sdr');
       expect(sdrAudits).toHaveLength(2);
       const auditedIds = sdrAudits.map((a) => a.targetId as string).sort();
@@ -387,7 +387,7 @@ describe('userMutations handler — selfDelete', () => {
       const event = makeEvent({ fieldName: 'selfDelete', arguments: {} });
       await handler(event, {} as Context, () => undefined);
 
-      const auditCalls = auditSpy.mock.calls.map((c) => c[1] as Record<string, unknown>);
+      const auditCalls = auditSpy.mock.calls.map((c) => (c as unknown[])[1] as Record<string, unknown>);
       const exactAudit = auditCalls.find(
         (a) => a.targetType === 'Sdr' && a.targetId === 'sdr-exact',
       );
@@ -406,7 +406,7 @@ describe('userMutations handler — selfDelete', () => {
 
       // The User audit lands first; Sdr audits follow.
       const targetTypes = auditSpy.mock.calls.map(
-        (c) => (c[1] as Record<string, unknown>).targetType,
+        (c) => ((c as unknown[])[1] as Record<string, unknown>).targetType,
       );
       expect(targetTypes[0]).toBe('User');
       expect(targetTypes.slice(1).every((t) => t === 'Sdr')).toBe(true);
@@ -418,9 +418,7 @@ describe('userMutations handler — selfDelete', () => {
       // call (sdr-city) succeeds. Asserting the specific surviving id
       // is what makes this test catch a regression where the cascade
       // bails out on the first error instead of continuing.
-      sdrUpdateSpy.mockImplementationOnce(() =>
-        Promise.resolve({ data: null, errors: [{ message: 'boom' }] }),
-      );
+      sdrUpdateSpy.mockResolvedValueOnce({ data: null, errors: [{ message: 'boom' }] });
 
       const event = makeEvent({ fieldName: 'selfDelete', arguments: {} });
       const result = (await handler(event, {} as Context, () => undefined)) as UserRow;
@@ -428,7 +426,7 @@ describe('userMutations handler — selfDelete', () => {
       // User row is still blanked.
       expect(result.piiBlanked).toBe(true);
       const sdrAudits = auditSpy.mock.calls
-        .map((c) => c[1] as Record<string, unknown>)
+        .map((c) => (c as unknown[])[1] as Record<string, unknown>)
         .filter((a) => a.targetType === 'Sdr');
       // The failing sdr-exact emitted no audit; sdr-city did.
       const auditedIds = sdrAudits.map((a) => a.targetId as string).sort();
@@ -468,7 +466,7 @@ describe('userMutations handler — selfDelete', () => {
       expect(sdrListSpy).toHaveBeenCalledOnce();
       expect(sdrUpdateSpy).not.toHaveBeenCalled();
       // Only the User audit fires.
-      const auditCalls = auditSpy.mock.calls.map((c) => c[1] as Record<string, unknown>);
+      const auditCalls = auditSpy.mock.calls.map((c) => (c as unknown[])[1] as Record<string, unknown>);
       expect(auditCalls).toHaveLength(1);
       expect(auditCalls[0]?.targetType).toBe('User');
     });
@@ -478,7 +476,7 @@ describe('userMutations handler — selfDelete', () => {
 describe('userMutations handler — banUser', () => {
   let users: Map<string, UserRow>;
   let userUpdateSpy: ReturnType<typeof vi.fn>;
-  let auditSpy: ReturnType<typeof vi.fn>;
+  let auditSpy: Mock<() => Promise<string>>;
 
   beforeEach(() => {
     users = new Map<string, UserRow>([
@@ -501,7 +499,7 @@ describe('userMutations handler — banUser', () => {
       users.set(input.cognitoSub, merged);
       return Promise.resolve({ data: merged, errors: undefined });
     });
-    auditSpy = vi.fn(() => Promise.resolve('audit-id-2'));
+    auditSpy = vi.fn<() => Promise<string>>(() => Promise.resolve('audit-id-2'));
 
     __setDeps({
       dataClient: {
@@ -520,7 +518,7 @@ describe('userMutations handler — banUser', () => {
             update: vi.fn(),
           },
         },
-      },
+      } as unknown as UserMutationsDataClient,
       audit: auditSpy,
     });
   });
@@ -575,7 +573,7 @@ describe('userMutations handler — banUser', () => {
     }
     await handler(event, {} as Context, () => undefined);
 
-    const [, opts] = auditSpy.mock.calls[0] as [unknown, Record<string, unknown>];
+    const [, opts] = auditSpy.mock.calls[0] as unknown as [unknown, Record<string, unknown>];
     expect(opts.action).toBe('USER_BAN');
     expect(opts.targetType).toBe('User');
     expect(opts.targetId).toBe('target-sub-456');
@@ -608,7 +606,7 @@ describe('userMutations handler — banUser', () => {
     const patch = userUpdateSpy.mock.calls[0]?.[0] as UserRow;
     expect(patch.bannedReason).toBeNull();
 
-    const [, opts] = auditSpy.mock.calls[0] as [unknown, Record<string, unknown>];
+    const [, opts] = auditSpy.mock.calls[0] as unknown as [unknown, Record<string, unknown>];
     expect(opts.reason).toBeNull();
   });
 

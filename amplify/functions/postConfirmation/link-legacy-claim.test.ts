@@ -37,7 +37,7 @@ function makeDeps(overrides: Partial<LegacyClaimDeps> = {}): LegacyClaimDeps & {
   auditSpy: ReturnType<typeof vi.fn>;
 } {
   const transactSpy = vi.fn(() => Promise.resolve());
-  const auditSpy = vi.fn(() => Promise.resolve('audit-id-123'));
+  const auditSpy = vi.fn<() => Promise<string>>(() => Promise.resolve('audit-id-123'));
   const fixedNow = new Date('2026-05-16T22:00:00.000Z');
   return {
     transactSpy,

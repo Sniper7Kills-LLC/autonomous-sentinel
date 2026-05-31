@@ -11,6 +11,7 @@ import {
   __resetDataDeps,
   __setLegacyClaimDispatcher,
   type LegacyClaimDispatchPayload,
+  type PostConfirmDataClient,
 } from './handler';
 
 const cognitoMock = mockClient(CognitoIdentityProviderClient);
@@ -30,18 +31,7 @@ interface UserRow {
 }
 
 function makeStubDataClient(opts: { existingByEmail?: UserRow | null } = {}): {
-  client: {
-    models: {
-      User: {
-        listUserByEmail: ReturnType<typeof vi.fn>;
-        create: ReturnType<typeof vi.fn>;
-        update: ReturnType<typeof vi.fn>;
-      };
-      Reputation: {
-        create: ReturnType<typeof vi.fn>;
-      };
-    };
-  };
+  client: PostConfirmDataClient;
   createSpy: ReturnType<typeof vi.fn>;
   updateSpy: ReturnType<typeof vi.fn>;
   listByEmailSpy: ReturnType<typeof vi.fn>;
@@ -241,9 +231,7 @@ describe('postConfirmation handler — User row creation (issue #248)', () => {
     // the row can always be reconciled later. We swallow the data-client
     // error and log it, but the group-add side must already have run by
     // then.
-    stub.createSpy.mockImplementationOnce(() =>
-      Promise.resolve({ data: null, errors: [{ message: 'DDB throttled' }] }),
-    );
+    stub.createSpy.mockResolvedValueOnce({ data: null, errors: [{ message: 'DDB throttled' }] });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     const event = makeEvent();
@@ -261,7 +249,7 @@ describe('postConfirmation handler — User row creation (issue #248)', () => {
     // now bails so Cognito's at-least-once retry resolves it on the
     // next call. Group-add already happened, so sign-in continues to
     // work.
-    stub.listByEmailSpy.mockImplementationOnce(() => Promise.reject(new Error('DDB throttled')));
+    stub.listByEmailSpy.mockRejectedValueOnce(new Error('DDB throttled'));
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     const event = makeEvent({
@@ -384,9 +372,7 @@ describe('postConfirmation handler — Reputation lazy-create (issue #36)', () =
   });
 
   it('skips Reputation create when User.create fails', async () => {
-    stub.createSpy.mockImplementationOnce(() =>
-      Promise.resolve({ data: null, errors: [{ message: 'DDB throttled' }] }),
-    );
+    stub.createSpy.mockResolvedValueOnce({ data: null, errors: [{ message: 'DDB throttled' }] });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     const event = makeEvent();
@@ -422,9 +408,7 @@ describe('postConfirmation handler — Reputation lazy-create (issue #36)', () =
   });
 
   it('does not break sign-up when Reputation.create throws (log + continue)', async () => {
-    stub.reputationCreateSpy.mockImplementationOnce(() =>
-      Promise.reject(new Error('DDB ECONNRESET')),
-    );
+    stub.reputationCreateSpy.mockRejectedValueOnce(new Error('DDB ECONNRESET'));
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     const event = makeEvent();
@@ -439,9 +423,10 @@ describe('postConfirmation handler — Reputation lazy-create (issue #36)', () =
   });
 
   it('does not break sign-up when Reputation.create returns errors (log + continue)', async () => {
-    stub.reputationCreateSpy.mockImplementationOnce(() =>
-      Promise.resolve({ data: null, errors: [{ message: 'DDB conditional check failed' }] }),
-    );
+    stub.reputationCreateSpy.mockResolvedValueOnce({
+      data: null,
+      errors: [{ message: 'DDB conditional check failed' }],
+    });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     const event = makeEvent();

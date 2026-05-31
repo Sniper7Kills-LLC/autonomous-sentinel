@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import type { AppSyncResolverEvent, Context } from 'aws-lambda';
 import {
   handler,
@@ -72,7 +72,7 @@ function makeStubs(
   revisionCreateSpy: ReturnType<typeof vi.fn>;
   revisionUpdateSpy: ReturnType<typeof vi.fn>;
   listSiblingsSpy: ReturnType<typeof vi.fn>;
-  auditSpy: ReturnType<typeof vi.fn>;
+  auditSpy: Mock<() => Promise<string>>;
 } {
   const recordings = new Map<string, RecordingRow>();
   for (const r of opts.recordings ?? []) recordings.set(r.id, r);
@@ -114,7 +114,7 @@ function makeStubs(
     );
     return Promise.resolve({ data: matches, errors: undefined });
   });
-  const auditSpy = vi.fn(() => Promise.resolve('audit-id'));
+  const auditSpy = vi.fn<() => Promise<string>>(() => Promise.resolve('audit-id'));
   return {
     client: {
       models: {
@@ -437,7 +437,7 @@ describe('transcriptRevisionMutations — acceptTranscriptRevision', () => {
     await handler(event, {} as Context, () => undefined);
 
     expect(auditSpy).toHaveBeenCalledOnce();
-    const [, opts] = auditSpy.mock.calls[0] as [unknown, Record<string, unknown>];
+    const [, opts] = auditSpy.mock.calls[0] as unknown as [unknown, Record<string, unknown>];
     expect(opts.action).toBe('MESSAGE_EDIT');
     // Target is the parent Recording (transcript lives there).
     expect(opts.targetType).toBe('Recording');

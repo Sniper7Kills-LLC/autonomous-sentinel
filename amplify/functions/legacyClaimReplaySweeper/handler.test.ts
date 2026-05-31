@@ -285,23 +285,21 @@ describe('legacyClaimReplaySweeper', () => {
     });
     // First call throws, second succeeds.
     deps.fanOutSpy
-      .mockImplementationOnce(() => Promise.reject(new Error('DDB throttled')))
-      .mockImplementationOnce(() =>
-        Promise.resolve({
-          Sdr: 0,
-          Comment: 0,
-          AbuseReport: 0,
-          Donation: 0,
-          Recording: 0,
-          TranscriptRevision: 0,
-          User: 0,
-          Message: 0,
-          FieldVote: 0,
-          RevisionVote: 0,
-          Reputation: 0,
-          NotificationPreference: 0,
-        }),
-      );
+      .mockRejectedValueOnce(new Error('DDB throttled'))
+      .mockResolvedValueOnce({
+        Sdr: 0,
+        Comment: 0,
+        AbuseReport: 0,
+        Donation: 0,
+        Recording: 0,
+        TranscriptRevision: 0,
+        User: 0,
+        Message: 0,
+        FieldVote: 0,
+        RevisionVote: 0,
+        Reputation: 0,
+        NotificationPreference: 0,
+      });
     __setDeps(deps);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 

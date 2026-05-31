@@ -63,7 +63,7 @@ function makeDeps(
     Promise.resolve({ items: rows[tableName] ?? [] }),
   );
   const transactSpy = vi.fn(() => Promise.resolve());
-  const auditSpy = vi.fn(() => Promise.resolve('audit-id-fanout'));
+  const auditSpy = vi.fn<() => Promise<string>>(() => Promise.resolve('audit-id-fanout'));
   return {
     querySpy,
     transactSpy,
