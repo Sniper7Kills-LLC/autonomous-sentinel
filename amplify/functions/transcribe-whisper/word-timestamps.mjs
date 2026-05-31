@@ -1,16 +1,20 @@
 /**
  * Word-timestamp derivation for the Whisper container Lambda (#527/#536).
  *
- * whisper.cpp's nested `transcription[].tokens[].{ text, t0, t1 }` array
- * (`t0`/`t1` in CENTISECONDS, 1/100 s) carries per-token timing — but it
- * is ONLY written under `--output-json-full` (`-ojf`). Plain `-oj` writes
- * per-segment `text` + `offsets.{from,to}` (MILLISECONDS) and NO
- * `tokens[]`. Before #536 the argv used `-oj`, so this helper found no
- * tokens and produced an empty sidecar — the audio-player scrub-to-text
- * break. `run-whisper.mjs` now passes `-ojf`; this helper prefers the
- * per-token array and FALLS BACK to one entry per segment (from the
- * segment's `offsets.{from,to}`) so the sidecar is never empty when any
- * timing exists — resilient even if a backend ever omits `tokens[]` again.
+ * whisper.cpp's nested `transcription[].tokens[]` array carries per-token
+ * timing, written ONLY under `--output-json-full` (`-ojf`). Each token is
+ * `{ text, offsets: { from, to }, timestamps, id, p, t_dtw }` where
+ * `offsets.{from,to}` are MILLISECONDS — the SAME unit/field as the
+ * per-segment `offsets`. There is NO `t0`/`t1` field (an earlier version
+ * of this helper read `t0`/`t1`, which are always undefined, so EVERY
+ * token was skipped and the per-segment fallback fired — the entire clip
+ * collapsed into one "word" and the audio-player highlighted it all at
+ * once; #536-followup). We now read `offsets.{from,to}` per token.
+ *
+ * Plain `-oj` writes per-segment `text` + `offsets` and NO `tokens[]`; the
+ * argv passes `-ojf` (#536), and this helper FALLS BACK to one entry per
+ * segment (from the segment's `offsets.{from,to}`) so the sidecar is never
+ * empty when any timing exists — resilient if a backend omits `tokens[]`.
  *
  * Output shape is `{ words: [{ word, start, end }] }` with times in
  * SECONDS — the canonical shape consumed by
@@ -45,9 +49,15 @@ export function extractWordTimestamps(jsonString) {
       // Drop whisper.cpp meta-tokens (`[_BEG_]`, `[_TT_n]`, …) and
       // punctuation-only / empty tokens — they carry no spoken word.
       if (!text || text.startsWith('[') || !/[A-Za-z0-9]/.test(text)) continue;
-      if (!Number.isFinite(t.t0) || !Number.isFinite(t.t1)) continue;
-      const start = t.t0 / 100;
-      const end = t.t1 / 100;
+      // Per-token timing lives in `offsets.{from,to}` (MILLISECONDS) — NOT
+      // a `t0`/`t1` field (which doesn't exist in `-ojf` output).
+      const offsets = t.offsets;
+      if (!offsets || typeof offsets !== 'object') continue;
+      const from = offsets.from;
+      const to = offsets.to;
+      if (!Number.isFinite(from) || !Number.isFinite(to)) continue;
+      const start = from / 1000;
+      const end = to / 1000;
       if (end < start) continue;
       words.push({ word: text, start, end });
       pushedFromTokens = true;
@@ -81,7 +91,7 @@ function segmentWord(seg) {
   const from = offsets.from;
   const to = offsets.to;
   if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
-  // whisper.cpp segment offsets are MILLISECONDS (token t0/t1 are cs).
+  // whisper.cpp `offsets` (segment and token alike) are MILLISECONDS.
   const start = from / 1000;
   const end = to / 1000;
   if (end < start) return null;
