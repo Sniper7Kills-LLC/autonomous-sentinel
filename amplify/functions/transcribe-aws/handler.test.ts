@@ -98,6 +98,32 @@ describe('parseDispatchMessage', () => {
     });
     expect(msg?.audioKey).toBe('recordings/web/rec-1.opus');
   });
+
+  it('accepts a direct parsed object payload (#589 — the Event-invoke shape)', () => {
+    // AWS Lambda JSON-parses the invoke Payload, so the handler receives
+    // the dispatch object directly — must not require a string.
+    const msg = parseDispatchMessage({
+      recordingId: 'rec-1',
+      originalKey: 'recordings/originals/rec-1.wav',
+    });
+    expect(msg).toEqual({
+      recordingId: 'rec-1',
+      audioKey: 'recordings/originals/rec-1.wav',
+      enqueuedAt: undefined,
+    });
+  });
+
+  it('also accepts a raw JSON string payload (direct-invoke forwarding the SQS body)', () => {
+    const msg = parseDispatchMessage(
+      JSON.stringify({ recordingId: 'rec-1', originalKey: 'recordings/originals/rec-1.wav' }),
+    );
+    expect(msg?.recordingId).toBe('rec-1');
+    expect(msg?.audioKey).toBe('recordings/originals/rec-1.wav');
+  });
+
+  it('returns null (caller throws) on an unparseable JSON string instead of crashing', () => {
+    expect(parseDispatchMessage('{not json')).toBeNull();
+  });
 });
 
 describe('handler — StartTranscriptionJob', () => {

@@ -47,6 +47,18 @@ const recording: DisplayRecording = {
   modulation: 'USB',
   broadcastedAt: '2026-05-30T00:00:00Z',
   transcript: 'SKYKING SKYKING DO NOT ANSWER ALPHA BRAVO',
+  transcripts: [
+    {
+      backend: 'whisper-local',
+      transcript: 'SKYKING SKYKING DO NOT ANSWER OXTRA BRAVO',
+      transcriptionConfidence: 0.64,
+    },
+    {
+      backend: 'amazon-transcribe',
+      transcript: 'SKYKING SKYKING DO NOT ANSWER ALPHA BRAVO',
+      transcriptionConfidence: 0.9,
+    },
+  ],
   transcriptionStatus: 'PUBLISHED',
   transcriptionFailed: false,
   durationMs: 12000,
@@ -100,16 +112,21 @@ describe('DebugDetailsPanel', () => {
 
     await waitFor(() => expect(screen.getByTestId('debug-details')).toBeInTheDocument());
     expect(screen.getByText('Debug details')).toBeInTheDocument();
-    // Raw transcript
+    // Raw transcript — both ASR backends shown side-by-side (#593)
     expect(screen.getByText(/SKYKING SKYKING DO NOT ANSWER ALPHA BRAVO/)).toBeInTheDocument();
+    expect(screen.getByText(/SKYKING SKYKING DO NOT ANSWER OXTRA BRAVO/)).toBeInTheDocument();
+    expect(screen.getByText(/whisper-local · confidence 0\.64/)).toBeInTheDocument();
+    expect(screen.getByText(/amazon-transcribe · confidence 0\.90/)).toBeInTheDocument();
     // Attempt row
     expect(screen.getByText('rules')).toBeInTheDocument();
     // Parsed fields
     expect(screen.getByText('MAINSAIL')).toBeInTheDocument();
     expect(screen.getByText('0.91')).toBeInTheDocument();
-    // Transcription confidence (#581) — distinct from the parse confidence
+    // Transcription confidence (#581) — distinct from the parse confidence.
+    // 0.64 now appears both on the recording-level label and the
+    // whisper-local backend block (#593), so match all occurrences.
     expect(screen.getByText(/Transcription confidence:/)).toBeInTheDocument();
-    expect(screen.getByText(/0\.64/)).toBeInTheDocument();
+    expect(screen.getAllByText(/0\.64/).length).toBeGreaterThanOrEqual(1);
     // Rules section with caveat label
     await waitFor(() => expect(screen.getByText(/not a per-message link/i)).toBeInTheDocument());
     expect(screen.getByText('SKYKING\\s+SKYKING')).toBeInTheDocument();

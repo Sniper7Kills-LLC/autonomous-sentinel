@@ -153,6 +153,25 @@ describe('handler — routing', () => {
     expect(lambdaMock.commandCalls(InvokeCommand)).toHaveLength(0);
   });
 
+  it('throws when send() rejects so SQS redrives (no silent drop)', async () => {
+    withDeps();
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    lambdaMock.on(InvokeCommand).rejects(new Error('Lambda service unavailable'));
+    await expect(handler(event({ recordingId: 'r1', originalKey: 'k' }))).rejects.toThrow(
+      /Lambda service unavailable/,
+    );
+  });
+
+  it('throws when the async invoke returns a non-202 StatusCode (SQS redrives)', async () => {
+    withDeps();
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    // e.g. a throttled / failed enqueue surfaces as a non-202 StatusCode.
+    lambdaMock.on(InvokeCommand).resolves({ StatusCode: 500 });
+    await expect(handler(event({ recordingId: 'r1', originalKey: 'k' }))).rejects.toThrow(
+      /StatusCode 500.*expected 202|expected 202.*StatusCode/s,
+    );
+  });
+
   it('skips a malformed record without invoking, processes the rest of the batch', async () => {
     withDeps();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);

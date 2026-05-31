@@ -301,6 +301,9 @@ async function processOne(body) {
         MessageBody: JSON.stringify({
           kind: 'transcript',
           recordingId,
+          // Which backend produced this transcript (#593) — keys the
+          // per-backend `Recording.transcripts` collection in linguistic.
+          backend: 'whisper-local',
           transcript: transcriptText,
           wordTimestampsKey,
           // Only present on the consolidated path — the container

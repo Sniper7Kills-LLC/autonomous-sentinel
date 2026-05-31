@@ -131,13 +131,27 @@ export async function dispatchOne(
   // Throws on a missing ARN env var → SQS redrives (fail loud).
   const functionArn = resolveBackendArn(backend, { env: env() });
 
-  await lambdaClient().send(
+  // An async (`InvocationType: 'Event'`) invoke returns 202 Accepted on
+  // success — the request was queued by the Lambda service. Any other
+  // StatusCode (or a rejected `send`) means the backend was NOT enqueued,
+  // so we THROW to let SQS redrive the message rather than silently
+  // dropping the Recording (CLAUDE.md: pipeline must support retry of
+  // stuck recordings; no silent drops on the SDR happy path).
+  const res = await lambdaClient().send(
     new InvokeCommand({
       FunctionName: functionArn,
       InvocationType: 'Event',
       Payload: Buffer.from(rawBody),
     }),
   );
+
+  if (res.StatusCode !== 202) {
+    throw new Error(
+      `transcribe-dispatch: async invoke of ${backend} (${functionArn}) returned ` +
+        `StatusCode ${res.StatusCode ?? '(none)'} (expected 202) for recording ` +
+        `${msg.recordingId} — redriving`,
+    );
+  }
 
   console.info('transcribe-dispatch: routed recording to backend', {
     recordingId: msg.recordingId,

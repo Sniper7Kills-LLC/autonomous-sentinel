@@ -223,6 +223,20 @@ export interface FallbackResult {
   rules: ProposedRule[];
 }
 
+/**
+ * One independent ASR transcript of a recording, labelled by the backend
+ * that produced it (#593). Passed to the fallback when a Recording carries
+ * MORE THAN ONE transcript so Bedrock reconciles across the sources.
+ */
+export interface TranscriptForReconcile {
+  /** Backend that produced this transcript (`whisper-local`, `amazon-transcribe`, …). */
+  backend: string;
+  /** The transcript text. */
+  transcript: string;
+  /** Overall transcription confidence in [0,1], if the backend reported one. */
+  transcriptionConfidence?: number | null;
+}
+
 export interface FallbackOpts {
   client?: BedrockRuntimeClient;
   modelId?: string;
@@ -235,6 +249,49 @@ export interface FallbackOpts {
    * part of the prompt-version hash (it changes every invocation).
    */
   context?: string;
+  /**
+   * All of the Recording's per-backend transcripts (#593). When more
+   * than one is present the rendered prompt gains a "Multiple transcripts
+   * — reconcile" section listing each source labelled by backend +
+   * confidence, and the model is told to read ACROSS them. A single entry
+   * (or omitted) leaves the prompt byte-identical to the pre-#593 single-
+   * transcript form, so the default whisper path is unchanged.
+   */
+  transcripts?: TranscriptForReconcile[];
+}
+
+/**
+ * Build the "Multiple transcripts — reconcile" prompt section (#593).
+ * Returns `''` when there are fewer than two transcripts, so the single-
+ * transcript prompt is unchanged. Each transcript is labelled by backend
+ * and (when known) confidence so the model can weigh the sources and read
+ * across them — preferring the reading that best fits EAM phonetics /
+ * structure and noting disagreements.
+ */
+export function buildReconcileSection(transcripts: TranscriptForReconcile[] | undefined): string {
+  if (!transcripts || transcripts.length < 2) return '';
+  const lines: string[] = [
+    '## Multiple transcripts — reconcile',
+    '',
+    'This recording was transcribed by MORE THAN ONE independent speech-',
+    'recognition backend. The transcripts below are of the SAME audio — they',
+    'are not separate messages. Read ACROSS all of them as corroborating',
+    'sources: where they disagree on a word, prefer the reading that best',
+    'fits EAM phonetics and message structure (e.g. one backend\'s "Oxtra"',
+    'vs another\'s "Foxtrot" — choose "Foxtrot"). Use agreement between',
+    'backends to raise confidence and disagreement to lower it; reflect any',
+    'unresolved disagreement in a lower `confidence` score. Produce ONE',
+    'reconciled parse, not one per transcript.',
+    '',
+  ];
+  transcripts.forEach((t, i) => {
+    const conf =
+      typeof t.transcriptionConfidence === 'number'
+        ? ` (confidence ${t.transcriptionConfidence.toFixed(2)})`
+        : '';
+    lines.push(`### Transcript ${i + 1} — ${t.backend}${conf}`, '"""', t.transcript, '"""', '');
+  });
+  return lines.join('\n');
 }
 
 const PARSED_EAM_TOOL_NAME = 'parsed_eam';
@@ -291,8 +348,15 @@ export function renderFallbackPrompt(
   opts: FallbackOpts = {},
 ): { rendered: string; promptVersion: number; modelId: string } {
   const { modelId, promptVersion, promptTemplate } = resolveOpts(opts);
+  const base = promptTemplate.replace('{{TRANSCRIPT}}', transcript);
+  // Multi-transcript reconciliation (#593) is part of the rendered prompt
+  // (and therefore the prompt hash / skip key): two recordings with the
+  // same primary transcript but different secondary backends genuinely
+  // warrant distinct Bedrock calls. A single transcript yields '' here, so
+  // the single-source prompt + hash are unchanged.
+  const reconcile = buildReconcileSection(opts.transcripts);
   return {
-    rendered: promptTemplate.replace('{{TRANSCRIPT}}', transcript),
+    rendered: reconcile ? `${base}\n\n${reconcile}` : base,
     promptVersion,
     modelId,
   };
@@ -352,7 +416,13 @@ export async function tryBedrockFallback(
   if (!transcript || transcript.trim() === '') return null;
   const { client, modelId, promptVersion, promptTemplate } = resolveOpts(opts);
 
-  const rendered = promptTemplate.replace('{{TRANSCRIPT}}', transcript);
+  const base = promptTemplate.replace('{{TRANSCRIPT}}', transcript);
+  // Multi-transcript reconciliation section (#593) — part of the rendered
+  // prompt; empty for a single transcript so the single-source path is
+  // unchanged. Matches `renderFallbackPrompt` so the hash the handler
+  // computed there lines up with what is actually sent.
+  const reconcile = buildReconcileSection(opts.transcripts);
+  const rendered = reconcile ? `${base}\n\n${reconcile}` : base;
   // Append the dynamic context (failed attempt + ruleset, #544b) after
   // the rendered prompt — kept out of the prompt-version hash upstream.
   const userPrompt = opts.context ? `${rendered}\n\n${opts.context}` : rendered;

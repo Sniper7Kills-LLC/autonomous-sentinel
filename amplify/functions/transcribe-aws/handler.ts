@@ -96,8 +96,22 @@ function s3Client(): S3Client {
  * re-run on the web-canonical derivative) still wins when present.
  */
 export function parseDispatchMessage(raw: unknown): DispatchMessage | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const obj = raw as Record<string, unknown>;
+  // Robust to BOTH payload shapes (#589 review): the dispatcher
+  // Event-invokes this Lambda and AWS already JSON-parses the invoke
+  // Payload, so `raw` is normally the dispatch OBJECT. But a direct
+  // invoke that forwards the raw SQS body (a JSON string) must not crash
+  // the handler — accept a string by parsing it first. A bad string is
+  // swallowed to `null` (caller throws) rather than throwing here.
+  let value: unknown = raw;
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  if (!value || typeof value !== 'object') return null;
+  const obj = value as Record<string, unknown>;
   if (typeof obj.recordingId !== 'string' || obj.recordingId.trim() === '') return null;
   const audioKey =
     typeof obj.audioKey === 'string' && obj.audioKey.trim() !== ''

@@ -84,7 +84,26 @@ export function DebugDetailsPanel({ message, recordings }: DebugDetailsPanelProp
                   Transcription confidence:{' '}
                   {r.transcriptionConfidence === null ? '—' : r.transcriptionConfidence.toFixed(2)}
                 </div>
-                {r.transcript ? (
+                {r.transcripts.length > 0 ? (
+                  // Multiple ASR backends side-by-side (#593): one block per
+                  // backend, labelled by backend + its own confidence, so a
+                  // moderator can see exactly what each source heard.
+                  r.transcripts.map((t) => (
+                    <div key={`${r.id}-${t.backend}`} className={styles.debugBlock}>
+                      <div className={styles.debugBlockLabel}>
+                        {t.backend}
+                        {' · '}
+                        confidence{' '}
+                        {t.transcriptionConfidence === null
+                          ? '—'
+                          : t.transcriptionConfidence.toFixed(2)}
+                      </div>
+                      <pre className={styles.debugPre}>{t.transcript}</pre>
+                    </div>
+                  ))
+                ) : r.transcript ? (
+                  // Legacy / single-transcript rows with no `transcripts`
+                  // collection fall back to the primary transcript.
                   <pre className={styles.debugPre}>{r.transcript}</pre>
                 ) : (
                   <p className={styles.debugEmpty}>No transcript on this recording.</p>
