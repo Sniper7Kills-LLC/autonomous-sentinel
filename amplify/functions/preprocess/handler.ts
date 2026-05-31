@@ -36,6 +36,14 @@ interface PreprocessQueueMessage {
   originalKey: string;
   contentHash: string;
   enqueuedAt: string;
+  /**
+   * Per-recording transcribe-backend override (#592). Set by an admin
+   * `reprocessRecording` with a chosen backend; forwarded verbatim onto
+   * the transcribe message below so the dispatcher (#587/#589) routes to
+   * it. Absent on a normal upload (the dispatcher then uses the env-wide
+   * admin default / `whisper-local`).
+   */
+  backendOverride?: string;
 }
 
 interface TranscribeQueueMessage {
@@ -43,6 +51,8 @@ interface TranscribeQueueMessage {
   originalKey: string;
   contentHash: string;
   enqueuedAt: string;
+  /** See PreprocessQueueMessage.backendOverride (#592). */
+  backendOverride?: string;
 }
 
 /**
@@ -126,6 +136,13 @@ export function parseMessage(body: string): PreprocessQueueMessage {
     originalKey: parsed.originalKey,
     contentHash: parsed.contentHash,
     enqueuedAt: parsed.enqueuedAt ?? nowIso(),
+    // Forward the override only when it's a non-empty string (#592). The
+    // value is re-validated downstream by the dispatcher's selector, which
+    // falls through to the default on anything unrecognized — so a bad
+    // value here degrades gracefully rather than dropping the recording.
+    ...(typeof parsed.backendOverride === 'string' && parsed.backendOverride.length > 0
+      ? { backendOverride: parsed.backendOverride }
+      : {}),
   };
 }
 
@@ -168,6 +185,9 @@ async function processOne(msg: PreprocessQueueMessage): Promise<ProcessOneResult
     originalKey: msg.originalKey,
     contentHash: msg.contentHash,
     enqueuedAt: ts,
+    // Forward the admin-chosen backend override (#592) so the dispatcher
+    // routes this recording to it.
+    ...(msg.backendOverride ? { backendOverride: msg.backendOverride } : {}),
   };
   await sqs().send(
     new SendMessageCommand({

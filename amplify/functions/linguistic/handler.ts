@@ -1,4 +1,5 @@
 import type { SQSEvent, SQSHandler } from 'aws-lambda';
+import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { normalizeParsed } from './normalize';
 import { contentMatches, dedupWindow, deterministicMessageId } from './dedup';
 import { LinguisticRulesEngine, type RuleMatch, type RuleSummary } from './rules-engine';
@@ -211,6 +212,14 @@ export interface LinguisticDataClient {
           id: string;
           broadcastedAt?: string | null;
           messageId?: string | null;
+          // Source media for the low-confidence Amazon Transcribe escalation
+          // re-enqueue (#588): the dispatcher forwards `originalKey` to the
+          // backend, which reads it to fetch the audio.
+          originalKey?: string | null;
+          // Low-confidence escalation marker (#588). Its presence is the
+          // loop guard — an already-escalated recording is never escalated
+          // again (never bounce whisper↔transcribe).
+          escalatedAt?: string | null;
           linguisticAttempts?: unknown;
           // Per-backend transcript collection (#593) — a.json(), read back
           // as a parsed array (or a JSON string on older rows).
@@ -237,6 +246,9 @@ export interface LinguisticDataClient {
         canonicalSizeBytes?: number | null;
         // Overall whisper confidence (#581), [0,1] or null.
         transcriptionConfidence?: number | null;
+        // Low-confidence escalation marker (#588) — set the one time this
+        // recording is escalated to Amazon Transcribe.
+        escalatedAt?: string | null;
         // a.json() (AWSJSON) — written as a JSON string per the #520
         // AuditLog.diff precedent; AppSync returns it parsed on read.
         linguisticAttempts?: string;
@@ -292,6 +304,29 @@ export interface RulesMatcher {
 /** AuditLog writer (#556 supersede-on-re-run). Injected in tests. */
 export type LinguisticAuditFn = (ctx: AuditContext, opts: AuditOptions) => Promise<string>;
 
+/**
+ * Transcribe-queue escalation message (#588). Carries `recordingId` +
+ * `originalKey` (the dispatcher forwards the body verbatim to the backend,
+ * which reads `originalKey` to fetch the audio) plus a `backendOverride`
+ * so the dispatcher (#587/#589) routes this re-transcription to
+ * `amazon-transcribe`.
+ *
+ * `contentHash` is intentionally OMITTED: on a re-transcribe the Recording
+ * already exists, and neither the dispatcher (`parseDispatchMessage` reads
+ * only `recordingId` + `backendOverride`) nor the transcribe-aws backend
+ * (reads `recordingId` + `originalKey`) consumes it. Sending an empty
+ * string would publish a bogus dedup-key value; sending nothing is correct.
+ */
+export interface TranscribeEscalationMessage {
+  recordingId: string;
+  originalKey: string;
+  enqueuedAt: string;
+  backendOverride: string;
+}
+
+/** Re-enqueues a recording onto the transcribe queue (#588). Injected in tests. */
+export type EscalateFn = (msg: TranscribeEscalationMessage) => Promise<void>;
+
 export interface LinguisticDeps {
   dataClient?: LinguisticDataClient;
   rulesEngine?: RulesMatcher;
@@ -299,6 +334,8 @@ export interface LinguisticDeps {
   bedrockFallback?: (transcript: string, opts?: FallbackOpts) => Promise<FallbackResult | null>;
   /** AuditLog writer for the M_old supersede entry (#556). */
   audit?: LinguisticAuditFn;
+  /** Low-confidence Amazon Transcribe escalation re-enqueue (#588). */
+  escalate?: EscalateFn;
   now?: () => Date;
   uuid?: () => string;
 }
@@ -539,6 +576,159 @@ function bedrockFallback(transcript: string, opts?: FallbackOpts): Promise<Fallb
 /** Resolve the AuditLog writer (injected in tests, real helper in prod). */
 function auditFn(ctx: AuditContext, opts: AuditOptions): Promise<string> {
   return (injected.audit ?? defaultAudit)(ctx, opts);
+}
+
+/** The backend a low-confidence whisper transcript escalates to (#588). */
+const ESCALATION_BACKEND = 'amazon-transcribe';
+/** Only a whisper transcript triggers escalation (never escalate Transcribe). */
+const ESCALATION_SOURCE_BACKEND = 'whisper-local';
+
+/**
+ * Low-confidence escalation threshold (#588). A whisper transcript whose
+ * overall `transcriptionConfidence` falls BELOW this routes to Amazon
+ * Transcribe for a second independent ASR pass. Admin-tunable via the
+ * `WHISPER_ESCALATION_THRESHOLD` LinguisticConfig row (value = a number in
+ * [0,1]); falls back to the `WHISPER_ESCALATION_THRESHOLD` env var, then
+ * the hard-coded default.
+ */
+const ESCALATION_THRESHOLD_KEY = 'WHISPER_ESCALATION_THRESHOLD';
+const DEFAULT_ESCALATION_THRESHOLD = 0.6;
+
+let cachedSqs: SQSClient | undefined;
+function sqsClient(): SQSClient {
+  return (cachedSqs ??= new SQSClient({}));
+}
+
+/**
+ * Default {@link EscalateFn}. Publishes the escalation message onto the
+ * transcribe queue (`TRANSCRIBE_QUEUE_URL`, wired in `backend.ts` against
+ * `pipelineQueues.transcribe.main`). A missing URL warns + no-ops rather
+ * than throwing — escalation is best-effort and must never sink the
+ * current whisper publish.
+ */
+async function defaultEscalate(msg: TranscribeEscalationMessage): Promise<void> {
+  const queueUrl = process.env.TRANSCRIBE_QUEUE_URL;
+  if (!queueUrl) {
+    console.warn('linguistic: TRANSCRIBE_QUEUE_URL unset — escalation skipped', {
+      recordingId: msg.recordingId,
+    });
+    return;
+  }
+  await sqsClient().send(
+    new SendMessageCommand({ QueueUrl: queueUrl, MessageBody: JSON.stringify(msg) }),
+  );
+}
+
+/** Resolve the escalation re-enqueue (injected in tests, SQS in prod). */
+function escalateFn(msg: TranscribeEscalationMessage): Promise<void> {
+  return (injected.escalate ?? defaultEscalate)(msg);
+}
+
+/**
+ * Resolve the admin-tunable escalation threshold (#588). Reads the
+ * `WHISPER_ESCALATION_THRESHOLD` LinguisticConfig row (value = a number in
+ * [0,1]); any miss / out-of-range value falls back to the
+ * `WHISPER_ESCALATION_THRESHOLD` env var, then the hard-coded default —
+ * so a fresh env with no config row still escalates sensibly.
+ */
+async function loadEscalationThreshold(client: LinguisticDataClient): Promise<number> {
+  const envValue = Number.parseFloat(process.env.WHISPER_ESCALATION_THRESHOLD ?? '');
+  const fallback =
+    Number.isFinite(envValue) && envValue >= 0 && envValue <= 1
+      ? envValue
+      : DEFAULT_ESCALATION_THRESHOLD;
+  try {
+    const res = await client.models.LinguisticConfig.get({ key: ESCALATION_THRESHOLD_KEY });
+    if (res.errors || !res.data) return fallback;
+    let value: unknown = res.data.value;
+    if (typeof value === 'string') {
+      try {
+        value = JSON.parse(value);
+      } catch {
+        return fallback;
+      }
+    }
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1) {
+      return value;
+    }
+    return fallback;
+  } catch (err) {
+    console.warn('linguistic: escalation-threshold load failed; using fallback', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return fallback;
+  }
+}
+
+/**
+ * Decide + perform a low-confidence escalation to Amazon Transcribe (#588).
+ *
+ * Fire-and-forget: this NEVER throws into the caller — a failed escalation
+ * must not sink the current (whisper) publish (#556 supersede updates the
+ * same Message when the second transcript returns). Escalate ONCE; the
+ * loop guards (all must pass) are:
+ *   - the arriving transcript is from whisper (never escalate a Transcribe
+ *     result → no whisper↔transcribe bounce);
+ *   - this whisper transcript's confidence is BELOW the threshold;
+ *   - the Recording carries source media (`originalKey`) to re-transcribe;
+ *   - the `transcripts` collection has NO `amazon-transcribe` entry yet;
+ *   - the Recording has no `escalatedAt` marker.
+ *
+ * Returns the ISO timestamp to persist as `escalatedAt` when an escalation
+ * was enqueued, else `null` (caller writes the marker in the same
+ * Recording.update that links the Message, so the guard sticks).
+ */
+async function maybeEscalate(opts: {
+  recordingId: string;
+  backend: string;
+  transcriptionConfidence: number | null | undefined;
+  threshold: number;
+  originalKey: string | null | undefined;
+  alreadyEscalatedAt: string | null | undefined;
+  transcripts: { backend: string }[];
+  ts: string;
+}): Promise<string | null> {
+  // Guard 1: only a whisper transcript triggers escalation.
+  if (opts.backend !== ESCALATION_SOURCE_BACKEND) return null;
+  // Guard 2: confidence must be a number BELOW the threshold. An absent
+  // confidence is NOT escalated — we can't claim it's low.
+  const conf = opts.transcriptionConfidence;
+  if (typeof conf !== 'number' || !Number.isFinite(conf) || conf >= opts.threshold) return null;
+  // Guard 3: already escalated (marker) → never again.
+  if (opts.alreadyEscalatedAt) return null;
+  // Guard 4: a Transcribe transcript already exists → never again.
+  if (opts.transcripts.some((t) => t.backend === ESCALATION_BACKEND)) return null;
+  // Guard 5: need source media to re-transcribe.
+  const originalKey = typeof opts.originalKey === 'string' ? opts.originalKey : '';
+  if (!originalKey) {
+    console.warn('linguistic: low-confidence whisper but no originalKey — cannot escalate', {
+      recordingId: opts.recordingId,
+    });
+    return null;
+  }
+
+  try {
+    await escalateFn({
+      recordingId: opts.recordingId,
+      originalKey,
+      enqueuedAt: opts.ts,
+      backendOverride: ESCALATION_BACKEND,
+    });
+    console.info('linguistic: escalated low-confidence whisper to Amazon Transcribe', {
+      recordingId: opts.recordingId,
+      transcriptionConfidence: conf,
+      threshold: opts.threshold,
+    });
+    return opts.ts;
+  } catch (err) {
+    // Best-effort — log + continue. The whisper Message still publishes;
+    // an operator can redrive the escalation manually (admin reprocess).
+    console.error('linguistic: escalation enqueue failed (whisper publish unaffected)', {
+      recordingId: opts.recordingId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
 }
 
 /**
@@ -906,6 +1096,28 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   // present the Bedrock fallback additionally reconciles across all of them.
   const parseTranscript = primary.transcript;
 
+  // Low-confidence escalation (#588 / epic #582). A whisper transcript that
+  // came back BELOW the admin-tunable threshold is escalated ONCE to Amazon
+  // Transcribe for a second independent ASR pass; the reconciled re-parse
+  // updates the SAME Message later (#556 supersede), so we do NOT block the
+  // current whisper publish on it. `maybeEscalate` owns every loop guard +
+  // is fire-and-forget (never throws). It returns the timestamp to persist
+  // as the `escalatedAt` loop-guard marker (or null when it didn't escalate).
+  // NOTE: we read the threshold + decide BEFORE the (slow) parse so a failed
+  // escalation enqueue can't be masked by a later parse error.
+  const escalationThreshold = await loadEscalationThreshold(client);
+  const escalatedAt = await maybeEscalate({
+    recordingId: msg.recordingId,
+    backend,
+    transcriptionConfidence:
+      typeof msg.transcriptionConfidence === 'number' ? msg.transcriptionConfidence : null,
+    threshold: escalationThreshold,
+    originalKey: rec.data?.originalKey,
+    alreadyEscalatedAt: rec.data?.escalatedAt,
+    transcripts: existingTranscripts,
+    ts: nowTs,
+  });
+
   const engine = rulesEngine();
   let result = await classifyWithRules(parseTranscript, engine);
 
@@ -1216,6 +1428,10 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
     ...(typeof primary.transcriptionConfidence === 'number'
       ? { transcriptionConfidence: primary.transcriptionConfidence }
       : {}),
+    // Low-confidence escalation marker (#588) — set only when this run
+    // enqueued an Amazon Transcribe escalation, so the next pass's loop
+    // guard sees it and never re-escalates.
+    ...(escalatedAt ? { escalatedAt } : {}),
   });
   if (updated.errors) {
     if (isConditionalCheckError(updated.errors)) {

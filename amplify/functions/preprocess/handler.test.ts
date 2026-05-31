@@ -152,6 +152,58 @@ describe('preprocess — happy path (consolidated #514)', () => {
     expect(sentBody.originalKey).toBe('recordings/originals/abc.wav');
     expect(sentBody.contentHash).toBe('h-42');
   });
+
+  it('forwards a backendOverride onto the transcribe message (#592)', async () => {
+    const { client } = makeDataStub();
+    __setDeps({
+      s3: new S3Client({}),
+      sqs: new SQSClient({}),
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-99',
+        originalKey: 'recordings/originals/x.wav',
+        contentHash: 'h-99',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+        backendOverride: 'amazon-transcribe',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    const sqsCalls = sqsMock.commandCalls(SendMessageCommand);
+    const sentBody = JSON.parse(sqsCalls[0]?.args[0].input.MessageBody ?? '{}') as {
+      backendOverride?: string;
+    };
+    expect(sentBody.backendOverride).toBe('amazon-transcribe');
+  });
+
+  it('omits backendOverride from the transcribe message on a normal upload (#592)', async () => {
+    const { client } = makeDataStub();
+    __setDeps({
+      s3: new S3Client({}),
+      sqs: new SQSClient({}),
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-100',
+        originalKey: 'recordings/originals/x.wav',
+        contentHash: 'h-100',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    const sqsCalls = sqsMock.commandCalls(SendMessageCommand);
+    const sentBody = JSON.parse(sqsCalls[0]?.args[0].input.MessageBody ?? '{}') as Record<
+      string,
+      unknown
+    >;
+    expect(sentBody).not.toHaveProperty('backendOverride');
+  });
 });
 
 describe('preprocess — failure paths', () => {

@@ -11,9 +11,9 @@ vi.mock('@/lib/auth/roles', async (importActual) => {
   };
 });
 
-const reprocessMock = vi.fn<(id: string) => Promise<void>>();
+const reprocessMock = vi.fn<(id: string, backend?: string) => Promise<void>>();
 vi.mock('@/lib/uploads/reprocess', () => ({
-  reprocessRecording: (id: string): Promise<void> => reprocessMock(id),
+  reprocessRecording: (id: string, backend?: string): Promise<void> => reprocessMock(id, backend),
 }));
 
 const reparseMock = vi.fn<(id: string) => Promise<void>>();
@@ -65,8 +65,31 @@ describe('RecordingAdminControls (#566)', () => {
     await waitFor(() => expect(screen.getByTestId('recording-admin-controls')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: /re-transcribe \+ parse/i }));
     await waitFor(() => expect(screen.getByText(/full pipeline re-running/i)).toBeInTheDocument());
-    expect(reprocessMock).toHaveBeenCalledWith('rec-7');
+    // Defaults to whisper-local when the picker is untouched (#592).
+    expect(reprocessMock).toHaveBeenCalledWith('rec-7', 'whisper-local');
     expect(reparseMock).not.toHaveBeenCalled();
+  });
+
+  it('passes the chosen backend to reprocessRecording (#592)', async () => {
+    groupsMock.mockResolvedValue(['admin']);
+
+    render(<RecordingAdminControls recordingId="rec-amz" hasTranscript />);
+    await waitFor(() => expect(screen.getByTestId('recording-admin-controls')).toBeInTheDocument());
+    fireEvent.change(screen.getByTestId('reprocess-backend-select'), {
+      target: { value: 'amazon-transcribe' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /re-transcribe \+ parse/i }));
+    await waitFor(() => expect(reprocessMock).toHaveBeenCalled());
+    expect(reprocessMock).toHaveBeenCalledWith('rec-amz', 'amazon-transcribe');
+  });
+
+  it('offers only the two built backends in the picker (#592)', async () => {
+    groupsMock.mockResolvedValue(['admin']);
+    render(<RecordingAdminControls recordingId="rec-1" hasTranscript />);
+    await waitFor(() => expect(screen.getByTestId('recording-admin-controls')).toBeInTheDocument());
+    const select = screen.getByTestId('reprocess-backend-select');
+    const values = Array.from(select.querySelectorAll('option')).map((o) => o.value);
+    expect(values).toEqual(['whisper-local', 'amazon-transcribe']);
   });
 
   it('invokes reparseRecording and shows success feedback', async () => {
