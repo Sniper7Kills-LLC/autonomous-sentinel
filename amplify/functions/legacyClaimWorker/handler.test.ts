@@ -69,7 +69,7 @@ function makeStubDeps(opts: { rowsByEmail?: UserRow[]; transactErr?: Error } = {
     if (opts.transactErr) return Promise.reject(opts.transactErr);
     return Promise.resolve();
   });
-  const auditSpy = vi.fn(() => Promise.resolve('audit-id-x'));
+  const auditSpy = vi.fn<() => Promise<string>>(() => Promise.resolve('audit-id-x'));
   // Fan-out stubs: default to empty queries so the worker invokes
   // the helper but no per-table writes happen. Specific worker tests
   // can override via __setDeps if they want to assert fan-out wiring.

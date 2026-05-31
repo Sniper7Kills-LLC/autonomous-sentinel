@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { resolveEcrDigest } from './resolve-ecr-digest';
 
 /**
@@ -12,10 +12,10 @@ import { resolveEcrDigest } from './resolve-ecr-digest';
  */
 
 describe('resolveEcrDigest', () => {
-  let execFileSyncMock: ReturnType<typeof vi.fn>;
+  let execFileSyncMock: Mock<(file: string, args: readonly string[]) => string>;
 
   beforeEach(() => {
-    execFileSyncMock = vi.fn();
+    execFileSyncMock = vi.fn<(file: string, args: readonly string[]) => string>();
   });
 
   it('returns the digest string from a successful ECR call', () => {
@@ -43,7 +43,7 @@ describe('resolveEcrDigest', () => {
     });
     const firstCall = execFileSyncMock.mock.calls[0];
     if (!firstCall) throw new Error('execFileSync was not invoked');
-    const [file, args] = firstCall as [string, readonly string[]];
+    const [file, args] = firstCall;
     expect(file).toBe('aws');
     expect(args).toContain('ecr');
     expect(args).toContain('describe-images');
@@ -74,7 +74,7 @@ describe('resolveEcrDigest', () => {
     });
     const firstCall = execFileSyncMock.mock.calls[0];
     if (!firstCall) throw new Error('execFileSync was not invoked');
-    const [, args] = firstCall as [string, readonly string[]];
+    const [, args] = firstCall;
     expect(args).toContain('imageTag=foo; rm -rf /');
   });
 

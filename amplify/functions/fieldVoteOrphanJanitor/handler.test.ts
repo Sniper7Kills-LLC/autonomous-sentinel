@@ -38,7 +38,7 @@ function makeDeps(
     Promise.resolve({ presentIds: new Set(input.messageIds.filter((id) => present.has(id))) }),
   );
   const deleteSpy = vi.fn(() => Promise.resolve());
-  const auditSpy = vi.fn(() => Promise.resolve('audit-id-1'));
+  const auditSpy = vi.fn<() => Promise<string>>(() => Promise.resolve('audit-id-1'));
   return {
     scanSpy,
     batchGetSpy,
@@ -201,8 +201,8 @@ describe('fieldVoteOrphanJanitor', () => {
     });
     // First call throws; second succeeds.
     deps.batchGetSpy
-      .mockImplementationOnce(() => Promise.reject(new Error('DDB throttled')))
-      .mockImplementationOnce(() => Promise.resolve({ presentIds: new Set(['b']) }));
+      .mockRejectedValueOnce(new Error('DDB throttled'))
+      .mockResolvedValueOnce({ presentIds: new Set(['b']) });
     __setDeps(deps);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import type { AppSyncResolverEvent, Context } from 'aws-lambda';
 import {
   handler,
@@ -59,7 +59,7 @@ function makeStubs(opts: { existing?: RecordingRow | null; byHash?: RecordingRow
   createSpy: ReturnType<typeof vi.fn>;
   updateSpy: ReturnType<typeof vi.fn>;
   listByHashSpy: ReturnType<typeof vi.fn>;
-  auditSpy: ReturnType<typeof vi.fn>;
+  auditSpy: Mock<() => Promise<string>>;
 } {
   const recordings = new Map<string, RecordingRow>();
   if (opts.existing) recordings.set(opts.existing.id, opts.existing);
@@ -86,7 +86,7 @@ function makeStubs(opts: { existing?: RecordingRow | null; byHash?: RecordingRow
       errors: undefined,
     }),
   );
-  const auditSpy = vi.fn(() => Promise.resolve('audit-id'));
+  const auditSpy = vi.fn<() => Promise<string>>(() => Promise.resolve('audit-id'));
   return {
     client: {
       models: {
@@ -266,7 +266,7 @@ describe('recordingMutations — reprocessRecording (#505)', () => {
       expect.objectContaining({ recordingId: 'rec-fail-1', backendOverride: 'whisper-local' }),
     );
     // Audit records the chosen backend in `after`.
-    const auditOpts = auditSpy.mock.calls[0]?.[1] as {
+    const auditOpts = (auditSpy.mock.calls[0] as unknown as unknown[] | undefined)?.[1] as {
       action: string;
       after: Record<string, unknown>;
     };
@@ -282,7 +282,7 @@ describe('recordingMutations — reprocessRecording (#505)', () => {
     expect(enqueueSpy.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({ backendOverride: 'amazon-transcribe' }),
     );
-    const auditOpts = auditSpy.mock.calls[0]?.[1] as { after: Record<string, unknown> };
+    const auditOpts = (auditSpy.mock.calls[0] as unknown as unknown[] | undefined)?.[1] as { after: Record<string, unknown> };
     expect(auditOpts.after.backendOverride).toBe('amazon-transcribe');
   });
 
@@ -492,7 +492,7 @@ describe('recordingMutations — softDeleteRecording', () => {
     await handler(event, {} as Context, () => undefined);
 
     expect(auditSpy).toHaveBeenCalledOnce();
-    const [, opts] = auditSpy.mock.calls[0] as [unknown, Record<string, unknown>];
+    const [, opts] = auditSpy.mock.calls[0] as unknown as [unknown, Record<string, unknown>];
     expect(opts.action).toBe('RECORDING_DELETE');
     expect(opts.targetType).toBe('Recording');
     expect(opts.targetId).toBe('rec-7');
@@ -512,7 +512,7 @@ describe('recordingMutations — softDeleteRecording', () => {
     const event = makeEvent({ arguments: { recordingId: 'rec-9', reason: '' } });
     await handler(event, {} as Context, () => undefined);
 
-    const [, opts] = auditSpy.mock.calls[0] as [unknown, Record<string, unknown>];
+    const [, opts] = auditSpy.mock.calls[0] as unknown as [unknown, Record<string, unknown>];
     expect(opts.reason).toBeNull();
   });
 
@@ -572,7 +572,7 @@ describe('recordingMutations — no cascade to parent Message (#29 revised)', ()
     // narrowed to expose Recording only — accessing Message here
     // would be a typecheck error.
     expect(auditSpy).toHaveBeenCalledOnce();
-    const [, opts] = auditSpy.mock.calls[0] as [unknown, { action: string }];
+    const [, opts] = auditSpy.mock.calls[0] as unknown as [unknown, { action: string }];
     expect(opts.action).toBe('RECORDING_DELETE');
   });
 });

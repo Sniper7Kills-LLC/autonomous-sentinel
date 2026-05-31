@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import type { AppSyncResolverEvent, Context } from 'aws-lambda';
 import {
   handler,
@@ -60,7 +60,7 @@ interface MakeStubsResult {
   listBySubmitterSpy: ReturnType<typeof vi.fn>;
   userGetSpy: ReturnType<typeof vi.fn>;
   reputationGetSpy: ReturnType<typeof vi.fn>;
-  auditSpy: ReturnType<typeof vi.fn>;
+  auditSpy: Mock<() => Promise<string>>;
   messages: Map<string, MessageRow>;
   users: Map<string, UserRow>;
   reputations: Map<string, ReputationRow>;
@@ -115,7 +115,7 @@ function makeStubs(
   const reputationGetSpy = vi.fn((input: { userId: string }) =>
     Promise.resolve({ data: reputations.get(input.userId) ?? null, errors: undefined }),
   );
-  const auditSpy = vi.fn(() => Promise.resolve('audit-id-1'));
+  const auditSpy = vi.fn<() => Promise<string>>(() => Promise.resolve('audit-id-1'));
   return {
     client: {
       models: {
@@ -227,7 +227,7 @@ describe('messageMutations — softDeleteMessage', () => {
     await handler(event, {} as Context, () => undefined);
 
     expect(auditSpy).toHaveBeenCalledOnce();
-    const [, opts] = auditSpy.mock.calls[0] as [unknown, Record<string, unknown>];
+    const [, opts] = auditSpy.mock.calls[0] as unknown as [unknown, Record<string, unknown>];
     expect(opts.action).toBe('MESSAGE_DELETE');
     expect(opts.targetType).toBe('Message');
     expect(opts.targetId).toBe('msg-7');
@@ -249,7 +249,7 @@ describe('messageMutations — softDeleteMessage', () => {
 
     const patch = updateSpy.mock.calls[0]?.[0] as MessageRow;
     expect(patch.deletedReason).toBeNull();
-    const [, opts] = auditSpy.mock.calls[0] as [unknown, Record<string, unknown>];
+    const [, opts] = auditSpy.mock.calls[0] as unknown as [unknown, Record<string, unknown>];
     expect(opts.reason).toBeNull();
   });
 
@@ -390,7 +390,7 @@ describe('messageMutations — submitRecordingLessMessage', () => {
     expect(result.sender).toBe('SKYKING');
     expect(result.body).toBe('WHISKEY TANGO');
     expect(stubs.auditSpy).toHaveBeenCalledOnce();
-    const auditOpts = stubs.auditSpy.mock.calls[0]?.[1] as {
+    const auditOpts = (stubs.auditSpy.mock.calls[0] as unknown as unknown[] | undefined)?.[1] as {
       action: string;
       after: { verification: { outcome: string; reputationWeight: number; role: string } };
     };
@@ -410,7 +410,7 @@ describe('messageMutations — submitRecordingLessMessage', () => {
     const result = (await handler(ev, {} as Context, () => undefined)) as MessageRow;
     expect(result.flaggedForReview).toBe(true);
     expect(result.publishedAt).toBeNull();
-    const auditOpts = stubs.auditSpy.mock.calls[0]?.[1] as {
+    const auditOpts = (stubs.auditSpy.mock.calls[0] as unknown as unknown[] | undefined)?.[1] as {
       after: { verification: { outcome: string } };
     };
     expect(auditOpts.after.verification.outcome).toBe('QUEUED');
@@ -428,7 +428,7 @@ describe('messageMutations — submitRecordingLessMessage', () => {
     // the gate decision is part of the audit trail even (especially)
     // for the default-to-queue path.
     expect(stubs.auditSpy).toHaveBeenCalledOnce();
-    const auditOpts = stubs.auditSpy.mock.calls[0]?.[1] as {
+    const auditOpts = (stubs.auditSpy.mock.calls[0] as unknown as unknown[] | undefined)?.[1] as {
       after: { verification: { reputationWeight: number; outcome: string } };
     };
     expect(auditOpts.after.verification.reputationWeight).toBe(1);
@@ -484,7 +484,7 @@ describe('messageMutations — submitRecordingLessMessage', () => {
     __setDeps({ dataClient: stubs.client, audit: stubs.auditSpy, now: () => fixedNow });
     const ev = memberEvent({ broadcastTs: '2026-05-17T11:30:00.000Z' });
     await handler(ev, {} as Context, () => undefined);
-    const auditOpts = stubs.auditSpy.mock.calls[0]?.[1] as {
+    const auditOpts = (stubs.auditSpy.mock.calls[0] as unknown as unknown[] | undefined)?.[1] as {
       after: { verification: { rateLimitCount: number } };
     };
     // 'old' is dropped by the boundary filter; only 'recent' counts.
@@ -500,7 +500,7 @@ describe('messageMutations — submitRecordingLessMessage', () => {
     const ev = modEvent({ broadcastTs: '2026-05-17T11:30:00.000Z' });
     const result = (await handler(ev, {} as Context, () => undefined)) as MessageRow;
     expect(result.publishedAt).toBe(fixedNow.toISOString());
-    const auditOpts = stubs.auditSpy.mock.calls[0]?.[1] as {
+    const auditOpts = (stubs.auditSpy.mock.calls[0] as unknown as unknown[] | undefined)?.[1] as {
       after: { verification: { role: string; outcome: string } };
     };
     expect(auditOpts.after.verification.role).toBe('moderator');
@@ -524,7 +524,7 @@ describe('messageMutations — submitRecordingLessMessage', () => {
     expect(result.publishedAt).toBe(fixedNow.toISOString());
     // Admin path skips the GSI count entirely (cap=Infinity).
     expect(stubs.listBySubmitterSpy).not.toHaveBeenCalled();
-    const auditOpts = stubs.auditSpy.mock.calls[0]?.[1] as {
+    const auditOpts = (stubs.auditSpy.mock.calls[0] as unknown as unknown[] | undefined)?.[1] as {
       after: { verification: { role: string; rateLimitCap: number | null } };
     };
     expect(auditOpts.after.verification.role).toBe('admin');
