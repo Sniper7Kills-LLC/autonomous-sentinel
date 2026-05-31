@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "aws-amplify": "^6.6.0",
-    "chokidar": "^4.0.0",
+    "chokidar": "^5.0.0",
     "electron-store": "^11.0.2",
     "keytar": "^7.9.0",
     "react": "^19.0.0",
