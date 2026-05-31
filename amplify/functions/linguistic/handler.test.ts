@@ -952,6 +952,85 @@ describe('linguistic — broadcast dedup (#454)', () => {
   });
 });
 
+describe('linguistic — recover soft-deleted Message on re-link (#599)', () => {
+  it('recovers a soft-deleted Message when a re-run collides on its deterministic id', async () => {
+    const { client, createSpy, updateSpy, msgGetSpy, msgUpdateSpy } = makeDataStub();
+    // Dedup list excludes soft-deleted → no candidate. The deterministic-id
+    // create then collides with the EXISTING (soft-deleted) Message.
+    createSpy.mockResolvedValueOnce({ data: null, errors: CONDITIONAL_CHECK_ERRORS });
+    // Message.get (recovery read) → the colliding Message is soft-deleted.
+    msgGetSpy.mockResolvedValue({
+      data: { id: 'm-old', deletedAt: '2026-05-20T00:00:00Z' },
+      errors: null,
+    });
+    const auditSpy = vi.fn().mockResolvedValue('audit-1');
+    __setDeps({
+      dataClient: client,
+      bedrockFallback: bedrockNull,
+      audit: auditSpy,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-recover',
+        transcript: 'skyking skyking',
+        enqueuedAt: '2026-05-24T18:00:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    const createdId = (createSpy.mock.calls[0]?.[0] as { id?: string } | undefined)?.id;
+    // Message recovered: deletedAt/deletedBy/deletedReason cleared + republished.
+    expect(msgUpdateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: createdId,
+        deletedAt: null,
+        deletedBy: null,
+        deletedReason: null,
+        publishedAt: '2026-05-24T18:00:00.000Z',
+      }),
+    );
+    // MESSAGE_RESTORE audit written for the recovery.
+    expect(auditSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'MESSAGE_RESTORE', targetId: createdId }),
+    );
+    // Recording still links to the recovered Message.
+    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ id: 'rec-recover', messageId: createdId }),
+    );
+  });
+
+  it('does NOT recover when the colliding Message is already live', async () => {
+    const { client, createSpy, msgGetSpy, msgUpdateSpy } = makeDataStub();
+    createSpy.mockResolvedValueOnce({ data: null, errors: CONDITIONAL_CHECK_ERRORS });
+    // Colliding Message is NOT soft-deleted.
+    msgGetSpy.mockResolvedValue({ data: { id: 'm-live', deletedAt: null }, errors: null });
+    const auditSpy = vi.fn().mockResolvedValue('audit-1');
+    __setDeps({
+      dataClient: client,
+      bedrockFallback: bedrockNull,
+      audit: auditSpy,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-live',
+        transcript: 'skyking skyking',
+        enqueuedAt: '2026-05-24T18:00:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    // No recovery update, no MESSAGE_RESTORE audit.
+    expect(msgUpdateSpy).not.toHaveBeenCalled();
+    expect(auditSpy).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'MESSAGE_RESTORE' }),
+    );
+  });
+});
+
 describe('linguistic — deleted-Recording tombstone (#459)', () => {
   it('drops a transcript message cleanly when the Recording was deleted in flight', async () => {
     const { client, updateSpy, deleteSpy } = makeDataStub();

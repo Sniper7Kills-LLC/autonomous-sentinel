@@ -184,7 +184,11 @@ export interface LinguisticDataClient {
       update: (input: {
         id: string;
         deletedAt?: string | null;
+        deletedBy?: string | null;
         deletedReason?: string | null;
+        // Re-publish timestamp set when a re-run recovers a soft-deleted
+        // Message it deterministically re-maps onto (#599).
+        publishedAt?: string | null;
       }) => Promise<{ data: unknown; errors?: unknown }>;
       /**
        * Dedup candidate lookup (#454) — Messages of the same type within
@@ -843,6 +847,80 @@ async function supersedePriorMessage(
 }
 
 /**
+ * Recover a soft-deleted Message that a re-run deterministically re-maps
+ * onto (#599). The dedup `Message.list` excludes soft-deleted rows, so the
+ * ONLY way a re-run links to a deleted Message is the deterministic-id
+ * create collision: an earlier divergent re-run superseded M (#556), and a
+ * later re-run whose parse returns to the original recomputes the same id.
+ * Without this the Recording would link to a still-`deletedAt` Message and
+ * the entry would stay hidden.
+ *
+ * Clears `deletedAt` / `deletedBy` / `deletedReason`, re-publishes
+ * (`publishedAt = now`), and writes a `MESSAGE_RESTORE` AuditLog entry
+ * (mirrors the supersede `MESSAGE_DELETE`). No-op when the Message is
+ * already live. Best-effort: a recovery or audit hiccup must never sink the
+ * publish — the Recording link is committed by the caller regardless.
+ */
+async function recoverIfDeleted(
+  client: LinguisticDataClient,
+  messageId: string,
+  recordingId: string,
+  ts: string,
+): Promise<void> {
+  try {
+    const existing = await client.models.Message.get({ id: messageId });
+    const row = existing.data;
+    // Missing (query miss) or already live → nothing to recover.
+    if (!row || !row.deletedAt) return;
+    const prevDeletedAt = row.deletedAt;
+    const recovered = await client.models.Message.update({
+      id: messageId,
+      deletedAt: null,
+      deletedBy: null,
+      deletedReason: null,
+      publishedAt: ts,
+    });
+    if (recovered.errors) {
+      console.warn('linguistic: failed to recover soft-deleted Message on re-link', {
+        recordingId,
+        messageId,
+        errors: recovered.errors,
+      });
+      return;
+    }
+    try {
+      await auditFn(
+        { identity: null, request: { headers: {} } },
+        {
+          action: 'MESSAGE_RESTORE',
+          targetType: 'Message',
+          targetId: messageId,
+          before: { id: messageId, deletedAt: prevDeletedAt },
+          after: { id: messageId, deletedAt: null },
+          reason: `Recovered on re-run of Recording ${recordingId} (parse re-mapped to this Message) (#599)`,
+        },
+      );
+    } catch (err) {
+      console.error('linguistic: recovery audit write failed (recover still applied)', {
+        recordingId,
+        messageId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+    console.info('linguistic: recovered soft-deleted Message on re-link', {
+      recordingId,
+      messageId,
+    });
+  } catch (err) {
+    console.error('linguistic: recovery check failed (transcript still published)', {
+      recordingId,
+      messageId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
  * Stable JSON of the parsed result for the attempt `resultHash` —
  * fixed key order + omitted blanks so the same parse always hashes the
  * same regardless of field insertion order.
@@ -1356,13 +1434,17 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
     });
     if (created.errors) {
       if (isConditionalCheckError(created.errors)) {
-        // A Message with this deterministic id already exists (a
-        // concurrent identical capture won the race) — link to it.
+        // A Message with this deterministic id already exists — either a
+        // concurrent identical capture won the race, OR this is a re-run
+        // re-mapping onto a Message a prior divergent re-run superseded
+        // (#556). Link to it; if it is soft-deleted, recover it (#599) so
+        // the Recording never points at a hidden Message.
         targetMessageId = messageId;
         console.info('linguistic: dedup create collided, linking to existing', {
           recordingId: msg.recordingId,
           messageId,
         });
+        await recoverIfDeleted(client, messageId, msg.recordingId, ts);
       } else {
         throw new Error(
           `linguistic: Message.create returned errors: ${JSON.stringify(created.errors)}`,
