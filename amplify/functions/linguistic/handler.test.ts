@@ -2034,3 +2034,232 @@ describe('linguistic — re-run supersede + stable broadcast time (#556)', () =>
     errSpy.mockRestore();
   });
 });
+
+describe('linguistic — low-confidence Amazon Transcribe escalation (#588)', () => {
+  /**
+   * Build a data stub whose Recording.get returns a row with the source
+   * media keys (+ optional transcripts collection / escalatedAt marker)
+   * the escalation gate reads (#588).
+   */
+  function escalationStub(
+    recOverrides: Record<string, unknown> = {},
+    confidenceValue: unknown = null,
+  ) {
+    const stub = makeDataStub([], confidenceValue);
+    stub.getSpy.mockResolvedValue({
+      data: {
+        id: 'rec',
+        broadcastedAt: null,
+        messageId: null,
+        originalKey: 'recordings/originals/abc.wav',
+        contentHash: 'h-abc',
+        escalatedAt: null,
+        transcripts: null,
+        ...recOverrides,
+      },
+      errors: null,
+    });
+    return stub;
+  }
+
+  it('escalates ONCE to amazon-transcribe on a low-confidence whisper transcript', async () => {
+    const stub = escalationStub();
+    const escalateSpy = vi.fn((_msg: unknown) => Promise.resolve());
+    __setDeps({
+      dataClient: stub.client,
+      escalate: escalateSpy,
+      bedrockFallback: bedrockOk({ type: 'OTHER', body: 'mumble' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec',
+        transcript: 'mumble mumble',
+        backend: 'whisper-local',
+        transcriptionConfidence: 0.4, // below 0.6 default
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(escalateSpy).toHaveBeenCalledOnce();
+    expect(escalateSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        recordingId: 'rec',
+        originalKey: 'recordings/originals/abc.wav',
+        backendOverride: 'amazon-transcribe',
+      }),
+    );
+    // The escalatedAt loop-guard marker is persisted on the Recording.
+    expect(stub.updateSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ escalatedAt: '2026-05-24T18:00:00.000Z' }),
+    );
+    // The current whisper Message still publishes (escalation is fire-and-forget).
+    expect(stub.createSpy).toHaveBeenCalledOnce();
+  });
+
+  it('does NOT escalate a high-confidence whisper transcript', async () => {
+    const stub = escalationStub();
+    const escalateSpy = vi.fn((_msg: unknown) => Promise.resolve());
+    __setDeps({
+      dataClient: stub.client,
+      escalate: escalateSpy,
+      bedrockFallback: bedrockOk({ type: 'OTHER', body: 'clean' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec',
+        transcript: 'clean copy',
+        backend: 'whisper-local',
+        transcriptionConfidence: 0.92, // above 0.6
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(escalateSpy).not.toHaveBeenCalled();
+    expect(stub.updateSpy.mock.calls[0]?.[0]).not.toHaveProperty('escalatedAt');
+  });
+
+  it('does NOT escalate when the recording is already escalated (escalatedAt marker)', async () => {
+    const stub = escalationStub({ escalatedAt: '2026-05-24T17:00:00Z' });
+    const escalateSpy = vi.fn((_msg: unknown) => Promise.resolve());
+    __setDeps({
+      dataClient: stub.client,
+      escalate: escalateSpy,
+      bedrockFallback: bedrockOk({ type: 'OTHER', body: 'mumble' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec',
+        transcript: 'mumble',
+        backend: 'whisper-local',
+        transcriptionConfidence: 0.3,
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(escalateSpy).not.toHaveBeenCalled();
+  });
+
+  it('does NOT escalate when an amazon-transcribe transcript already exists (no loop)', async () => {
+    const stub = escalationStub({
+      transcripts: [
+        {
+          backend: 'amazon-transcribe',
+          transcript: 'prior transcribe pass',
+          transcriptionConfidence: 0.5,
+          ts: '2026-05-24T17:30:00Z',
+        },
+      ],
+    });
+    const escalateSpy = vi.fn((_msg: unknown) => Promise.resolve());
+    __setDeps({
+      dataClient: stub.client,
+      escalate: escalateSpy,
+      bedrockFallback: bedrockOk({ type: 'OTHER', body: 'mumble' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec',
+        transcript: 'mumble',
+        backend: 'whisper-local',
+        transcriptionConfidence: 0.3,
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(escalateSpy).not.toHaveBeenCalled();
+  });
+
+  it('does NOT escalate when the arriving transcript is itself amazon-transcribe (no bounce)', async () => {
+    const stub = escalationStub();
+    const escalateSpy = vi.fn((_msg: unknown) => Promise.resolve());
+    __setDeps({
+      dataClient: stub.client,
+      escalate: escalateSpy,
+      bedrockFallback: bedrockOk({ type: 'OTHER', body: 'mumble' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec',
+        transcript: 'mumble',
+        backend: 'amazon-transcribe',
+        transcriptionConfidence: 0.2, // low, but a Transcribe result never escalates
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(escalateSpy).not.toHaveBeenCalled();
+  });
+
+  it('respects an admin-tuned threshold from the LinguisticConfig row', async () => {
+    // Threshold raised to 0.9 → a 0.7-confidence whisper transcript now escalates.
+    const stub = escalationStub();
+    stub.configGetSpy.mockImplementation(({ key }: { key: string }) =>
+      Promise.resolve({
+        data: key === 'WHISPER_ESCALATION_THRESHOLD' ? { value: 0.9 } : null,
+        errors: null,
+      }),
+    );
+    const escalateSpy = vi.fn((_msg: unknown) => Promise.resolve());
+    __setDeps({
+      dataClient: stub.client,
+      escalate: escalateSpy,
+      bedrockFallback: bedrockOk({ type: 'OTHER', body: 'mumble' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec',
+        transcript: 'borderline',
+        backend: 'whisper-local',
+        transcriptionConfidence: 0.7,
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(escalateSpy).toHaveBeenCalledOnce();
+  });
+
+  it('a failed escalation enqueue does NOT sink the current whisper publish', async () => {
+    const stub = escalationStub();
+    const escalateSpy = vi.fn(() => Promise.reject(new Error('SQS down')));
+    __setDeps({
+      dataClient: stub.client,
+      escalate: escalateSpy,
+      bedrockFallback: bedrockOk({ type: 'OTHER', body: 'mumble' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await expect(
+      handler(
+        makeEvent({
+          recordingId: 'rec',
+          transcript: 'mumble',
+          backend: 'whisper-local',
+          transcriptionConfidence: 0.3,
+          enqueuedAt: '2026-05-24T17:55:00Z',
+        }),
+        {} as never,
+        () => undefined,
+      ),
+    ).resolves.not.toThrow();
+    expect(escalateSpy).toHaveBeenCalledOnce();
+    // Message still published; escalatedAt NOT persisted (enqueue failed).
+    expect(stub.createSpy).toHaveBeenCalledOnce();
+    expect(stub.updateSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ transcriptionStatus: 'PUBLISHED' }),
+    );
+    expect(stub.updateSpy.mock.calls[0]?.[0]).not.toHaveProperty('escalatedAt');
+    errSpy.mockRestore();
+  });
+});

@@ -119,6 +119,15 @@ export const Recording = a
     // single-whisper recording behaves exactly as before — `transcripts`
     // simply holds one entry.
     transcripts: a.json(),
+    // Low-confidence escalation marker (#588 / epic #582). Set by the
+    // linguistic Lambda the first (and only) time it auto-escalates a
+    // low-confidence whisper transcript to the Amazon Transcribe backend
+    // for a second independent ASR pass. Its presence is the loop guard:
+    // an escalated recording is never escalated again (never bounce
+    // whisper↔transcribe). Distinct from a re-transcribe — escalation is
+    // automatic + fire-and-forget; the reconciled re-parse updates the
+    // same Message later (#556 supersede).
+    escalatedAt: a.datetime(),
     // Append-only log of linguistic attempts. Written by #64.
     linguisticAttempts: a.json(),
 
@@ -262,12 +271,22 @@ export const submitRecording = a
  * re-enqueues onto the preprocess queue. Guards (in the handler):
  * recording must exist, not be soft-deleted, and have an
  * `originalKey` — recording-less Messages have no audio to reprocess.
+ *
+ * Optional `backend` (#592) — which transcription backend re-processes
+ * the recording (CLAUDE.md: "admin can re-run a single recording on a
+ * different backend for comparison"). Validated against
+ * `TRANSCRIBE_BACKENDS` in the handler; an unknown value is rejected and
+ * an omitted value defaults to `whisper-local`. The chosen backend is
+ * threaded onto the preprocess message as `backendOverride`, forwarded
+ * by the preprocess Lambda onto the transcribe-queue message so the
+ * dispatcher (#587/#589) routes it. Recorded on the AuditLog `after`.
  */
 export const reprocessRecording = a
   .mutation()
   .arguments({
     recordingId: a.id().required(),
     reason: a.string(),
+    backend: a.string(),
   })
   .returns(a.ref('Recording'))
   // Moderator + admin only. Enumerated per-group for Identity Pool

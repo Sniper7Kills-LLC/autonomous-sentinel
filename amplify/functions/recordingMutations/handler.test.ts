@@ -255,6 +255,47 @@ describe('recordingMutations — reprocessRecording (#505)', () => {
     await expect(handler(modEvent({}), {} as Context, () => undefined)).rejects.toThrow(/deleted/i);
     expect(enqueueSpy).not.toHaveBeenCalled();
   });
+
+  // #592 — admin reprocess: choose the transcription backend.
+  it('defaults to whisper-local backendOverride when no backend arg is given', async () => {
+    const { client, auditSpy } = makeStubs({ existing: failedRecording });
+    const enqueueSpy = vi.fn((_msg: unknown) => Promise.resolve());
+    __setDeps({ dataClient: client, audit: auditSpy, enqueuePreprocess: enqueueSpy });
+    await handler(modEvent({}), {} as Context, () => undefined);
+    expect(enqueueSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ recordingId: 'rec-fail-1', backendOverride: 'whisper-local' }),
+    );
+    // Audit records the chosen backend in `after`.
+    const auditOpts = auditSpy.mock.calls[0]?.[1] as {
+      action: string;
+      after: Record<string, unknown>;
+    };
+    expect(auditOpts.action).toBe('RECORDING_REPROCESS');
+    expect(auditOpts.after.backendOverride).toBe('whisper-local');
+  });
+
+  it('threads a valid backend (amazon-transcribe) onto the preprocess message + audit', async () => {
+    const { client, auditSpy } = makeStubs({ existing: failedRecording });
+    const enqueueSpy = vi.fn((_msg: unknown) => Promise.resolve());
+    __setDeps({ dataClient: client, audit: auditSpy, enqueuePreprocess: enqueueSpy });
+    await handler(modEvent({ backend: 'amazon-transcribe' }), {} as Context, () => undefined);
+    expect(enqueueSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ backendOverride: 'amazon-transcribe' }),
+    );
+    const auditOpts = auditSpy.mock.calls[0]?.[1] as { after: Record<string, unknown> };
+    expect(auditOpts.after.backendOverride).toBe('amazon-transcribe');
+  });
+
+  it('rejects an unknown backend before mutating or enqueueing', async () => {
+    const { client, auditSpy, updateSpy } = makeStubs({ existing: failedRecording });
+    const enqueueSpy = vi.fn((_msg: unknown) => Promise.resolve());
+    __setDeps({ dataClient: client, audit: auditSpy, enqueuePreprocess: enqueueSpy });
+    await expect(
+      handler(modEvent({ backend: 'gpt-9000' }), {} as Context, () => undefined),
+    ).rejects.toThrow(/backend/i);
+    expect(enqueueSpy).not.toHaveBeenCalled();
+    expect(updateSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe('recordingMutations — reparseRecording (#566)', () => {

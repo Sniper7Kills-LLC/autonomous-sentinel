@@ -286,6 +286,16 @@
   border-top: 1px dashed var(--border-1);
 }
 
+.recAdminBackend select {
+  font-family: var(--font-jb-mono);
+  font-size: 0.78rem;
+  padding: 0.25rem 0.4rem;
+  background: var(--bg-1);
+  color: var(--fg-1);
+  border: 1px solid var(--border-1);
+  border-radius: 4px;
+}
+
 .recAdminOk {
   font-family: var(--font-jb-mono);
   font-size: 0.78rem;

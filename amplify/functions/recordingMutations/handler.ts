@@ -5,6 +5,11 @@ import {
   type AuditContext,
   type AuditOptions,
 } from '../../data/audit-log-helper';
+import {
+  DEFAULT_TRANSCRIBE_BACKEND,
+  isTranscribeBackend,
+  type TranscribeBackend,
+} from '../transcribe-dispatch/selector';
 
 /**
  * Lambda-backed AppSync resolver for Recording custom mutations
@@ -110,6 +115,14 @@ export interface PreprocessQueueMessage {
   originalKey: string;
   contentHash: string;
   enqueuedAt: string;
+  /**
+   * Per-recording transcribe-backend override (#592). When set, the
+   * preprocess Lambda forwards it onto the transcribe-queue message so
+   * the dispatcher (#587/#589) routes this recording to the chosen
+   * backend. Absent on a normal upload (the dispatcher then uses the
+   * env-wide admin default / `whisper-local`).
+   */
+  backendOverride?: TranscribeBackend;
 }
 
 /**
@@ -474,6 +487,20 @@ async function dispatchReprocess(
     throw new Error('reprocessRecording: recordingId argument is required');
   }
 
+  // Per-recording transcribe-backend override (#592). Validate BEFORE any
+  // mutation/enqueue so a typo'd backend fails the whole call (rather than
+  // silently routing to the default). An omitted arg → `whisper-local`.
+  const rawBackend = event.arguments.backend;
+  let backendOverride: TranscribeBackend = DEFAULT_TRANSCRIBE_BACKEND;
+  if (rawBackend !== undefined && rawBackend !== null) {
+    if (!isTranscribeBackend(rawBackend)) {
+      throw new Error(
+        `reprocessRecording: unknown transcription backend ${JSON.stringify(rawBackend)}`,
+      );
+    }
+    backendOverride = rawBackend;
+  }
+
   const fetched = await deps.client.models.Recording.get({ id: targetId });
   const before = fetched.data;
   if (!before) {
@@ -535,6 +562,7 @@ async function dispatchReprocess(
       originalKey,
       contentHash: typeof before.contentHash === 'string' ? before.contentHash : '',
       enqueuedAt: ts,
+      backendOverride,
     });
   } catch (err) {
     console.error(
@@ -544,14 +572,16 @@ async function dispatchReprocess(
   }
 
   // Audit best-effort — a failed audit must not strand a recording
-  // reset-but-not-reprocessed or surface as a client error.
+  // reset-but-not-reprocessed or surface as a client error. The chosen
+  // backend is recorded on `after` so the audit trail shows which backend
+  // the admin re-ran on (#592).
   try {
     await deps.audit(auditContextFrom(event), {
       action: 'RECORDING_REPROCESS',
       targetType: 'Recording',
       targetId,
       before: snapshot(before),
-      after: snapshot(after),
+      after: { ...snapshot(after), backendOverride },
       reason: reason ? reason : null,
     });
   } catch (err) {

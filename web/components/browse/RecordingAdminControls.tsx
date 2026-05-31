@@ -20,6 +20,19 @@ interface RecordingAdminControlsProps {
 type Feedback = { tone: 'ok' | 'err'; text: string } | null;
 
 /**
+ * Selectable transcription backends for the Reprocess control (#592).
+ * Only the two BUILT backends are offered — `whisper-api` + `bedrock`
+ * are not implemented yet (see `transcribe-dispatch/selector.ts`
+ * `TRANSCRIBE_BACKENDS`). The server re-validates the choice.
+ */
+const REPROCESS_BACKENDS = [
+  { value: 'whisper-local', label: 'Whisper (local)' },
+  { value: 'amazon-transcribe', label: 'Amazon Transcribe' },
+] as const;
+
+type ReprocessBackend = (typeof REPROCESS_BACKENDS)[number]['value'];
+
+/**
  * Moderator/admin-only reprocess controls for a single recording (#566).
  *
  * Two buttons:
@@ -40,6 +53,8 @@ export function RecordingAdminControls({
   const [visible, setVisible] = useState(false);
   const [busy, setBusy] = useState<null | 'reprocess' | 'reparse'>(null);
   const [feedback, setFeedback] = useState<Feedback>(null);
+  // Which transcription backend the Reprocess control re-runs on (#592).
+  const [backend, setBackend] = useState<ReprocessBackend>('whisper-local');
 
   useEffect(() => {
     let cancelled = false;
@@ -60,13 +75,13 @@ export function RecordingAdminControls({
 
   async function run(
     kind: 'reprocess' | 'reparse',
-    action: (id: string) => Promise<void>,
+    action: () => Promise<void>,
     okText: string,
   ): Promise<void> {
     setBusy(kind);
     setFeedback(null);
     try {
-      await action(recordingId);
+      await action();
       setFeedback({ tone: 'ok', text: okText });
     } catch (err) {
       setFeedback({ tone: 'err', text: err instanceof Error ? err.message : String(err) });
@@ -77,6 +92,22 @@ export function RecordingAdminControls({
 
   return (
     <div className={styles.recAdmin} data-testid="recording-admin-controls">
+      <label className={styles.recAdminBackend}>
+        <span className="sr-only">Transcription backend</span>
+        <select
+          aria-label="Transcription backend"
+          data-testid="reprocess-backend-select"
+          value={backend}
+          disabled={busy !== null}
+          onChange={(e) => setBackend(e.target.value as ReprocessBackend)}
+        >
+          {REPROCESS_BACKENDS.map((b) => (
+            <option key={b.value} value={b.value}>
+              {b.label}
+            </option>
+          ))}
+        </select>
+      </label>
       <Button
         type="button"
         variant="secondary"
@@ -84,7 +115,11 @@ export function RecordingAdminControls({
         loading={busy === 'reprocess'}
         disabled={busy !== null}
         onClick={() =>
-          void run('reprocess', reprocessRecording, 'Reprocess queued — full pipeline re-running.')
+          void run(
+            'reprocess',
+            () => reprocessRecording(recordingId, backend),
+            'Reprocess queued — full pipeline re-running.',
+          )
         }
       >
         Reprocess (re-transcribe + parse)
@@ -99,7 +134,7 @@ export function RecordingAdminControls({
         onClick={() =>
           void run(
             'reparse',
-            reparseRecording,
+            () => reparseRecording(recordingId),
             'Re-parse queued — AI re-running on the transcript.',
           )
         }

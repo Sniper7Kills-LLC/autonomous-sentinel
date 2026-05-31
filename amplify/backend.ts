@@ -909,6 +909,28 @@ linguisticLambda.addToRolePolicy(
   }),
 );
 
+// Low-confidence escalation re-enqueue (#588 / epic #582). When a whisper
+// transcript lands BELOW the admin-tunable threshold, the linguistic Lambda
+// re-enqueues the recording onto the TRANSCRIBE queue with
+// `backendOverride: 'amazon-transcribe'` so the dispatcher (#587/#589)
+// produces a second independent ASR pass that the Bedrock reconcile then
+// merges. Fire-and-forget: it never blocks the current whisper publish.
+//
+// CFN-cycle note: `pipelineQueues.transcribe.main` lives in the neutral
+// `PipelineQueuesStack` (no outgoing edges). The linguistic Lambda already
+// consumes `pipelineQueues.linguistic.main` from that same stack as its
+// event source, so a SendMessage grant + env var on the SIBLING transcribe
+// queue adds no NEW cross-stack edge — the linguistic↔PipelineQueuesStack
+// edge already exists. No `data`-stack table/construct is referenced here.
+linguisticLambda.addEnvironment('TRANSCRIBE_QUEUE_URL', pipelineQueues.transcribe.main.queueUrl);
+pipelineQueues.transcribe.main.grantSendMessages(linguisticLambda);
+// Admin-tunable escalation threshold default (#588) — overridable per env;
+// the LinguisticConfig `WHISPER_ESCALATION_THRESHOLD` row wins at runtime.
+linguisticLambda.addEnvironment(
+  'WHISPER_ESCALATION_THRESHOLD',
+  process.env.WHISPER_ESCALATION_THRESHOLD ?? '0.6',
+);
+
 // Bedrock AI fallback (#63/#460). The handler calls the Converse API on
 // the configured Anthropic model only when the rules engine + inline
 // classifier both miss — so model spend is reserved for genuinely
