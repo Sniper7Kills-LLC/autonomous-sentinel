@@ -2,29 +2,39 @@ import { describe, expect, it } from 'vitest';
 import { extractWordTimestamps } from './word-timestamps.mjs';
 
 /**
- * whisper.cpp `-oj` shape (without `-ml 1`): natural-sentence segments,
- * each carrying a nested `tokens[]` with per-token `t0`/`t1` in
- * CENTISECONDS. This is the timing source we derive the word sidecar
- * from (#527).
+ * whisper.cpp `-ojf` shape: natural-sentence segments, each carrying a
+ * nested `tokens[]` where per-token timing is `offsets.{from,to}` in
+ * MILLISECONDS (the SAME field/unit as the per-segment `offsets`). There
+ * is NO `t0`/`t1` field. This is the timing source the word sidecar is
+ * derived from (#527 / #536-followup).
  */
 const WHISPER_JSON = JSON.stringify({
   transcription: [
     {
       text: ' Skyking, do not answer.',
+      offsets: { from: 0, to: 2200 },
       tokens: [
-        { text: '[_BEG_]', t0: 0, t1: 0 }, // meta-token — dropped
-        { text: ' Skyking', t0: 30, t1: 95 }, // 0.30s–0.95s
-        { text: ',', t0: 95, t1: 100 }, // punctuation-only — dropped
-        { text: ' do', t0: 100, t1: 130 },
-        { text: ' not', t0: 130, t1: 160 },
-        { text: ' answer', t0: 160, t1: 220 },
+        // Real whisper.cpp `-ojf` token: text + offsets (ms) + timestamps
+        // string + id + probability `p`. We read `offsets`.
+        { text: '[_BEG_]', offsets: { from: 0, to: 0 }, p: 1 }, // meta — dropped
+        {
+          text: ' Skyking',
+          offsets: { from: 300, to: 950 }, // 0.30s–0.95s
+          timestamps: { from: '00:00:00,300', to: '00:00:00,950' },
+          id: 770,
+          p: 0.96,
+        },
+        { text: ',', offsets: { from: 950, to: 1000 }, p: 0.9 }, // punctuation — dropped
+        { text: ' do', offsets: { from: 1000, to: 1300 }, p: 0.9 },
+        { text: ' not', offsets: { from: 1300, to: 1600 }, p: 0.9 },
+        { text: ' answer', offsets: { from: 1600, to: 2200 }, p: 0.9 },
       ],
     },
   ],
 });
 
-describe('extractWordTimestamps (#527)', () => {
-  it('derives {words:[{word,start,end}]} in seconds from nested tokens', () => {
+describe('extractWordTimestamps (#527 / #536)', () => {
+  it('derives {words:[{word,start,end}]} in seconds from per-token offsets (ms)', () => {
     const out = extractWordTimestamps(WHISPER_JSON);
     expect(out.words).toEqual([
       { word: 'Skyking', start: 0.3, end: 0.95 },
@@ -45,9 +55,9 @@ describe('extractWordTimestamps (#527)', () => {
       transcription: [
         {
           tokens: [
-            { text: ' ok', t0: NaN, t1: 50 },
-            { text: ' bad', t0: 80, t1: 40 }, // end < start
-            { text: ' good', t0: 10, t1: 20 },
+            { text: ' ok', offsets: { from: NaN, to: 500 } },
+            { text: ' bad', offsets: { from: 800, to: 400 } }, // end < start
+            { text: ' good', offsets: { from: 100, to: 200 } },
           ],
         },
       ],
@@ -67,7 +77,7 @@ describe('extractWordTimestamps (#527)', () => {
       transcription: [
         { text: 'a', tokens: null },
         { text: 'b' }, // no tokens key, no offsets
-        { text: 'c', tokens: [{ text: ' word', t0: 10, t1: 20 }] },
+        { text: 'c', tokens: [{ text: ' word', offsets: { from: 100, to: 200 } }] },
       ],
     });
     expect(extractWordTimestamps(json)).toEqual({
@@ -76,9 +86,9 @@ describe('extractWordTimestamps (#527)', () => {
   });
 
   it('falls back to one entry per segment from offsets when tokens[] is absent (#536)', () => {
-    // Plain `-oj` (pre-#536) shape: per-segment text + offsets (ms), NO
-    // tokens[]. The sidecar must still carry timing — at segment
-    // granularity — rather than coming out empty.
+    // Plain `-oj` shape: per-segment text + offsets (ms), NO tokens[]. The
+    // sidecar must still carry timing — at segment granularity — rather
+    // than coming out empty.
     const json = JSON.stringify({
       transcription: [
         { text: ' Skyking do not answer', offsets: { from: 300, to: 2200 } },
@@ -94,16 +104,17 @@ describe('extractWordTimestamps (#527)', () => {
   });
 
   it('prefers per-token timing over the segment fallback when tokens[] is present (#536)', () => {
-    // When the full JSON (`-ojf`) carries tokens, use them — do NOT also
-    // emit the whole-segment fallback entry (would duplicate the words).
+    // When the full JSON (`-ojf`) carries usable tokens, use them — do NOT
+    // also emit the whole-segment fallback entry (would collapse the clip
+    // into one highlighted "word", the bug this fixes).
     const json = JSON.stringify({
       transcription: [
         {
           text: ' Skyking answer',
           offsets: { from: 0, to: 5000 },
           tokens: [
-            { text: ' Skyking', t0: 30, t1: 95 },
-            { text: ' answer', t0: 100, t1: 160 },
+            { text: ' Skyking', offsets: { from: 300, to: 950 } },
+            { text: ' answer', offsets: { from: 1000, to: 1600 } },
           ],
         },
       ],
@@ -123,8 +134,8 @@ describe('extractWordTimestamps (#527)', () => {
           text: ' Skyking',
           offsets: { from: 100, to: 900 },
           tokens: [
-            { text: '[_BEG_]', t0: 0, t1: 0 },
-            { text: ',', t0: 10, t1: 20 },
+            { text: '[_BEG_]', offsets: { from: 0, to: 0 } },
+            { text: ',', offsets: { from: 10, to: 20 } },
           ],
         },
       ],
