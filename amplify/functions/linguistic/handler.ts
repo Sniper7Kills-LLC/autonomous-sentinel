@@ -172,6 +172,10 @@ export interface LinguisticDataClient {
           id: string;
           submitterId?: string | null;
           deletedAt?: string | null;
+          // Discriminates a supersede soft-delete (#556) from an
+          // admin-intentional delete on re-link recovery (#599): only the
+          // former is auto-recovered.
+          deletedReason?: string | null;
         } | null;
         errors?: unknown;
       }>;
@@ -736,6 +740,14 @@ async function maybeEscalate(opts: {
 }
 
 /**
+ * Prefix of the `deletedReason` a supersede soft-delete writes (#556).
+ * The re-link recovery (#599) gates on this: ONLY a Message the pipeline
+ * itself superseded is auto-recovered — an admin-intentional delete (any
+ * other reason) stays deleted. Shared so the writer + the gate can't drift.
+ */
+const SUPERSEDE_REASON_PREFIX = 'Superseded by re-run';
+
+/**
  * Supersede the prior Message (M_old) on a re-run that produced a
  * genuinely different parse (#556 revised semantics).
  *
@@ -803,7 +815,7 @@ async function supersedePriorMessage(
     const deleted = await client.models.Message.update({
       id: priorMessageId,
       deletedAt: ts,
-      deletedReason: `Superseded by re-run of Recording ${recordingId} (#556)`,
+      deletedReason: `${SUPERSEDE_REASON_PREFIX} of Recording ${recordingId} (#556)`,
     });
     if (deleted.errors) {
       console.warn('linguistic: failed to soft-delete superseded Message', {
@@ -855,11 +867,16 @@ async function supersedePriorMessage(
  * Without this the Recording would link to a still-`deletedAt` Message and
  * the entry would stay hidden.
  *
+ * Gated to supersede-caused deletes only: a Message whose `deletedReason`
+ * was NOT written by supersede (i.e. an admin-intentional delete) stays
+ * deleted — a re-run must never resurrect it against admin intent.
+ *
  * Clears `deletedAt` / `deletedBy` / `deletedReason`, re-publishes
  * (`publishedAt = now`), and writes a `MESSAGE_RESTORE` AuditLog entry
  * (mirrors the supersede `MESSAGE_DELETE`). No-op when the Message is
- * already live. Best-effort: a recovery or audit hiccup must never sink the
- * publish — the Recording link is committed by the caller regardless.
+ * already live or was admin-deleted. Best-effort: a recovery or audit
+ * hiccup must never sink the publish — the Recording link is committed by
+ * the caller regardless.
  */
 async function recoverIfDeleted(
   client: LinguisticDataClient,
@@ -872,6 +889,16 @@ async function recoverIfDeleted(
     const row = existing.data;
     // Missing (query miss) or already live → nothing to recover.
     if (!row || !row.deletedAt) return;
+    // Only auto-recover a Message the pipeline itself superseded (#556).
+    // An admin-intentional delete (any other reason, or no reason) must
+    // stay deleted — a re-run must not resurrect it against admin intent.
+    if (!row.deletedReason?.startsWith(SUPERSEDE_REASON_PREFIX)) {
+      console.info('linguistic: colliding Message deleted by an admin; leaving deleted', {
+        recordingId,
+        messageId,
+      });
+      return;
+    }
     const prevDeletedAt = row.deletedAt;
     const recovered = await client.models.Message.update({
       id: messageId,

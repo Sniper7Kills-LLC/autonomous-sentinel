@@ -958,9 +958,14 @@ describe('linguistic — recover soft-deleted Message on re-link (#599)', () => 
     // Dedup list excludes soft-deleted → no candidate. The deterministic-id
     // create then collides with the EXISTING (soft-deleted) Message.
     createSpy.mockResolvedValueOnce({ data: null, errors: CONDITIONAL_CHECK_ERRORS });
-    // Message.get (recovery read) → the colliding Message is soft-deleted.
+    // Message.get (recovery read) → the colliding Message is soft-deleted
+    // by a prior supersede (#556), so it is eligible for recovery.
     msgGetSpy.mockResolvedValue({
-      data: { id: 'm-old', deletedAt: '2026-05-20T00:00:00Z' },
+      data: {
+        id: 'm-old',
+        deletedAt: '2026-05-20T00:00:00Z',
+        deletedReason: 'Superseded by re-run of Recording rec-recover (#556)',
+      },
       errors: null,
     });
     const auditSpy = vi.fn().mockResolvedValue('audit-1');
@@ -998,6 +1003,38 @@ describe('linguistic — recover soft-deleted Message on re-link (#599)', () => 
     // Recording still links to the recovered Message.
     expect(updateSpy.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({ id: 'rec-recover', messageId: createdId }),
+    );
+  });
+
+  it('does NOT recover an admin-deleted Message (only supersede deletes recover)', async () => {
+    const { client, createSpy, msgGetSpy, msgUpdateSpy } = makeDataStub();
+    createSpy.mockResolvedValueOnce({ data: null, errors: CONDITIONAL_CHECK_ERRORS });
+    // Colliding Message was deleted by an admin (reason is NOT a supersede).
+    msgGetSpy.mockResolvedValue({
+      data: { id: 'm-admin', deletedAt: '2026-05-20T00:00:00Z', deletedReason: 'Spam' },
+      errors: null,
+    });
+    const auditSpy = vi.fn().mockResolvedValue('audit-1');
+    __setDeps({
+      dataClient: client,
+      bedrockFallback: bedrockNull,
+      audit: auditSpy,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-admin',
+        transcript: 'skyking skyking',
+        enqueuedAt: '2026-05-24T18:00:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    // Admin delete respected: no recovery update, no MESSAGE_RESTORE audit.
+    expect(msgUpdateSpy).not.toHaveBeenCalled();
+    expect(auditSpy).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'MESSAGE_RESTORE' }),
     );
   });
 
