@@ -70,10 +70,59 @@ describe('parseDispatchMessage', () => {
     });
   });
 
-  it('rejects a message missing recordingId or audioKey', () => {
+  it('rejects a message missing recordingId or any audio key', () => {
     expect(parseDispatchMessage({ audioKey: 'k' })).toBeNull();
     expect(parseDispatchMessage({ recordingId: 'r' })).toBeNull();
     expect(parseDispatchMessage(null)).toBeNull();
+  });
+
+  it('falls back to originalKey as the audio source (#587 dispatcher message shape)', () => {
+    const msg = parseDispatchMessage({
+      recordingId: 'rec-1',
+      originalKey: 'recordings/originals/rec-1.wav',
+      contentHash: 'h',
+      enqueuedAt: '2026-05-30T00:00:00Z',
+    });
+    expect(msg).toEqual({
+      recordingId: 'rec-1',
+      audioKey: 'recordings/originals/rec-1.wav',
+      enqueuedAt: '2026-05-30T00:00:00Z',
+    });
+  });
+
+  it('prefers an explicit audioKey over originalKey (admin re-run on derivative)', () => {
+    const msg = parseDispatchMessage({
+      recordingId: 'rec-1',
+      audioKey: 'recordings/web/rec-1.opus',
+      originalKey: 'recordings/originals/rec-1.wav',
+    });
+    expect(msg?.audioKey).toBe('recordings/web/rec-1.opus');
+  });
+
+  it('accepts a direct parsed object payload (#589 — the Event-invoke shape)', () => {
+    // AWS Lambda JSON-parses the invoke Payload, so the handler receives
+    // the dispatch object directly — must not require a string.
+    const msg = parseDispatchMessage({
+      recordingId: 'rec-1',
+      originalKey: 'recordings/originals/rec-1.wav',
+    });
+    expect(msg).toEqual({
+      recordingId: 'rec-1',
+      audioKey: 'recordings/originals/rec-1.wav',
+      enqueuedAt: undefined,
+    });
+  });
+
+  it('also accepts a raw JSON string payload (direct-invoke forwarding the SQS body)', () => {
+    const msg = parseDispatchMessage(
+      JSON.stringify({ recordingId: 'rec-1', originalKey: 'recordings/originals/rec-1.wav' }),
+    );
+    expect(msg?.recordingId).toBe('rec-1');
+    expect(msg?.audioKey).toBe('recordings/originals/rec-1.wav');
+  });
+
+  it('returns null (caller throws) on an unparseable JSON string instead of crashing', () => {
+    expect(parseDispatchMessage('{not json')).toBeNull();
   });
 });
 

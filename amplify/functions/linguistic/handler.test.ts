@@ -1589,6 +1589,163 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
   });
 });
 
+describe('linguistic — multi-transcript collection + reconcile (#593)', () => {
+  const noRules: RulesMatcher = { tryMatch: () => Promise.resolve(null) };
+
+  function transcriptsOf(call: unknown): Array<Record<string, unknown>> {
+    const input = call as { transcripts?: string };
+    return JSON.parse(input.transcripts ?? '[]') as Array<Record<string, unknown>>;
+  }
+
+  it('writes a single-entry transcripts collection on the default whisper path', async () => {
+    const { client, updateSpy } = makeDataStub();
+    __setDeps({
+      dataClient: client,
+      rulesEngine: noRules,
+      bedrockFallback: bedrockOk({ type: 'OTHER', confidence: 0.6 }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'm',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec',
+        transcript: 'SOLO TRANSCRIPT',
+        transcriptionConfidence: 0.71,
+        wordTimestampsKey: 'wts/whisper/rec.json',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    const update = updateSpy.mock.calls[0]?.[0] as {
+      transcript?: string;
+      wordTimestampsKey?: string;
+    };
+    expect(update.transcript).toBe('SOLO TRANSCRIPT');
+    // Default single-whisper path still surfaces the top-level
+    // wordTimestampsKey — sourced from the entry's own key (set from
+    // msg.wordTimestampsKey at UPSERT time), not a msg fallback.
+    expect(update.wordTimestampsKey).toBe('wts/whisper/rec.json');
+    const transcripts = transcriptsOf(update);
+    expect(transcripts).toHaveLength(1);
+    expect(transcripts[0]).toMatchObject({
+      backend: 'whisper-local',
+      transcript: 'SOLO TRANSCRIPT',
+      transcriptionConfidence: 0.71,
+      wordTimestampsKey: 'wts/whisper/rec.json',
+    });
+  });
+
+  it('UPSERTS a second backend into the existing transcripts without dropping the first', async () => {
+    const { client, getSpy, updateSpy } = makeDataStub();
+    // Recording already carries a whisper-local transcript (#593).
+    getSpy.mockResolvedValue({
+      data: {
+        id: 'rec',
+        broadcastedAt: null,
+        messageId: null,
+        transcripts: [
+          {
+            backend: 'whisper-local',
+            transcript: 'OXTRA HOTEL',
+            transcriptionConfidence: 0.7,
+            wordTimestampsKey: 'wts/whisper/rec.json',
+            ts: '2026-05-24T17:00:00Z',
+          },
+        ],
+      },
+      errors: null,
+    });
+    const bedrockFallback = bedrockOk({ type: 'SKYKING', confidence: 0.95, body: 'FOXTROT HOTEL' });
+    __setDeps({
+      dataClient: client,
+      rulesEngine: noRules,
+      bedrockFallback,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'm',
+    });
+    // amazon-transcribe arrives with a higher-confidence reading + its own
+    // (backend-specific) word-timestamps key.
+    await handler(
+      makeEvent({
+        recordingId: 'rec',
+        transcript: 'FOXTROT HOTEL',
+        backend: 'amazon-transcribe',
+        transcriptionConfidence: 0.9,
+        wordTimestampsKey: 'wts/amazon/rec.json',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    const update = updateSpy.mock.calls[0]?.[0] as {
+      transcript?: string;
+      transcriptionConfidence?: number;
+      wordTimestampsKey?: string;
+    };
+    const transcripts = transcriptsOf(update);
+    expect(transcripts).toHaveLength(2);
+    expect(transcripts.map((t) => t.backend)).toEqual(
+      expect.arrayContaining(['whisper-local', 'amazon-transcribe']),
+    );
+    // Primary = highest confidence → amazon-transcribe mirrors the top-level.
+    expect(update.transcript).toBe('FOXTROT HOTEL');
+    expect(update.transcriptionConfidence).toBe(0.9);
+    // Word timestamps are backend-specific: the top-level key MUST be the
+    // PRIMARY (amazon-transcribe) entry's key, NOT the whisper key — pairing
+    // the amazon transcript with whisper offsets would break scrub-to-text.
+    expect(update.wordTimestampsKey).toBe('wts/amazon/rec.json');
+    // Bedrock got BOTH transcripts to reconcile across.
+    const fbOpts = bedrockFallback.mock.calls[0]?.[1] as {
+      transcripts?: Array<{ backend: string }>;
+    };
+    expect(fbOpts.transcripts).toHaveLength(2);
+    expect(fbOpts.transcripts?.map((t) => t.backend)).toEqual(
+      expect.arrayContaining(['whisper-local', 'amazon-transcribe']),
+    );
+  });
+
+  it('re-parse over multiple transcripts UPDATES the same Message (dedup), no duplicate', async () => {
+    // Both transcripts of the same broadcast → same type + body → the
+    // deterministic-id dedup links to one Message (#556/#454). The second
+    // transcript carries `backend` and reconciles; it must not create a
+    // second Message.
+    const { client, getSpy, createSpy } = makeDataStub([
+      { id: 'existing-msg', type: 'SKYKING', body: 'FOXTROT HOTEL' },
+    ]);
+    getSpy.mockResolvedValue({
+      data: {
+        id: 'rec',
+        broadcastedAt: '2026-05-24T17:00:00Z',
+        messageId: 'existing-msg',
+        transcripts: [
+          { backend: 'whisper-local', transcript: 'OXTRA HOTEL', ts: '2026-05-24T17:00:00Z' },
+        ],
+      },
+      errors: null,
+    });
+    __setDeps({
+      dataClient: client,
+      rulesEngine: noRules,
+      bedrockFallback: bedrockOk({ type: 'SKYKING', confidence: 0.95, body: 'FOXTROT HOTEL' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'm',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec',
+        transcript: 'FOXTROT HOTEL',
+        backend: 'amazon-transcribe',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    // Linked to the existing Message — no new Message created.
+    expect(createSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe('linguistic — re-run supersede + stable broadcast time (#556)', () => {
   /** Recording.get fixture carrying a prior messageId + broadcastedAt. */
   function recState(

@@ -109,6 +109,9 @@ async function publishTranscript(
       MessageBody: JSON.stringify({
         kind: 'transcript',
         recordingId,
+        // Which backend produced this transcript (#593) — keys the
+        // per-backend `Recording.transcripts` collection in linguistic.
+        backend: 'amazon-transcribe',
         transcript,
         // Only emit the field when we actually have a value — an
         // absent `transcriptionConfidence` means "unknown", which the

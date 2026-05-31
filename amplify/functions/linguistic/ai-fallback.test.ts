@@ -7,6 +7,8 @@ import type {
 import {
   tryBedrockFallback,
   sanitizeProposedRules,
+  buildReconcileSection,
+  renderFallbackPrompt,
   DEFAULT_FALLBACK_MODEL_ID,
   DEFAULT_PROMPT_TEMPLATE,
   PARSED_EAM_SCHEMA,
@@ -118,6 +120,77 @@ afterEach(() => {
   delete process.env.LINGUISTIC_FALLBACK_MODEL_ID;
   delete process.env.LINGUISTIC_FALLBACK_PROMPT_VERSION;
   delete process.env.LINGUISTIC_FALLBACK_PROMPT_TEMPLATE;
+});
+
+describe('buildReconcileSection (#593)', () => {
+  it('returns empty string for zero or one transcript (single-source unchanged)', () => {
+    expect(buildReconcileSection(undefined)).toBe('');
+    expect(buildReconcileSection([])).toBe('');
+    expect(buildReconcileSection([{ backend: 'whisper-local', transcript: 'X' }])).toBe('');
+  });
+
+  it('builds a reconcile block labelling each transcript by backend + confidence', () => {
+    const section = buildReconcileSection([
+      { backend: 'whisper-local', transcript: 'OXTRA HOTEL', transcriptionConfidence: 0.71 },
+      { backend: 'amazon-transcribe', transcript: 'FOXTROT HOTEL' },
+    ]);
+    expect(section).toContain('Multiple transcripts — reconcile');
+    expect(section).toContain('Transcript 1 — whisper-local (confidence 0.71)');
+    expect(section).toContain('OXTRA HOTEL');
+    // No confidence reported → no parenthetical.
+    expect(section).toContain('Transcript 2 — amazon-transcribe');
+    expect(section).not.toContain('Transcript 2 — amazon-transcribe (confidence');
+    expect(section).toContain('FOXTROT HOTEL');
+  });
+});
+
+describe('renderFallbackPrompt — multi-transcript (#593)', () => {
+  it('appends the reconcile section only when >1 transcript', () => {
+    const single = renderFallbackPrompt('PRIMARY', {
+      transcripts: [{ backend: 'whisper-local', transcript: 'PRIMARY' }],
+    });
+    expect(single.rendered).not.toContain('Multiple transcripts — reconcile');
+
+    const multi = renderFallbackPrompt('PRIMARY', {
+      transcripts: [
+        { backend: 'whisper-local', transcript: 'PRIMARY' },
+        { backend: 'amazon-transcribe', transcript: 'SECOND' },
+      ],
+    });
+    expect(multi.rendered).toContain('Multiple transcripts — reconcile');
+    expect(multi.rendered).toContain('SECOND');
+  });
+});
+
+describe('tryBedrockFallback — multi-transcript reconcile (#593)', () => {
+  it('sends the reconcile section in the user prompt when >1 transcript', async () => {
+    const { client, calls } = makeStubClient([
+      toolUseResponse({ type: 'SKYKING', confidence: 0.9 }),
+    ]);
+    await tryBedrockFallback('OXTRA HOTEL', {
+      client,
+      transcripts: [
+        { backend: 'whisper-local', transcript: 'OXTRA HOTEL', transcriptionConfidence: 0.7 },
+        { backend: 'amazon-transcribe', transcript: 'FOXTROT HOTEL', transcriptionConfidence: 0.9 },
+      ],
+    });
+    const content = calls[0]?.input.messages?.[0]?.content?.[0];
+    const text = content && 'text' in content ? (content.text ?? '') : '';
+    expect(text).toContain('Multiple transcripts — reconcile');
+    expect(text).toContain('FOXTROT HOTEL');
+    expect(text).toContain('amazon-transcribe');
+  });
+
+  it('leaves the prompt unchanged for a single transcript', async () => {
+    const { client, calls } = makeStubClient([toolUseResponse({ type: 'OTHER', confidence: 0.5 })]);
+    await tryBedrockFallback('SOLO', {
+      client,
+      transcripts: [{ backend: 'whisper-local', transcript: 'SOLO' }],
+    });
+    const content = calls[0]?.input.messages?.[0]?.content?.[0];
+    const text = content && 'text' in content ? (content.text ?? '') : '';
+    expect(text).not.toContain('Multiple transcripts — reconcile');
+  });
 });
 
 describe('tryBedrockFallback — happy path', () => {

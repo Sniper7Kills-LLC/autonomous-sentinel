@@ -39,6 +39,35 @@ describe('toDisplayRecording', () => {
     expect(r.peaksJsonKey).toBeNull();
     expect(r.transcriptionConfidence).toBeNull();
     expect(r.linguisticAttempts).toEqual([]);
+    expect(r.transcripts).toEqual([]);
+  });
+
+  it('parses the per-backend transcripts collection (#593) from a parsed array', () => {
+    const r = toDisplayRecording({
+      id: 'r-multi',
+      transcripts: [
+        { backend: 'whisper-local', transcript: 'OXTRA', transcriptionConfidence: 0.7 },
+        { backend: 'amazon-transcribe', transcript: 'FOXTROT', transcriptionConfidence: 0.9 },
+        { backend: 'bad' }, // missing transcript → dropped
+      ],
+    });
+    expect(r.transcripts).toEqual([
+      { backend: 'whisper-local', transcript: 'OXTRA', transcriptionConfidence: 0.7 },
+      { backend: 'amazon-transcribe', transcript: 'FOXTROT', transcriptionConfidence: 0.9 },
+    ]);
+  });
+
+  it('parses transcripts delivered as a JSON string and tolerates bad JSON', () => {
+    const r = toDisplayRecording({
+      id: 'r-str',
+      transcripts: JSON.stringify([
+        { backend: 'whisper-local', transcript: 'A', transcriptionConfidence: null },
+      ]),
+    });
+    expect(r.transcripts).toEqual([
+      { backend: 'whisper-local', transcript: 'A', transcriptionConfidence: null },
+    ]);
+    expect(toDisplayRecording({ id: 'r-bad', transcripts: '{not json' }).transcripts).toEqual([]);
   });
 
   it('parses linguisticAttempts from a parsed array, tolerating ts/timestamp', () => {

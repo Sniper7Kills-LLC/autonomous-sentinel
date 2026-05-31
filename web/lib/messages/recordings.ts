@@ -20,12 +20,27 @@ export type LinguisticAttempt = {
   ts: string | null;
 };
 
+/**
+ * One per-backend transcript of a Recording (#593). The Recording carries
+ * a `transcripts` JSON array — one entry per transcription backend that ran
+ * (whisper-local, amazon-transcribe, …). The top-level `transcript` mirrors
+ * the primary/active entry; this surfaces ALL of them side-by-side in the
+ * moderator/admin debug panel.
+ */
+export type RecordingTranscript = {
+  backend: string;
+  transcript: string;
+  transcriptionConfidence: number | null;
+};
+
 export type DisplayRecording = {
   id: string;
   frequencyKhz: number | null;
   modulation: 'USB' | 'LSB' | 'AM' | 'FM' | null;
   broadcastedAt: string | null;
   transcript: string | null;
+  /** Per-backend transcript collection (#593). Empty when absent/legacy. */
+  transcripts: RecordingTranscript[];
   transcriptionStatus: string | null;
   transcriptionFailed: boolean;
   durationMs: number | null;
@@ -54,6 +69,8 @@ type RawRecording = {
   modulation?: 'USB' | 'LSB' | 'AM' | 'FM' | null;
   broadcastedAt?: string | null;
   transcript?: string | null;
+  // AWSJSON — parsed array (or JSON string) of per-backend transcripts (#593).
+  transcripts?: unknown;
   transcriptionStatus?: string | null;
   transcriptionFailed?: boolean | null;
   durationMs?: number | null;
@@ -99,6 +116,26 @@ function parseAttempts(raw: unknown): LinguisticAttempt[] {
     }));
 }
 
+function parseTranscripts(raw: unknown): RecordingTranscript[] {
+  let value = raw;
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((e): e is Record<string, unknown> => typeof e === 'object' && e !== null)
+    .filter((e) => typeof e.backend === 'string' && typeof e.transcript === 'string')
+    .map((e) => ({
+      backend: e.backend as string,
+      transcript: e.transcript as string,
+      transcriptionConfidence: num(e.transcriptionConfidence),
+    }));
+}
+
 function toDisplay(r: RawRecording): DisplayRecording {
   return {
     id: r.id,
@@ -106,6 +143,7 @@ function toDisplay(r: RawRecording): DisplayRecording {
     modulation: r.modulation ?? null,
     broadcastedAt: r.broadcastedAt ?? null,
     transcript: r.transcript ?? null,
+    transcripts: parseTranscripts(r.transcripts),
     transcriptionStatus: r.transcriptionStatus ?? null,
     transcriptionFailed: Boolean(r.transcriptionFailed),
     durationMs: typeof r.durationMs === 'number' ? r.durationMs : null,

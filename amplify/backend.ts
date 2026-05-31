@@ -21,6 +21,11 @@ import { preprocess } from './functions/preprocess/resource';
 import { linguistic } from './functions/linguistic/resource';
 import { transcribeAws } from './functions/transcribe-aws/resource';
 import { transcribeAwsFinalizer } from './functions/transcribe-aws-finalizer/resource';
+import { transcribeDispatch } from './functions/transcribe-dispatch/resource';
+import {
+  BACKEND_ENV_VAR,
+  DEFAULT_TRANSCRIBE_BACKEND,
+} from './functions/transcribe-dispatch/selector';
 import { postConfirmation } from './functions/postConfirmation/resource';
 import { preTokenGeneration } from './functions/preTokenGeneration/resource';
 import { preAuth } from './functions/preAuth/resource';
@@ -57,6 +62,7 @@ const backend = defineBackend({
   linguistic,
   transcribeAws,
   transcribeAwsFinalizer,
+  transcribeDispatch,
   postConfirmation,
   preTokenGeneration,
   preAuth,
@@ -814,7 +820,14 @@ whisperFn.addToRolePolicy(
 // the linguistic Lambda owns all Recording.update calls via
 // Amplify Data so AppSync's subscription publisher fires.
 pipelineQueues.linguistic.main.grantSendMessages(whisperFn);
-whisperFn.addEventSource(new SqsEventSource(pipelineQueues.transcribe.main, { batchSize: 1 }));
+// #587: the whisper container no longer subscribes to the transcribe
+// queue directly. The transcribe-dispatch Lambda is now the queue's
+// sole consumer; it resolves the backend (`selector.ts`) and async
+// (Event) Lambda-invokes whisper (the default) or amazon-transcribe.
+// Whisper's handler accepts the dispatch-message body as a direct Event
+// payload (in addition to the legacy SQS shape) — see
+// `transcribe-whisper/handler.mjs` `normalizeMessages`. The dispatcher
+// stack + wiring live in the Transcribe-dispatch block below.
 
 // Budget hard-threshold ($200) → throttle Whisper to concurrency 1 (#7).
 // The throttle Lambda lives in BudgetsStack and references the Whisper
@@ -1146,3 +1159,68 @@ new Rule(transcribeAwsStack, 'TranscribeJobStateChangeRule', {
   },
   targets: [new LambdaTarget(transcribeAwsFinalizerFn)],
 });
+
+// Transcribe-dispatch Lambda (#587, epic #582 slice 2).
+//
+// The transcribe queue's SOLE consumer. It resolves the active backend
+// per message (`transcribe-dispatch/selector.ts`: per-message
+// `backendOverride` → admin `DEFAULT_TRANSCRIBE_BACKEND` → hard-coded
+// `whisper-local`) and async (Event) Lambda-invokes that backend with
+// the message body. Replaces the old direct
+// `whisperFn.addEventSource(transcribe queue)` subscription — the whisper
+// container + the amazon-transcribe backend are now Event-invoked by ARN.
+//
+// Cycle avoidance (project memory: iterate via `ampx sandbox --once`).
+//
+// The dispatcher is assigned to the `data` resource group
+// (`resourceGroupName: 'data'` in resource.ts) so its Lambda lands in
+// the SAME nested stack as the Amplify Data resolvers — the assignment
+// the CFN `CloudformationStackCircularDependencyError` resolution text
+// recommends, and the same group `linguistic` / `commentMutations` use.
+// Keeping the dispatcher's backend-invoke + transcribe-queue-consume
+// edges in the `data` stack (rather than letting `defineFunction` drop
+// it into the shared `function` stack, which would route those edges
+// through the `function`↔`data`↔`TranscribeAwsStack` triangle) keeps
+// THIS change's footprint cycle-neutral.
+//
+// References are proper CDK constructs throughout — `fn.functionArn`
+// tokens + `fn.grantInvoke(dispatcher)` — never hand-built ARN strings.
+//
+// NOTE: a `ampx sandbox --once` synth surfaces a PRE-EXISTING nested-
+// stack cycle `[TranscribeAwsStack, data, function]` that reproduces on
+// `main` (#586) WITHOUT this change. With this change the reported cycle
+// set is byte-identical to the base — the dispatcher's `data`-group
+// placement adds nothing to it. That base cycle is a separate P0 tracked
+// on the PR; this slice is not blocked on it.
+const transcribeDispatchFn = backend.transcribeDispatch.resources.lambda as LambdaFunction;
+
+// Env: one `*_FN_ARN` per wired backend (the `BACKEND_ENV_VAR` map) +
+// the env-wide admin default. Only the two backends that exist today are
+// wired; whisper-api + bedrock fall through to the default until their
+// Lambdas ship (the selector warns + defaults on a request for an
+// unwired backend).
+transcribeDispatchFn.addEnvironment(BACKEND_ENV_VAR['whisper-local'], whisperFn.functionArn);
+transcribeDispatchFn.addEnvironment(
+  BACKEND_ENV_VAR['amazon-transcribe'],
+  transcribeAwsFn.functionArn,
+);
+// Keep the default `whisper-local` so the existing happy path is
+// behaviourally unchanged — a recording with no override + no admin
+// config still goes to the whisper container.
+transcribeDispatchFn.addEnvironment('DEFAULT_TRANSCRIBE_BACKEND', DEFAULT_TRANSCRIBE_BACKEND);
+
+// `lambda:InvokeFunction` on the two backends via the CDK grant helper
+// (proper construct ref, resource-scoped). Async `Event` invocation
+// still uses the `lambda:InvokeFunction` action under the hood.
+whisperFn.grantInvoke(transcribeDispatchFn);
+transcribeAwsFn.grantInvoke(transcribeDispatchFn);
+
+// The dispatcher consumes the transcribe queue (batchSize 1).
+transcribeDispatchFn.addEventSource(
+  new SqsEventSource(pipelineQueues.transcribe.main, { batchSize: 1 }),
+);
+
+// Reserved-concurrency cap (#68): the dispatcher only fires a fast async
+// invoke, so a modest cap bounds fan-out without starving throughput.
+(transcribeDispatchFn.node.defaultChild as CfnFunction).reservedConcurrentExecutions =
+  getConcurrencyCap('TRANSCRIBE_DISPATCH');

@@ -38,6 +38,7 @@ beforeEach(() => {
 interface LinguisticMessage {
   kind: string;
   recordingId: string;
+  backend?: string;
   transcript?: string;
   transcriptionConfidence?: number;
   reason?: string;
@@ -126,6 +127,8 @@ describe('handler — COMPLETED', () => {
     const body = sentBody();
     expect(body.kind).toBe('transcript');
     expect(body.recordingId).toBe('rec-123');
+    // Backend label keys the per-backend transcripts collection (#593).
+    expect(body.backend).toBe('amazon-transcribe');
     expect(body.transcript).toBe('SKYKING SKYKING DO NOT ANSWER');
     // mean of 0.9 and 0.7 = 0.8
     expect(body.transcriptionConfidence).toBeCloseTo(0.8, 10);
