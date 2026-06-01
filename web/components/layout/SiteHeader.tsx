@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { fetchCallerGroups, isModeratorOrAdmin } from '@/lib/auth/roles';
 import styles from './SiteChrome.module.css';
@@ -26,8 +26,10 @@ const NAV_ITEMS: { href: string; label: string }[] = [
  */
 export function SiteHeader() {
   const pathname = usePathname();
+  const router = useRouter();
   const [clock, setClock] = useState<string>('');
   const [showAdmin, setShowAdmin] = useState(false);
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
     const tick = () => setClock(new Date().toISOString().slice(0, 19).replace('T', ' '));
@@ -53,6 +55,12 @@ export function SiteHeader() {
 
   const isActive = (href: string) =>
     pathname === href || (pathname?.startsWith(`${href}/`) ?? false);
+
+  const onSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const q = search.trim();
+    router.push(q ? `/search?q=${encodeURIComponent(q)}` : '/search');
+  };
 
   return (
     <header className={styles.header}>
@@ -86,6 +94,21 @@ export function SiteHeader() {
         )}
       </nav>
       <div className={styles.headerRight}>
+        <form
+          className={styles.search}
+          role="search"
+          aria-label="Site search"
+          onSubmit={onSearchSubmit}
+        >
+          <input
+            type="search"
+            className={styles.searchInput}
+            aria-label="Search messages"
+            placeholder="Search…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </form>
         <span className={styles.clock} suppressHydrationWarning>
           {clock ? `${clock}Z` : ' '}
         </span>

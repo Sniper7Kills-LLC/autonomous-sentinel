@@ -160,6 +160,32 @@
   letter-spacing: 0.04em;
 }
 
+.search {
+  display: flex;
+  align-items: center;
+}
+
+.searchInput {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  width: 9.5rem;
+  max-width: 30vw;
+  padding: 0.3rem 0.55rem;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 2px;
+  color: var(--color-fg);
+}
+
+.searchInput:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.searchInput::placeholder {
+  color: var(--color-fg-faint);
+}
+
 .main {
   flex: 1;
   display: flex;
