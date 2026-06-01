@@ -24,7 +24,7 @@ const ADMIN_SECTIONS: { href: string; label: string; ready: boolean }[] = [
   { href: '/admin/dlq', label: 'DLQ + reprocess', ready: false }, // #107
   { href: '/admin/moderation', label: 'Moderation queue', ready: true }, // #118
   { href: '/admin/audit', label: 'Audit log', ready: true }, // #111
-  { href: '/admin/transmitters', label: 'Transmitters', ready: false }, // #108
+  { href: '/admin/transmitters', label: 'Transmitters', ready: true }, // #108
   { href: '/admin/callsigns', label: 'Callsigns', ready: false }, // #109
   { href: '/admin/banned-regions', label: 'Banned regions', ready: false }, // #113
   { href: '/admin/playback', label: 'Playback limits', ready: false }, // #114
