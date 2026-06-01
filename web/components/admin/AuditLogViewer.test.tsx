@@ -114,6 +114,46 @@ describe('AuditLogViewer', () => {
     );
   });
 
+  it('keeps the merged set globally newest-first when page 2 is older than page 1', async () => {
+    // Page 1: a newer row. Each page arrives independently sorted, so the
+    // older page-2 row must still sort ABOVE nothing and BELOW page 1.
+    listMock.mockResolvedValueOnce({
+      items: [
+        auditRow({
+          id: 'p1',
+          action: 'USER_BAN',
+          createdAt: '2026-05-20T00:00:00.000Z',
+        }),
+      ],
+      nextToken: 'tok1',
+    });
+    render(<AuditLogViewer />);
+    await waitFor(() => expect(screen.getAllByText('USER_BAN').length).toBeGreaterThan(0));
+
+    // Page 2: a row OLDER than every page-1 row.
+    listMock.mockResolvedValueOnce({
+      items: [
+        auditRow({
+          id: 'p2',
+          action: 'MESSAGE_RESTORE',
+          createdAt: '2026-05-01T00:00:00.000Z',
+        }),
+      ],
+      nextToken: null,
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    await waitFor(() => expect(screen.getAllByText('MESSAGE_RESTORE').length).toBeGreaterThan(0));
+
+    // Read the timestamp cells in render order; they must be descending.
+    const timestamps = screen.getAllByText(/^2026-05-\d{2}T/).map((el) => el.textContent ?? '');
+    const sorted = [...timestamps].sort((a, b) => b.localeCompare(a));
+    expect(timestamps).toEqual(sorted);
+    // Sanity: the newer page-1 row precedes the older page-2 row.
+    expect(timestamps.indexOf('2026-05-20T00:00:00.000Z')).toBeLessThan(
+      timestamps.indexOf('2026-05-01T00:00:00.000Z'),
+    );
+  });
+
   it('has no mutation affordances (display-only)', async () => {
     listMock.mockResolvedValue({ items: [auditRow({})], nextToken: null });
     render(<AuditLogViewer />);

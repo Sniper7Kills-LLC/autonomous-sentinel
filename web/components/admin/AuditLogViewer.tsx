@@ -41,7 +41,18 @@ export function AuditLogViewer() {
     setError(null);
     try {
       const res = await listAudit(filter, { pageSize: PAGE_SIZE, nextToken: token });
-      setRows((prev) => (append ? [...prev, ...res.items] : res.items));
+      // Sort the COMBINED set newest-first. Each page is sorted
+      // independently server-side, but concatenating two independently
+      // sorted pages does not yield a globally sorted list — if page 2's
+      // newest row predates page 1's oldest, order breaks across the
+      // boundary. Re-sort the merged array so both the table and the CSV
+      // export (which reads this same `rows` state) stay globally
+      // newest-first.
+      setRows((prev) =>
+        (append ? [...prev, ...res.items] : res.items)
+          .slice()
+          .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? '')),
+      );
       setNextToken(res.nextToken);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load the audit log.');
