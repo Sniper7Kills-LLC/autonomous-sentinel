@@ -45,6 +45,7 @@ import {
 import { notificationPreferenceMutations } from '../functions/notificationPreferenceMutations/resource';
 import { BannedRegionPage } from './models/banned-region-page';
 import { LinguisticConfig } from './models/linguistic-config';
+import { ReputationConfig } from './models/reputation-config';
 import { LinguisticRule } from './models/linguistic-rule';
 import { LinguisticPromptTemplate } from './models/linguistic-prompt-template';
 import {
@@ -91,6 +92,7 @@ export const schema = a
     // Reference data
     Callsign,
     LinguisticConfig,
+    ReputationConfig,
     LinguisticRule,
     LinguisticPromptTemplate,
     BannedRegionPage,
