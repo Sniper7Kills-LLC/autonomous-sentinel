@@ -40,6 +40,10 @@
   background: #21c0c0;
 }
 
+.swatchPropagation {
+  background: linear-gradient(135deg, #2e9e5b 0%, #c8a415 50%, #d63d3d 100%);
+}
+
 .mapHost {
   position: relative;
   width: 100%;
@@ -63,6 +67,51 @@
   justify-content: center;
   text-align: center;
   padding: var(--sp-4);
+  color: var(--color-fg-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+
+/* Space-weather chip — top-left corner of the map (#84). */
+.chip {
+  position: absolute;
+  top: var(--sp-2);
+  left: var(--sp-2);
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: calc(100% - 2 * var(--sp-2));
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-fg);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 25%);
+}
+
+.chipBand {
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+  /* Background + text color are set inline from band.color / band.textColor;
+     the pair is verified to clear WCAG AA 4.5:1 in noaa.test.ts. */
+}
+
+.chipValue {
+  white-space: nowrap;
+}
+
+.chipStale {
+  color: var(--color-fg-muted);
+  font-style: italic;
+}
+
+.summary {
+  margin: 0;
   color: var(--color-fg-muted);
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
