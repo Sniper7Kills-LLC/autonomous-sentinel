@@ -178,6 +178,7 @@ export function MessageDetailView({ messageId }: MessageDetailViewProps) {
                   recordingId={r.id}
                   transcriptionFailed={r.transcriptionFailed}
                   signedIn={session.signedIn}
+                  transcript={r.transcript}
                 />
                 <RecordingAdminControls recordingId={r.id} hasTranscript={Boolean(r.transcript)} />
               </article>

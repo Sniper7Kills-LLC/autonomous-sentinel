@@ -10,6 +10,8 @@ import {
   type DisplayRevision,
   type RevisionVoteValue,
 } from '@/lib/revisions/query';
+import { diffTranscript, hasChanges, type DiffSegment } from '@/lib/revisions/diff';
+import { containsProfanity } from '@/lib/moderation/profanity';
 import styles from './RevisionPanel.module.css';
 
 interface RevisionPanelProps {
@@ -22,6 +24,11 @@ interface RevisionPanelProps {
   /** True when the visitor has a signed-in session (controls whether
    *  the submission form + vote buttons are interactive). */
   signedIn: boolean;
+  /** Current best transcript text for the Recording. When present (and
+   *  the transcript did NOT fail), the success-case "Suggest a
+   *  correction" form (#93) is offered; pre-fills the editor + drives
+   *  the diff view. */
+  transcript?: string | null;
 }
 
 /**
@@ -39,7 +46,12 @@ interface RevisionPanelProps {
  * "Comments / corrections on successfully-transcribed recordings"
  * rule.
  */
-export function RevisionPanel({ recordingId, transcriptionFailed, signedIn }: RevisionPanelProps) {
+export function RevisionPanel({
+  recordingId,
+  transcriptionFailed,
+  signedIn,
+  transcript,
+}: RevisionPanelProps) {
   const [revisions, setRevisions] = useState<DisplayRevision[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -73,6 +85,22 @@ export function RevisionPanel({ recordingId, transcriptionFailed, signedIn }: Re
       {transcriptionFailed && signedIn && (
         <SubmitRow
           recordingId={recordingId}
+          onSubmitted={() => {
+            void refresh();
+          }}
+        />
+      )}
+
+      {!transcriptionFailed && (transcript ?? '').trim().length > 0 && (
+        <CorrectionAffordance
+          // Key by recordingId so the affordance (and any open
+          // CorrectionForm + its draft) fully remounts when the parent
+          // re-renders for a different recording — never carries a stale
+          // draft against a new transcript.
+          key={recordingId}
+          recordingId={recordingId}
+          currentTranscript={(transcript ?? '').trim()}
+          signedIn={signedIn}
           onSubmitted={() => {
             void refresh();
           }}
@@ -279,6 +307,235 @@ function SubmitRow({ recordingId, onSubmitted }: SubmitRowProps) {
         <div className={styles.formActions}>
           <Button type="submit" size="sm" loading={submitting} disabled={submitting}>
             Submit transcript
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+interface CorrectionAffordanceProps {
+  recordingId: string;
+  currentTranscript: string;
+  signedIn: boolean;
+  onSubmitted: () => void;
+}
+
+/**
+ * Success-case correction entry point (#93).
+ *
+ * Unlike `SubmitRow` (which is gated to `transcriptionFailed` recordings,
+ * the manual-transcription path of #95), this is the "I heard it
+ * differently" affordance for recordings that DID transcribe. It grows the
+ * fine-tune corpus per CLAUDE.md → ML feedback loop. Signed-out visitors
+ * see a sign-in prompt instead of the editor, mirroring how the rest of
+ * the panel gates on `signedIn`.
+ */
+function CorrectionAffordance({
+  recordingId,
+  currentTranscript,
+  signedIn,
+  onSubmitted,
+}: CorrectionAffordanceProps) {
+  const [open, setOpen] = useState(false);
+
+  if (!signedIn) {
+    return (
+      <p className={styles.notice}>
+        Heard it differently? <a href="/sign-in">Sign in</a> to suggest a transcript correction for
+        community vote.
+      </p>
+    );
+  }
+
+  if (!open) {
+    return (
+      <div className={styles.formActions}>
+        <Button type="button" variant="secondary" size="sm" onClick={() => setOpen(true)}>
+          Suggest a correction
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <CorrectionForm
+      recordingId={recordingId}
+      currentTranscript={currentTranscript}
+      onClose={() => setOpen(false)}
+      onSubmitted={() => {
+        onSubmitted();
+      }}
+    />
+  );
+}
+
+interface CorrectionFormProps {
+  recordingId: string;
+  currentTranscript: string;
+  onClose: () => void;
+  onSubmitted: () => void;
+}
+
+/** Max accepted length: current transcript length × 1.5 (sanity guard). */
+function maxCorrectionLength(current: string): number {
+  return Math.ceil(current.length * 1.5);
+}
+
+function CorrectionForm({
+  recordingId,
+  currentTranscript,
+  onClose,
+  onSubmitted,
+}: CorrectionFormProps) {
+  const [draft, setDraft] = useState(currentTranscript);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  const segments: DiffSegment[] = diffTranscript(currentTranscript, draft);
+  const maxLen = maxCorrectionLength(currentTranscript);
+
+  const submit = useCallback(async () => {
+    const next = draft.trim();
+    if (!next) {
+      setError('Please enter your corrected transcript before submitting.');
+      return;
+    }
+    if (next === currentTranscript.trim()) {
+      setError('Your text matches the current transcript — make a change before submitting.');
+      return;
+    }
+    if (next.length > maxLen) {
+      setError(
+        `That is much longer than the current transcript (max ${maxLen} characters). Trim it down.`,
+      );
+      return;
+    }
+    if (containsProfanity(next)) {
+      // Client-side wordlist pre-check only. Authoritative AWS Comprehend
+      // confirmation runs server-side in the resolver — out of scope here,
+      // tracked under #99 / #287.
+      setError('Your correction tripped the language filter. Please revise and try again.');
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      // NOTE: `submitTranscriptRevision` accepts only (recordingId, text).
+      // The optional justification field from #93 is deferred until the
+      // backend mutation grows a justification param — see #93.
+      await submitTranscriptRevision(recordingId, next);
+      setDone(true);
+      onSubmitted();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(
+        /rate.?limit|too many|throttl/i.test(msg)
+          ? 'You have hit the correction rate limit. Please wait a bit and try again.'
+          : msg,
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }, [draft, currentTranscript, maxLen, recordingId, onSubmitted]);
+
+  const cancel = useCallback(() => {
+    const dirty = draft.trim() !== currentTranscript.trim();
+    if (dirty && !window.confirm('Discard your correction? Your changes will be lost.')) {
+      return;
+    }
+    onClose();
+  }, [draft, currentTranscript, onClose]);
+
+  if (done) {
+    return (
+      <div className={styles.success} role="status">
+        Thanks — your suggestion is up for community vote. See it in the list below.
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <p className={styles.notice}>
+        Suggest a correction. Your edit lands as a `CORRECTION` revision under community vote — it
+        does not overwrite the current transcript.
+      </p>
+      <form
+        noValidate
+        className={styles.form}
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+        aria-label="Suggest a transcript correction"
+      >
+        <div className={styles.correctPanes}>
+          <div>
+            <p className={styles.paneLabel} id={`cur-label-${recordingId}`}>
+              Current transcript
+            </p>
+            <p className={styles.currentText} aria-labelledby={`cur-label-${recordingId}`}>
+              {currentTranscript}
+            </p>
+          </div>
+          <div>
+            <Field label="Your correction" htmlFor={`correct-text-${recordingId}`}>
+              <Textarea
+                id={`correct-text-${recordingId}`}
+                rows={6}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+              />
+            </Field>
+          </div>
+        </div>
+
+        <div>
+          <p className={styles.paneLabel}>Changes</p>
+          {hasChanges(segments) ? (
+            <div className={styles.diffBox} aria-label="Diff of your changes">
+              {segments.map((seg, i) => {
+                // Stable-ish key per segment: index + op marker + length.
+                // The list is fully recomputed each render, but a more
+                // descriptive key than the bare index avoids reconciliation
+                // surprises when adjacent segments change op.
+                const mark = seg.op === 'added' ? '+' : seg.op === 'removed' ? '-' : '=';
+                const key = `${i}-${mark}-${seg.value.length}`;
+                if (seg.op === 'added') {
+                  return (
+                    <ins key={key} className={styles.diffAdded}>
+                      {seg.value}
+                    </ins>
+                  );
+                }
+                if (seg.op === 'removed') {
+                  return (
+                    <del key={key} className={styles.diffRemoved}>
+                      {seg.value}
+                    </del>
+                  );
+                }
+                return <span key={key}>{seg.value}</span>;
+              })}
+            </div>
+          ) : (
+            <p className={styles.subtle}>No changes yet — edit the text to propose a correction.</p>
+          )}
+        </div>
+
+        {error && (
+          <div className={styles.error} role="alert">
+            {error}
+          </div>
+        )}
+        <div className={styles.formActions}>
+          <Button type="button" variant="ghost" size="sm" onClick={cancel} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button type="submit" size="sm" loading={submitting} disabled={submitting}>
+            Submit correction
           </Button>
         </div>
       </form>
