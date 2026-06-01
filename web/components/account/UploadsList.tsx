@@ -222,7 +222,7 @@ function UploadRowItem({ row, canReprocess, onReprocess }: UploadRowItemProps) {
         <StatusPill status={pillStatus} />
         <div className={styles.linkRow}>
           {row.messageId && (
-            <Link className={styles.link} href={`/message?id=${encodeURIComponent(row.messageId)}`}>
+            <Link className={styles.link} href={`/messages/${encodeURIComponent(row.messageId)}`}>
               Open message →
             </Link>
           )}

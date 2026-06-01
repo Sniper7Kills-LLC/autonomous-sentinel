@@ -13,7 +13,7 @@ export function MessageCard({ message }: MessageCardProps) {
   const truncated = body.length > 320;
   const display = truncated ? body.slice(0, 320) + '…' : body;
   return (
-    <Link href={`/message?id=${encodeURIComponent(message.id)}`} className={styles.link}>
+    <Link href={`/messages/${encodeURIComponent(message.id)}`} className={styles.link}>
       <article className={styles.card} data-type={message.type}>
         <div className={styles.top}>
           <MessageTypeBadge type={message.type} />

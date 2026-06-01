@@ -1,0 +1,29 @@
+.pageHead {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-fg-faint);
+}
+
+.title {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 1.6rem;
+  letter-spacing: 0.02em;
+  color: var(--color-fg);
+  margin: 0;
+}
+
+.lede {
+  font-size: 0.95rem;
+  color: var(--color-fg-faint);
+  max-width: 70ch;
+  line-height: 1.5;
+}
