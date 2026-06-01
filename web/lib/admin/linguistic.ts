@@ -273,3 +273,69 @@ export async function deleteRule(ruleId: string): Promise<void> {
   const res = await model.delete({ id: ruleId }, USER_POOL);
   throwOnErrors(res.errors, 'deleteRule');
 }
+
+/* ------------------------------------------------------------------ *
+ * LinguisticConfig keyed-row helpers (#110)
+ *
+ * The thresholds + schemas editors persist into the existing
+ * `LinguisticConfig` model (`key` identifier, `value` json). Each
+ * surface owns a single row (`key="thresholds"` / `key="schemas"`).
+ * `value` round-trips as a plain object; AppSync stores it as JSON.
+ *
+ * Deferred (out of scope for #110):
+ *   - Server-side AuditLog diff on each update (#479).
+ *   - Atomic prompt-version activation (#572).
+ * ------------------------------------------------------------------ */
+
+type RawConfig = {
+  key: string;
+  value?: unknown;
+  promptVersion?: number | null;
+  notes?: string | null;
+};
+
+/**
+ * Read one LinguisticConfig row's `value` blob by key. Returns
+ * `undefined` when the row does not exist yet (first-time editing), so
+ * callers fall back to defaults. Admin-gated read.
+ */
+export async function getLinguisticConfig(key: string): Promise<unknown> {
+  const model = modelOps<RawConfig>('LinguisticConfig');
+  const get = (
+    model as { get?: (input: Record<string, unknown>) => Promise<RawMutResult<RawConfig>> }
+  ).get;
+  if (!get) throw new Error('LinguisticConfig.get is unavailable.');
+  const res = await get({ key, ...USER_POOL });
+  throwOnErrors(res.errors, `getLinguisticConfig(${key})`);
+  return res.data?.value;
+}
+
+/**
+ * Create-or-update one LinguisticConfig row. Tries `update` first
+ * (the row usually exists); on a "not found"-shaped failure or when
+ * `update` is unavailable, falls back to `create`. Admin-gated write.
+ *
+ * NOTE: non-atomic create-or-update (a concurrent first write could
+ * race), acceptable for a single-admin config surface; the audit-log
+ * diff that would make this observable is deferred to #479.
+ */
+export async function upsertLinguisticConfig(
+  key: string,
+  value: unknown,
+  notes?: string | null,
+): Promise<void> {
+  const model = modelOps<RawConfig>('LinguisticConfig');
+  const payload: Record<string, unknown> = { key, value };
+  if (notes !== undefined) payload.notes = notes;
+
+  if (model.update) {
+    const res = await model.update(payload, USER_POOL);
+    if (!res.errors || res.errors.length === 0) return;
+    // Row may not exist yet — fall through to create below.
+  }
+  if (!model.create) {
+    throw new Error('LinguisticConfig.create is unavailable.');
+  }
+  const res = await model.create(payload, USER_POOL);
+  throwOnErrors(res.errors, `upsertLinguisticConfig(${key})`);
+}
