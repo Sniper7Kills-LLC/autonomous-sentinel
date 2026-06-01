@@ -93,6 +93,11 @@ export function RevisionPanel({
 
       {!transcriptionFailed && (transcript ?? '').trim().length > 0 && (
         <CorrectionAffordance
+          // Key by recordingId so the affordance (and any open
+          // CorrectionForm + its draft) fully remounts when the parent
+          // re-renders for a different recording — never carries a stale
+          // draft against a new transcript.
+          key={recordingId}
           recordingId={recordingId}
           currentTranscript={(transcript ?? '').trim()}
           signedIn={signedIn}
@@ -492,21 +497,27 @@ function CorrectionForm({
           {hasChanges(segments) ? (
             <div className={styles.diffBox} aria-label="Diff of your changes">
               {segments.map((seg, i) => {
+                // Stable-ish key per segment: index + op marker + length.
+                // The list is fully recomputed each render, but a more
+                // descriptive key than the bare index avoids reconciliation
+                // surprises when adjacent segments change op.
+                const mark = seg.op === 'added' ? '+' : seg.op === 'removed' ? '-' : '=';
+                const key = `${i}-${mark}-${seg.value.length}`;
                 if (seg.op === 'added') {
                   return (
-                    <ins key={i} className={styles.diffAdded}>
+                    <ins key={key} className={styles.diffAdded}>
                       {seg.value}
                     </ins>
                   );
                 }
                 if (seg.op === 'removed') {
                   return (
-                    <del key={i} className={styles.diffRemoved}>
+                    <del key={key} className={styles.diffRemoved}>
                       {seg.value}
                     </del>
                   );
                 }
-                return <span key={i}>{seg.value}</span>;
+                return <span key={key}>{seg.value}</span>;
               })}
             </div>
           ) : (
