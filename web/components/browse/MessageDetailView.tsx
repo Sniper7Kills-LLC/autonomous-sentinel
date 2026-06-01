@@ -6,6 +6,7 @@ import { AudioPlayer } from '@/components/player/AudioPlayer';
 import { RevisionPanel } from '@/components/validation/RevisionPanel';
 import { FieldVoteAffordance } from '@/components/validation/FieldVoteAffordance';
 import { AbuseReportButton } from '@/components/abuse/AbuseReportButton';
+import { CommentsSection } from '@/components/comments/CommentsSection';
 import { useSessionState } from '@/components/account/SessionGreeting';
 import { DebugDetailsPanel } from './DebugDetailsPanel';
 import { RecordingAdminControls } from './RecordingAdminControls';
@@ -186,6 +187,8 @@ export function MessageDetailView({ messageId }: MessageDetailViewProps) {
           </div>
         )}
       </section>
+
+      <CommentsSection messageId={message.id} />
 
       <DebugDetailsPanel message={message} recordings={recordings} />
     </div>
