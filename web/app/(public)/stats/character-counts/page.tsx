@@ -9,8 +9,8 @@ export default function StatsCharacterCountsPage() {
     <>
       <PageHeader
         eyebrow="§03.B · Stats"
-        title="Character counts"
-        lede="Distribution of body lengths across all message types. The 30-character canonical ALLSTATIONS body usually dominates."
+        title="Character frequency"
+        lede="How often each character (A–Z, 0–9) appears across ALLSTATIONS message bodies — a frequency ranking of the decoded alphabet over the recent window."
       />
       <Suspense fallback={null}>
         <StatsDeepNav />

@@ -9,8 +9,8 @@ export default function StatsCodewordCountsPage() {
     <>
       <PageHeader
         eyebrow="§03.C · Stats"
-        title="Codeword counts"
-        lede="Distribution of codeword groups per message — useful for spotting outliers where the parser found more (or fewer) groups than expected."
+        title="Codeword frequency"
+        lede="How many times each distinct codeword was used across message bodies — a ranked frequency list over the recent window."
       />
       <Suspense fallback={null}>
         <StatsDeepNav />
