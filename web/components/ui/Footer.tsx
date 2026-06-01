@@ -30,6 +30,8 @@ export function Footer({ buildId = BUILD_SHA }: FooterProps) {
         <a href="#skykings">Skykings</a>
         <a href="#skybird">Skybird</a>
         <a href="#map">Propagation map</a>
+        <a href="/donate">Donate</a>
+        <a href="/support">Supporter tiers</a>
       </nav>
 
       <nav className={styles.col} aria-label="Footer resources">
