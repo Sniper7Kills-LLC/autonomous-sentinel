@@ -12,7 +12,8 @@
   --color-surface-3: #272f22;
   --color-fg: #dde1cf;
   --color-fg-muted: #8a9379;
-  --color-fg-faint: #525a44;
+  /* WCAG AA (#73): lightened from #525a44 (2.65:1) to clear 4.5:1 as text on --color-bg. */
+  --color-fg-faint: #788563;
   --color-border: #262e20;
   --color-border-strong: #3a4530;
 
@@ -25,7 +26,8 @@
   --color-info: #94a3b8;
   --color-success: #84cc16;
   --color-warn: #facc15;
-  --color-danger: #dc2626;
+  /* WCAG AA (#73): lightened from #dc2626 (3.62:1 on --color-surface) to clear 4.5:1 as text. */
+  --color-danger: #ef4444;
 
   /* Message-type stripe colors — same family, distinct hues */
   --type-skyking: #ea580c;
@@ -98,7 +100,7 @@
   --sh-1: 0 1px 0 0 rgba(0, 0, 0, 0.55);
   --sh-2: 0 6px 18px rgba(0, 0, 0, 0.5);
   --sh-glow-accent: 0 0 0 1px rgba(234, 88, 12, 0.45), 0 0 14px rgba(234, 88, 12, 0.25);
-  --sh-glow-danger: 0 0 0 1px rgba(220, 38, 38, 0.45), 0 0 14px rgba(220, 38, 38, 0.22);
+  --sh-glow-danger: 0 0 0 1px rgba(239, 68, 68, 0.45), 0 0 14px rgba(239, 68, 68, 0.22);
 
   /* --- motion ---------------------------------------------- */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -117,12 +119,15 @@
   --color-surface-2: #ddd5be;
   --color-surface-3: #cdc4a8;
   --color-fg: #1a2014;
-  --color-fg-muted: #5a6248;
-  --color-fg-faint: #8b8470;
+  /* WCAG AA (#73): darkened from #5a6248 (4.38:1 on --color-surface-2) to clear 4.5:1 as text. */
+  --color-fg-muted: #545c42;
+  /* WCAG AA (#73): darkened from #8b8470 (2.88:1) to clear 4.5:1 as text on --color-bg. */
+  --color-fg-faint: #67613f;
   --color-border: #b3a98a;
   --color-border-strong: #6b6448;
 
-  --color-accent: #c2410c;
+  /* WCAG AA (#73): darkened from #c2410c (accent-fg pair was 4.46:1) to clear 4.5:1 button text. */
+  --color-accent: #b23b0b;
   --color-accent-hover: #ea580c;
   --color-accent-fg: #f3eedd;
 
@@ -152,7 +157,7 @@
 
   --sh-1: 0 1px 0 0 rgba(0, 0, 0, 0.15);
   --sh-2: 0 4px 14px rgba(0, 0, 0, 0.12);
-  --sh-glow-accent: 0 0 0 1px rgba(194, 65, 12, 0.45), 0 0 14px rgba(194, 65, 12, 0.22);
+  --sh-glow-accent: 0 0 0 1px rgba(178, 59, 11, 0.45), 0 0 14px rgba(178, 59, 11, 0.22);
   --sh-glow-danger: 0 0 0 1px rgba(153, 27, 27, 0.45), 0 0 14px rgba(153, 27, 27, 0.22);
 
   --grid-line: rgba(26, 32, 20, 0.06);
@@ -167,11 +172,12 @@
     --color-surface-2: #ddd5be;
     --color-surface-3: #cdc4a8;
     --color-fg: #1a2014;
-    --color-fg-muted: #5a6248;
-    --color-fg-faint: #8b8470;
+    /* WCAG AA (#73): mirror of the [data-theme='light'] block. */
+    --color-fg-muted: #545c42;
+    --color-fg-faint: #67613f;
     --color-border: #b3a98a;
     --color-border-strong: #6b6448;
-    --color-accent: #c2410c;
+    --color-accent: #b23b0b;
     --color-accent-hover: #ea580c;
     --color-accent-fg: #f3eedd;
     --color-info: #475569;
@@ -267,6 +273,21 @@ a:hover {
 :focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
+}
+
+/* Reduced-motion (#73 / WCAG 2.3.3): users who ask the OS to minimise
+   motion get near-instant transitions + no scroll/animation. Kept as a
+   global guard so component-level transitions (theme toggle, popovers,
+   link colour) all honour the preference without per-component work. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* ============================================================

@@ -360,6 +360,7 @@ function DropZone({ onSelect, disabled, file }: DropZoneProps) {
         type="file"
         accept="audio/*,.wav,.mp3,.opus,.flac,.m4a,.ogg"
         className={styles.fileInput}
+        aria-label="Choose an audio file to upload"
         onChange={(e) => onSelect(e.target.files?.[0] ?? null)}
         disabled={disabled}
       />
