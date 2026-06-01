@@ -26,7 +26,7 @@ const ADMIN_SECTIONS: { href: string; label: string; ready: boolean }[] = [
   { href: '/admin/audit', label: 'Audit log', ready: true }, // #111
   { href: '/admin/transmitters', label: 'Transmitters', ready: true }, // #108
   { href: '/admin/callsigns', label: 'Callsigns', ready: false }, // #109
-  { href: '/admin/banned-regions', label: 'Banned regions', ready: false }, // #113
+  { href: '/admin/banned-regions', label: 'Banned regions', ready: true }, // #113
   { href: '/admin/playback', label: 'Playback limits', ready: false }, // #114
   { href: '/admin/reputation', label: 'Reputation formula', ready: false }, // #117
   { href: '/admin/budget', label: 'AWS budget', ready: false }, // #116
