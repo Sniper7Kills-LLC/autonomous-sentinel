@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { Map as MlMap, Marker as MlMarker } from 'maplibre-gl';
 import { loadMapData } from '@/lib/map/query';
 import { formatFrequencies, granularityLabel, type MapPoint } from '@/lib/map/points';
+import { useSpaceWeather } from '@/lib/space-weather/useSpaceWeather';
+import { formatUtcHHMM, spaceWeatherSummary } from '@/lib/space-weather/noaa';
 import styles from './PropagationMap.module.css';
 
 /**
@@ -29,9 +31,16 @@ import styles from './PropagationMap.module.css';
  * effect and tear the instance down on unmount. The pure projection
  * logic lives in `lib/map/points.ts` and is unit-tested there.
  *
- * Deferred: NOAA SFI / K-index propagation overlay → #84 (a third toggle
- * slot is reserved in the controls). Map-based lat/lon picker for the
- * transmitter editor → tie-in for #108.
+ * Propagation overlay (#84): a third toggle wires a NOAA SWPC space-weather
+ * chip (SFI + Kp + qualitative band) onto the map. NOAA's SWPC JSON is
+ * public, key-less, and CORS-enabled, so we fetch it DIRECTLY FROM THE
+ * CLIENT — no Lambda/DDB cache (the issue's server-cache proposal is a
+ * DEFERRED scale optimization, see lib/space-weather/noaa.ts). Fetching only
+ * runs while the overlay is enabled (saves NOAA quota); on failure the chip
+ * holds the last-known reading with a stale note and never blanks the map.
+ * The reading is also rendered as accessible summary text, not chip-only.
+ *
+ * Deferred: map-based lat/lon picker for the transmitter editor → #108.
  */
 
 const OSM_TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -79,7 +88,13 @@ function popupElement(p: MapPoint): HTMLElement {
   return container;
 }
 
-export function PropagationMap() {
+export interface PropagationMapProps {
+  /** When true, the NOAA propagation overlay starts enabled (e.g. from the
+   *  `?layer=propagation` permalink). */
+  initialPropagation?: boolean;
+}
+
+export function PropagationMap({ initialPropagation = false }: PropagationMapProps = {}) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MlMap | null>(null);
   const markersRef = useRef<MlMarker[]>([]);
@@ -88,6 +103,16 @@ export function PropagationMap() {
   const [status, setStatus] = useState<Status>('loading');
   const [showTransmitters, setShowTransmitters] = useState(true);
   const [showSdrs, setShowSdrs] = useState(true);
+  const [showPropagation, setShowPropagation] = useState(initialPropagation);
+
+  // NOAA fetching runs only while the overlay is on (saves NOAA quota — #84).
+  const {
+    data: weather,
+    loading: weatherLoading,
+    stale,
+  } = useSpaceWeather({
+    enabled: showPropagation,
+  });
 
   // Load the data (pure-ish — no WebGL). Runs even under jsdom.
   useEffect(() => {
@@ -235,7 +260,15 @@ export function PropagationMap() {
           <span className={`${styles.swatch} ${styles.swatchSdr}`} aria-hidden />
           Public SDRs
         </label>
-        {/* Propagation overlay (NOAA SFI / K-index) toggle reserved for #84. */}
+        <label className={styles.toggle}>
+          <input
+            type="checkbox"
+            checked={showPropagation}
+            onChange={(e) => setShowPropagation(e.target.checked)}
+          />
+          <span className={`${styles.swatch} ${styles.swatchPropagation}`} aria-hidden />
+          Propagation (NOAA)
+        </label>
       </div>
 
       <div
@@ -251,7 +284,46 @@ export function PropagationMap() {
               : 'Could not load map data. The data table below may be empty.'}
           </div>
         )}
+
+        {/* Corner space-weather chip. Visual only (aria-hidden); the same
+            data is exposed as accessible text below the map. */}
+        {showPropagation && (
+          <div className={styles.chip} aria-hidden>
+            {weather ? (
+              <>
+                <span
+                  className={styles.chipBand}
+                  style={{ background: weather.band.color }}
+                  title={weather.band.description}
+                >
+                  {weather.band.name}
+                </span>
+                <span className={styles.chipValue}>
+                  SFI {weather.sfi ?? '—'} · Kp {weather.kp ?? '—'}
+                </span>
+                {stale && (
+                  <span className={styles.chipStale}>
+                    stale, fetched {formatUtcHHMM(weather.fetchedAt)} UTC
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className={styles.chipValue}>
+                {weatherLoading ? 'Space weather…' : 'space weather unavailable'}
+              </span>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* Accessible (non-chip) form of the space-weather reading (#84). */}
+      {showPropagation && (
+        <p className={styles.summary} role="status" aria-live="polite">
+          {weatherLoading && !weather
+            ? 'Loading space weather…'
+            : spaceWeatherSummary(weather, stale)}
+        </p>
+      )}
 
       <div className={styles.tableWrap}>
         <table className={styles.table}>

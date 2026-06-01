@@ -3,10 +3,18 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import { PropagationMap } from './PropagationMap';
 import type { MapData } from '@/lib/map/query';
 import type { MapPoint } from '@/lib/map/points';
+import type { SpaceWeatherState } from '@/lib/space-weather/useSpaceWeather';
 
 const loadMapDataMock = vi.fn<() => Promise<MapData>>();
 vi.mock('@/lib/map/query', () => ({
   loadMapData: () => loadMapDataMock(),
+}));
+
+// Mock the space-weather hook so component tests stay network-free + sync.
+// The hook itself is unit-tested in lib/space-weather/useSpaceWeather.test.ts.
+const useSpaceWeatherMock = vi.fn<(opts: { enabled: boolean }) => SpaceWeatherState>();
+vi.mock('@/lib/space-weather/useSpaceWeather', () => ({
+  useSpaceWeather: (opts: { enabled: boolean }) => useSpaceWeatherMock(opts),
 }));
 
 // jsdom has no WebGL — stub the maplibre default export with no-op classes.
@@ -95,6 +103,9 @@ describe('PropagationMap', () => {
       transmitterCount: 1,
       sdrCount: 1,
     });
+    // Default: hook returns no data (overlay off scenarios don't read it).
+    useSpaceWeatherMock.mockReset();
+    useSpaceWeatherMock.mockReturnValue({ data: null, loading: false, stale: false });
   });
 
   it('renders the accessible data table with all plotted points', async () => {
@@ -187,5 +198,55 @@ describe('PropagationMap', () => {
     expect(nameCell).toBeInTheDocument();
     // Ensure content is in text, not parsed as HTML
     expect(nameCell.innerHTML).toBe('&lt;img src=x onerror="alert(1)"&gt;');
+  });
+
+  const READING = {
+    sfi: 142,
+    kp: 2,
+    band: { name: 'Quiet' as const, color: '#2e9e5b', description: 'favorable' },
+    fetchedAt: Date.UTC(2026, 5, 1, 8, 30),
+  };
+
+  it('does not fetch space weather while the overlay is off', async () => {
+    render(<PropagationMap />);
+    await screen.findByRole('table');
+    // The hook is always mounted but called with enabled:false when off.
+    expect(useSpaceWeatherMock).toHaveBeenCalledWith({ enabled: false });
+    expect(screen.queryByText(/Solar flux index/i)).not.toBeInTheDocument();
+  });
+
+  it('enables the overlay from the initialPropagation prop (permalink)', async () => {
+    useSpaceWeatherMock.mockReturnValue({ data: READING, loading: false, stale: false });
+    render(<PropagationMap initialPropagation />);
+    await screen.findByRole('table');
+    expect(useSpaceWeatherMock).toHaveBeenCalledWith({ enabled: true });
+    // Accessible summary present (non-chip text form).
+    expect(screen.getByRole('status')).toHaveTextContent(/Solar flux index 142/);
+    expect(screen.getByRole('status')).toHaveTextContent(/K-index 2/);
+    expect(screen.getByRole('status')).toHaveTextContent(/Quiet/);
+  });
+
+  it('toggling the propagation layer enables fetching and shows the chip', async () => {
+    useSpaceWeatherMock.mockReturnValue({ data: READING, loading: false, stale: false });
+    render(<PropagationMap />);
+    await screen.findByRole('table');
+    fireEvent.click(screen.getByLabelText('Propagation (NOAA)'));
+    await waitFor(() => expect(useSpaceWeatherMock).toHaveBeenCalledWith({ enabled: true }));
+    // Chip band label rendered.
+    expect(screen.getAllByText('Quiet').length).toBeGreaterThan(0);
+  });
+
+  it('shows a stale note with the last fetched UTC time when a refresh fails', async () => {
+    useSpaceWeatherMock.mockReturnValue({ data: READING, loading: false, stale: true });
+    render(<PropagationMap initialPropagation />);
+    await screen.findByRole('table');
+    expect(screen.getByRole('status')).toHaveTextContent(/stale, fetched 08:30 UTC/);
+  });
+
+  it('shows an unavailable message when no reading ever loaded', async () => {
+    useSpaceWeatherMock.mockReturnValue({ data: null, loading: false, stale: false });
+    render(<PropagationMap initialPropagation />);
+    await screen.findByRole('table');
+    expect(screen.getByRole('status')).toHaveTextContent(/Space weather unavailable/i);
   });
 });

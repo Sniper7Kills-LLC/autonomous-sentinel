@@ -1,5 +1,7 @@
 'use client';
 
+import { Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { PropagationMap } from '@/components/map/PropagationMap';
 
@@ -11,8 +13,12 @@ import { PropagationMap } from '@/components/map/PropagationMap';
  * Client component because MapLibre is browser-only (WebGL); the static
  * export still prerenders the shell + the (empty-until-fetch) table.
  *
- * Deferred: NOAA SFI / K-index overlay → #84; map-based lat/lon picker
- * for the transmitter editor → #108.
+ * NOAA SFI / K-index propagation overlay (#84) toggles on via the layer
+ * control; the `/map?layer=propagation` permalink enables it on load. The
+ * search-param read sits inside a Suspense boundary so the static export
+ * still prerenders without bailing out.
+ *
+ * Deferred: map-based lat/lon picker for the transmitter editor → #108.
  */
 export default function MapPage() {
   return (
@@ -22,7 +28,15 @@ export default function MapPage() {
         title="HF Propagation Map"
         lede="Known EAM transmitter sites and opted-in public SDR receivers. SDR locations are shown at the owner's chosen granularity and may be approximate."
       />
-      <PropagationMap />
+      <Suspense fallback={<PropagationMap />}>
+        <MapWithLayerParam />
+      </Suspense>
     </>
   );
+}
+
+function MapWithLayerParam() {
+  const params = useSearchParams();
+  const initialPropagation = params.get('layer') === 'propagation';
+  return <PropagationMap initialPropagation={initialPropagation} />;
 }
