@@ -293,7 +293,13 @@ function CommentItem({ node, messageId, callerSub, signedIn, isMod, onChanged }:
   return (
     <article className={styles.item} data-testid={`comment-${node.id}`}>
       <div className={styles.meta}>
-        <span className={styles.author}>{isDeleted ? '—' : node.authorId.slice(0, 12)}</span>
+        {isDeleted ? (
+          <span className={styles.author}>—</span>
+        ) : (
+          <a className={styles.author} href={`/users/view?id=${encodeURIComponent(node.authorId)}`}>
+            {node.authorId.slice(0, 12)}
+          </a>
+        )}
         <span>{formatTs(node.createdAt)}</span>
         {!isDeleted && wasEdited(node) && (
           <span className={styles.edited} aria-label="edited">
