@@ -81,6 +81,11 @@ jobs:
       - run: npm -w web run lint
       - run: npm -w web run typecheck
       - run: npm -w web run test
+      # `next build` (static export) is the only gate that catches
+      # export-incompatible routes — lint/typecheck/test miss them, and
+      # the failure otherwise only surfaces at Amplify deploy time
+      # (regression #607).
+      - run: npm -w web run build
 
   amplify-checks:
     needs: detect-changes
