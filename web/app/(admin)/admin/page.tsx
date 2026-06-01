@@ -42,6 +42,19 @@ export default function AdminIndexPage() {
                   </Link>
                 </div>
               </li>
+              <li className={styles.row}>
+                <div className={styles.rowBody}>
+                  <span className={styles.idMono}>Audit log</span>
+                  <span className={styles.muted}>
+                    Filterable, read-only history of every admin / mod / system action with diffs.
+                  </span>
+                </div>
+                <div className={styles.rowRight}>
+                  <Link href="/admin/audit" className={styles.link}>
+                    Open →
+                  </Link>
+                </div>
+              </li>
             </ul>
           </section>
         </div>
