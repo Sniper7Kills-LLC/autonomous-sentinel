@@ -7,6 +7,9 @@ const updateTemplateMock: Mock = vi.fn();
 const listRuleMock: Mock = vi.fn();
 const updateRuleMock: Mock = vi.fn();
 const deleteRuleMock: Mock = vi.fn();
+const getConfigMock: Mock = vi.fn();
+const createConfigMock: Mock = vi.fn();
+const updateConfigMock: Mock = vi.fn();
 
 vi.mock('@/lib/amplifyClient', () => ({
   getDataClient: () => ({
@@ -21,6 +24,11 @@ vi.mock('@/lib/amplifyClient', () => ({
         update: (...a: unknown[]): Promise<unknown> => updateRuleMock(...a),
         delete: (...a: unknown[]): Promise<unknown> => deleteRuleMock(...a),
       },
+      LinguisticConfig: {
+        get: (...a: unknown[]): Promise<unknown> => getConfigMock(...a),
+        create: (...a: unknown[]): Promise<unknown> => createConfigMock(...a),
+        update: (...a: unknown[]): Promise<unknown> => updateConfigMock(...a),
+      },
     },
   }),
 }));
@@ -32,6 +40,8 @@ import {
   listRules,
   setRuleEnabled,
   deleteRule,
+  getLinguisticConfig,
+  upsertLinguisticConfig,
   ACTIVE_PROMPT_ID,
   RULE_AUTO_ACTIVATE_THRESHOLD,
   FALLBACK_SYSTEM_PROMPT,
@@ -46,6 +56,9 @@ beforeEach(() => {
     listRuleMock,
     updateRuleMock,
     deleteRuleMock,
+    getConfigMock,
+    createConfigMock,
+    updateConfigMock,
   ].forEach((m) => m.mockReset());
 });
 
@@ -277,5 +290,55 @@ describe('constants', () => {
   it('exposes the prompt id and auto-activate threshold', () => {
     expect(ACTIVE_PROMPT_ID).toBe('linguistic-parse-bedrock');
     expect(RULE_AUTO_ACTIVATE_THRESHOLD).toBe(0.85);
+  });
+});
+
+describe('getLinguisticConfig', () => {
+  it('reads a row value by key with userPool auth', async () => {
+    getConfigMock.mockResolvedValue({ data: { key: 'thresholds', value: { SKYKING: 0.9 } } });
+    const out = await getLinguisticConfig('thresholds');
+    expect(out).toEqual({ SKYKING: 0.9 });
+    const arg = getConfigMock.mock.calls[0]![0] as Record<string, unknown>;
+    expect(arg.key).toBe('thresholds');
+    expect(arg.authMode).toBe('userPool');
+  });
+
+  it('returns undefined when the row does not exist', async () => {
+    getConfigMock.mockResolvedValue({ data: null });
+    expect(await getLinguisticConfig('schemas')).toBeUndefined();
+  });
+
+  it('throws on read errors', async () => {
+    getConfigMock.mockResolvedValue({ errors: [{ message: 'Unauthorized' }] });
+    await expect(getLinguisticConfig('thresholds')).rejects.toThrow(/Unauthorized/);
+  });
+});
+
+describe('upsertLinguisticConfig', () => {
+  it('updates an existing row with userPool auth', async () => {
+    updateConfigMock.mockResolvedValue({ data: { key: 'thresholds' } });
+    await upsertLinguisticConfig('thresholds', { SKYKING: 0.9 }, 'edit');
+    expect(createConfigMock).not.toHaveBeenCalled();
+    const [payload, opts] = updateConfigMock.mock.calls[0]! as [
+      Record<string, unknown>,
+      Record<string, unknown>,
+    ];
+    expect(payload).toEqual({ key: 'thresholds', value: { SKYKING: 0.9 }, notes: 'edit' });
+    expect(opts.authMode).toBe('userPool');
+  });
+
+  it('falls back to create when update reports an error (row missing)', async () => {
+    updateConfigMock.mockResolvedValue({ errors: [{ message: 'not found' }] });
+    createConfigMock.mockResolvedValue({ data: { key: 'schemas' } });
+    await upsertLinguisticConfig('schemas', { SKYKING: {} });
+    expect(createConfigMock).toHaveBeenCalledTimes(1);
+    const [payload] = createConfigMock.mock.calls[0]! as [Record<string, unknown>];
+    expect(payload.key).toBe('schemas');
+  });
+
+  it('throws when the create fallback also errors', async () => {
+    updateConfigMock.mockResolvedValue({ errors: [{ message: 'not found' }] });
+    createConfigMock.mockResolvedValue({ errors: [{ message: 'boom' }] });
+    await expect(upsertLinguisticConfig('schemas', {})).rejects.toThrow(/boom/);
   });
 });
