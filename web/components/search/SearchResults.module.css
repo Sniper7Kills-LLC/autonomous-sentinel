@@ -1,0 +1,86 @@
+.wrap {
+  display: grid;
+  gap: 1rem;
+}
+
+.form {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.input {
+  flex: 1;
+  font-family: var(--font-jb-mono);
+  font-size: 0.95rem;
+  padding: 0.6rem 0.85rem;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  color: var(--text-1);
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--border-accent);
+}
+
+.list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.empty {
+  padding: 2rem;
+  background: var(--surface-1);
+  border: 1px dashed var(--border-1);
+  border-radius: var(--radius-md);
+  text-align: center;
+  color: var(--text-2);
+  font-family: var(--font-jb-mono);
+  font-size: 0.85rem;
+}
+
+.loadMoreRow {
+  display: flex;
+  justify-content: center;
+  padding: 1rem 0;
+}
+
+.error {
+  padding: 1rem 1.25rem;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
+  color: var(--text-1);
+  font-family: var(--font-jb-mono);
+  font-size: 0.85rem;
+}
+
+.skeleton {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.skeletonRow {
+  height: 5.5rem;
+  background: linear-gradient(
+    90deg,
+    var(--surface-1) 0%,
+    var(--surface-2) 50%,
+    var(--surface-1) 100%
+  );
+  background-size: 200% 100%;
+  border-radius: var(--radius-md);
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}

@@ -76,17 +76,25 @@ export interface ListMessagesOptions {
   nextToken?: string | null;
 }
 
+export interface ListMessagesWithFilterOptions {
+  filter?: Record<string, unknown>;
+  pageSize?: number;
+  nextToken?: string | null;
+}
+
 /**
- * List published Messages matching the filters. Returns the next-page
- * cursor in `nextToken` when more rows are available.
- *
- * Public-facing browse — uses `iam` auth so guests get the same view
- * the Amplify Data resource grants `allow.guest().to(['read'])`.
+ * Low-level published-Message list keyed on a pre-built AppSync model
+ * filter. `listMessages` derives its filter from `MessageFilters`;
+ * search (#87) builds a richer `contains`-OR filter and feeds it here
+ * directly. Either way the same `iam` public-read path + soft-delete
+ * exclusion (baked into the caller's filter) applies.
  */
-export async function listMessages(opts: ListMessagesOptions = {}): Promise<ListResult> {
+export async function listMessagesWithFilter(
+  opts: ListMessagesWithFilterOptions = {},
+): Promise<ListResult> {
   const client = getDataClient();
   const args: RawListArgs = {
-    filter: filtersToAppSyncFilter(opts.filters ?? {}),
+    filter: opts.filter,
     limit: opts.pageSize ?? DEFAULT_PAGE_SIZE,
   };
   if (opts.nextToken) args.nextToken = opts.nextToken;
@@ -107,6 +115,21 @@ export async function listMessages(opts: ListMessagesOptions = {}): Promise<List
     items: rows.map(toDisplayMessage),
     nextToken: raw.nextToken ?? null,
   };
+}
+
+/**
+ * List published Messages matching the filters. Returns the next-page
+ * cursor in `nextToken` when more rows are available.
+ *
+ * Public-facing browse — uses `iam` auth so guests get the same view
+ * the Amplify Data resource grants `allow.guest().to(['read'])`.
+ */
+export async function listMessages(opts: ListMessagesOptions = {}): Promise<ListResult> {
+  return listMessagesWithFilter({
+    filter: filtersToAppSyncFilter(opts.filters ?? {}),
+    pageSize: opts.pageSize,
+    nextToken: opts.nextToken,
+  });
 }
 
 export async function getMessage(id: string): Promise<DisplayMessage | null> {
