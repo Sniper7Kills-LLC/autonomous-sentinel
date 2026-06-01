@@ -138,6 +138,25 @@ describe('CallsignEditor — dictionary tab', () => {
     );
   });
 
+  it('preserves a multi-word variant on an unchanged save (no silent split)', async () => {
+    render(<CallsignEditor />);
+    await waitFor(() => expect(screen.getByTestId('cs-table')).toBeInTheDocument());
+
+    const targetRow = screen.getByText('SKYKING').closest('tr');
+    if (!targetRow) throw new Error('expected the SKYKING row');
+    fireEvent.click(within(targetRow).getByRole('button', { name: 'Edit' }));
+    // The form seeds "SKY KING, SKYKING"; save without editing it.
+    expect(screen.getByLabelText('Variants')).toHaveValue('SKY KING, SKYKING');
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() =>
+      expect(updateMock).toHaveBeenCalledWith(
+        'c1',
+        expect.objectContaining({ variants: ['SKY KING', 'SKYKING'] }),
+      ),
+    );
+  });
+
   it('shows an empty state when no callsigns exist', async () => {
     listMock.mockResolvedValue([]);
     render(<CallsignEditor />);

@@ -125,16 +125,21 @@ export function toCallsignRow(r: RawRow): CallsignRow {
  * --------------------------------------------------------------------- */
 
 /**
- * Parse a comma / whitespace-separated list of callsign variants into a
- * deduped, uppercased array, preserving first-seen order. Empty tokens
- * are dropped. Variants are matched / deduped case-insensitively because
- * they are uppercased before comparison.
+ * Parse a comma / newline-separated list of callsign variants into a
+ * deduped, uppercased array, preserving first-seen order.
+ *
+ * Variants are split on COMMAS and NEWLINES only — NOT on spaces —
+ * because callsign variants are legitimately multi-word ("SKY KING",
+ * "ANY AIRBORNE COMMAND"). Each token is trimmed, internal runs of
+ * whitespace collapse to a single space, and the result is uppercased.
+ * Empty tokens are dropped; deduping is case-insensitive (values are
+ * uppercased before comparison).
  */
 export function parseVariants(raw: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const token of (raw ?? '').split(/[\s,]+/)) {
-    const t = token.trim().toUpperCase();
+  for (const token of (raw ?? '').split(/[,\n]+/)) {
+    const t = token.trim().replace(/\s+/g, ' ').toUpperCase();
     if (!t) continue;
     if (seen.has(t)) continue;
     seen.add(t);

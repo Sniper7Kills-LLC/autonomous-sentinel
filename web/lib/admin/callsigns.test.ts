@@ -20,8 +20,24 @@ describe('parseVariants', () => {
     expect(parseVariants('skyking, mainsail, foxtrot')).toEqual(['SKYKING', 'MAINSAIL', 'FOXTROT']);
   });
 
-  it('parses whitespace / mixed separators', () => {
-    expect(parseVariants('skyking mainsail\nfoxtrot')).toEqual(['SKYKING', 'MAINSAIL', 'FOXTROT']);
+  it('preserves multi-word variants (splits on comma + newline, NOT spaces)', () => {
+    expect(parseVariants('SKYKING, SKY KING, MAINSAIL')).toEqual([
+      'SKYKING',
+      'SKY KING',
+      'MAINSAIL',
+    ]);
+    expect(parseVariants('ANY AIRBORNE COMMAND, SKY KING')).toEqual([
+      'ANY AIRBORNE COMMAND',
+      'SKY KING',
+    ]);
+  });
+
+  it('parses newline-separated values', () => {
+    expect(parseVariants('skyking\nsky king\nmainsail')).toEqual([
+      'SKYKING',
+      'SKY KING',
+      'MAINSAIL',
+    ]);
     expect(parseVariants('skyking,, mainsail  ,foxtrot')).toEqual([
       'SKYKING',
       'MAINSAIL',
@@ -29,12 +45,21 @@ describe('parseVariants', () => {
     ]);
   });
 
+  it('collapses internal whitespace runs to a single space', () => {
+    expect(parseVariants('SKY   KING, ANY\tAIRBORNE  COMMAND')).toEqual([
+      'SKY KING',
+      'ANY AIRBORNE COMMAND',
+    ]);
+  });
+
   it('dedupes case-insensitively, preserving first-seen order', () => {
     expect(parseVariants('SkyKing, SKYKING, skyking, Mainsail')).toEqual(['SKYKING', 'MAINSAIL']);
+    expect(parseVariants('Sky King, SKY KING, sky  king')).toEqual(['SKY KING']);
   });
 
   it('drops empty tokens', () => {
     expect(parseVariants('  ,, skyking ,  ')).toEqual(['SKYKING']);
+    expect(parseVariants('\n\nsky king\n\n')).toEqual(['SKY KING']);
   });
 
   it('returns an empty array for blank / nullish input', () => {
@@ -48,11 +73,11 @@ describe('validateCallsignInput', () => {
   it('accepts valid input and produces a cleaned payload', () => {
     const { errors, input } = validateCallsignInput(base);
     expect(errors).toEqual({});
-    // Tokens split on whitespace + commas, uppercased, deduped:
-    // 'skyking, Sky King, MAINSAIL' → SKYKING, SKY, KING, MAINSAIL.
+    // Tokens split on comma + newline (NOT spaces), uppercased, deduped:
+    // 'skyking, Sky King, MAINSAIL' → SKYKING, SKY KING, MAINSAIL.
     expect(input).toEqual({
       normalized: 'SKYKING', // uppercased + trimmed
-      variants: ['SKYKING', 'SKY', 'KING', 'MAINSAIL'],
+      variants: ['SKYKING', 'SKY KING', 'MAINSAIL'],
       source: 'ADMIN',
       approved: true,
       notes: 'primary all-stations caller',
@@ -139,6 +164,23 @@ describe('rowToFormValues', () => {
       approved: false,
       notes: 'note',
     });
+  });
+
+  it('round-trips variants through parseVariants without splitting multi-word entries', () => {
+    const variants = ['SKYKING', 'SKY KING', 'ANY AIRBORNE COMMAND', 'MAINSAIL'];
+    const values = rowToFormValues({
+      id: 'c1',
+      normalized: 'SKYKING',
+      variants,
+      source: 'ADMIN',
+      confidence: null,
+      approved: true,
+      notes: null,
+      createdAt: null,
+      updatedAt: null,
+    });
+    // rowToFormValues → parseVariants must yield the original array.
+    expect(parseVariants(values.variants)).toEqual(variants);
   });
 
   it('defaults a null source to ADMIN and renders missing notes empty', () => {
