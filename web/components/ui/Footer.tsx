@@ -1,10 +1,18 @@
 import styles from './Footer.module.css';
 
+/**
+ * Build identifier shown in the footer. Injected at build time by
+ * next.config.mjs as `NEXT_PUBLIC_BUILD_SHA` (Amplify's `AWS_COMMIT_ID`,
+ * falling back to the local git short SHA, then `dev`). Inlined into the
+ * bundle at build, so it reflects the deployed commit.
+ */
+const BUILD_SHA = process.env.NEXT_PUBLIC_BUILD_SHA || 'dev';
+
 interface FooterProps {
   buildId?: string;
 }
 
-export function Footer({ buildId = 'preview' }: FooterProps) {
+export function Footer({ buildId = BUILD_SHA }: FooterProps) {
   const year = new Date().getUTCFullYear();
   return (
     <footer className={styles.footer}>
