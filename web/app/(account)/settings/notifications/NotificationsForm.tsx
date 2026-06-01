@@ -8,6 +8,7 @@ import {
   type NotificationPrefView,
 } from '@/lib/notifications/query';
 import { MESSAGE_TYPES, type MessageType } from '@/lib/messages/filters';
+import { playToneForType } from '@/lib/notifications/tones';
 import styles from './NotificationsForm.module.css';
 
 /**
@@ -173,21 +174,39 @@ export function NotificationsForm() {
           {MESSAGE_TYPES.map((t) => {
             const active = pref.subscribedTypes.includes(t);
             return (
-              <label
-                key={t}
-                className={`${styles.typeChip} ${active ? styles.typeChipActive : ''}`}
-              >
-                <input
-                  type="checkbox"
-                  checked={active}
-                  onChange={() => toggleType(t)}
-                  style={{ accentColor: 'var(--color-accent)' }}
-                />
-                {t}
-              </label>
+              <div key={t} className={`${styles.typeChip} ${active ? styles.typeChipActive : ''}`}>
+                <label className={styles.typeChipLabel}>
+                  <input
+                    type="checkbox"
+                    checked={active}
+                    onChange={() => toggleType(t)}
+                    style={{ accentColor: 'var(--color-accent)' }}
+                  />
+                  {t}
+                </label>
+                <button
+                  type="button"
+                  className={styles.tonePreview}
+                  aria-label={`Preview ${t} tone`}
+                  title={`Preview ${t} tone`}
+                  onClick={() => {
+                    // User gesture → satisfies browser autoplay policy. Synthesized
+                    // via Web Audio (see lib/notifications/tones.ts); never autoplays.
+                    void playToneForType(t).catch(() => {
+                      /* no audio support / blocked — preview is best-effort */
+                    });
+                  }}
+                >
+                  ▶
+                </button>
+              </div>
             );
           })}
         </div>
+        <p className={styles.caption}>
+          Each type has a distinct alert tone, synthesized in-browser. Press play to preview. Tones
+          fire on web-push notifications once push delivery ships (#129) — never recording audio.
+        </p>
       </section>
 
       <section className={styles.section}>

@@ -56,6 +56,7 @@
 .typeChip {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 0.45rem;
   padding: 0.35rem 0.6rem;
   background: var(--surface-2);
@@ -64,7 +65,41 @@
   font-family: var(--font-jb-mono);
   font-size: 0.8rem;
   color: var(--text-1);
+}
+
+.typeChipLabel {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
   cursor: pointer;
+  flex: 1 1 auto;
+}
+
+.tonePreview {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-size: 0.7rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tonePreview:hover {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.tonePreview:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
 }
 
 .typeChipActive {
