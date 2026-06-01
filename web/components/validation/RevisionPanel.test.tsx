@@ -146,4 +146,207 @@ describe('RevisionPanel', () => {
     });
     expect(await screen.findByRole('alert')).toHaveTextContent(/rate limited/i);
   });
+
+  describe('inline correction form (#93)', () => {
+    const TRANSCRIPT = 'SKYKING SKYKING DO NOT ANSWER PT3 14 AB';
+
+    function openForm() {
+      fireEvent.click(screen.getByRole('button', { name: /suggest a correction/i }));
+    }
+
+    it('offers a correction button for a successful transcript when signed in', async () => {
+      render(
+        <RevisionPanel
+          recordingId="rec-1"
+          transcriptionFailed={false}
+          signedIn={true}
+          transcript={TRANSCRIPT}
+        />,
+      );
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggest a correction/i })).toBeInTheDocument();
+      });
+    });
+
+    it('shows a sign-in prompt instead of the form when signed out', async () => {
+      render(
+        <RevisionPanel
+          recordingId="rec-1"
+          transcriptionFailed={false}
+          signedIn={false}
+          transcript={TRANSCRIPT}
+        />,
+      );
+      await waitFor(() => {
+        expect(screen.getByRole('link', { name: /sign in/i })).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('button', { name: /suggest a correction/i })).toBeNull();
+    });
+
+    it('offers no correction affordance when there is no transcript', async () => {
+      render(
+        <RevisionPanel
+          recordingId="rec-1"
+          transcriptionFailed={false}
+          signedIn={true}
+          transcript={null}
+        />,
+      );
+      await waitFor(() => {
+        expect(screen.getByText('SKYKING PT3 14 AB')).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('button', { name: /suggest a correction/i })).toBeNull();
+    });
+
+    it('opens the editor pre-filled with the current transcript and shows a diff', async () => {
+      render(
+        <RevisionPanel
+          recordingId="rec-1"
+          transcriptionFailed={false}
+          signedIn={true}
+          transcript={TRANSCRIPT}
+        />,
+      );
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggest a correction/i })).toBeInTheDocument();
+      });
+      openForm();
+      const editor = screen.getByLabelText(/your correction/i);
+      expect((editor as HTMLTextAreaElement).value).toBe(TRANSCRIPT);
+      fireEvent.change(editor, { target: { value: TRANSCRIPT.replace('14', '15') } });
+      await waitFor(() => {
+        expect(screen.getByLabelText(/diff of your changes/i)).toBeInTheDocument();
+      });
+    });
+
+    it('rejects an unchanged submission', async () => {
+      render(
+        <RevisionPanel
+          recordingId="rec-1"
+          transcriptionFailed={false}
+          signedIn={true}
+          transcript={TRANSCRIPT}
+        />,
+      );
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggest a correction/i })).toBeInTheDocument();
+      });
+      openForm();
+      fireEvent.click(screen.getByRole('button', { name: /submit correction/i }));
+      expect(await screen.findByRole('alert')).toHaveTextContent(/matches the current/i);
+      expect(submitMock).not.toHaveBeenCalled();
+    });
+
+    it('blocks submission on a client-side profanity hit', async () => {
+      render(
+        <RevisionPanel
+          recordingId="rec-1"
+          transcriptionFailed={false}
+          signedIn={true}
+          transcript={TRANSCRIPT}
+        />,
+      );
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggest a correction/i })).toBeInTheDocument();
+      });
+      openForm();
+      fireEvent.change(screen.getByLabelText(/your correction/i), {
+        target: { value: 'this is fucking wrong' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /submit correction/i }));
+      expect(await screen.findByRole('alert')).toHaveTextContent(/language filter/i);
+      expect(submitMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects text longer than 1.5x the current transcript', async () => {
+      render(
+        <RevisionPanel
+          recordingId="rec-1"
+          transcriptionFailed={false}
+          signedIn={true}
+          transcript="SHORT"
+        />,
+      );
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggest a correction/i })).toBeInTheDocument();
+      });
+      openForm();
+      fireEvent.change(screen.getByLabelText(/your correction/i), {
+        target: { value: 'WAY TOO LONG FOR FIVE CHARS' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /submit correction/i }));
+      expect(await screen.findByRole('alert')).toHaveTextContent(/max \d+ characters/i);
+      expect(submitMock).not.toHaveBeenCalled();
+    });
+
+    it('submits a correction and shows the success state', async () => {
+      submitMock.mockResolvedValueOnce({ ...baseRow, id: 'rev-9' });
+      render(
+        <RevisionPanel
+          recordingId="rec-1"
+          transcriptionFailed={false}
+          signedIn={true}
+          transcript={TRANSCRIPT}
+        />,
+      );
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggest a correction/i })).toBeInTheDocument();
+      });
+      openForm();
+      const corrected = TRANSCRIPT.replace('14', '15');
+      fireEvent.change(screen.getByLabelText(/your correction/i), {
+        target: { value: corrected },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /submit correction/i }));
+      await waitFor(() => {
+        expect(submitMock).toHaveBeenCalledWith('rec-1', corrected);
+      });
+      expect(await screen.findByRole('status')).toHaveTextContent(/up for community vote/i);
+    });
+
+    it('surfaces a friendly retry message on a rate-limit error', async () => {
+      submitMock.mockRejectedValueOnce(new Error('RateLimitExceeded: too many requests'));
+      render(
+        <RevisionPanel
+          recordingId="rec-1"
+          transcriptionFailed={false}
+          signedIn={true}
+          transcript={TRANSCRIPT}
+        />,
+      );
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggest a correction/i })).toBeInTheDocument();
+      });
+      openForm();
+      fireEvent.change(screen.getByLabelText(/your correction/i), {
+        target: { value: TRANSCRIPT.replace('14', '16') },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /submit correction/i }));
+      expect(await screen.findByRole('alert')).toHaveTextContent(/rate limit/i);
+    });
+
+    it('confirms before discarding a dirty draft on cancel', async () => {
+      const confirmSpy = vi.fn().mockReturnValue(false);
+      vi.stubGlobal('confirm', confirmSpy);
+      render(
+        <RevisionPanel
+          recordingId="rec-1"
+          transcriptionFailed={false}
+          signedIn={true}
+          transcript={TRANSCRIPT}
+        />,
+      );
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggest a correction/i })).toBeInTheDocument();
+      });
+      openForm();
+      fireEvent.change(screen.getByLabelText(/your correction/i), {
+        target: { value: TRANSCRIPT.replace('14', '17') },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+      expect(confirmSpy).toHaveBeenCalled();
+      // confirm returned false → editor stays open
+      expect(screen.getByLabelText(/your correction/i)).toBeInTheDocument();
+    });
+  });
 });
