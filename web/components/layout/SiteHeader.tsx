@@ -11,6 +11,7 @@ const NAV_ITEMS: { href: string; label: string }[] = [
   { href: '/messages', label: 'Messages' },
   { href: '/skykings', label: 'Skykings' },
   { href: '/skybird', label: 'Skybird' },
+  { href: '/map', label: 'Map' },
   { href: '/stats', label: 'Stats' },
   { href: '/portal', label: 'Portal' },
 ];
