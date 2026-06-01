@@ -189,7 +189,7 @@ export function MessageSubmitForm() {
           {isQueued
             ? 'Submitted — your message is in the moderator queue (your reputation is below the publish-now threshold).'
             : 'Submitted — your message is live, flagged for community review per the recording-less submission policy.'}{' '}
-          <Link href={`/message?id=${encodeURIComponent(result.id)}`}>View detail →</Link>
+          <Link href={`/messages/${encodeURIComponent(result.id)}`}>View detail →</Link>
         </div>
       )}
 
