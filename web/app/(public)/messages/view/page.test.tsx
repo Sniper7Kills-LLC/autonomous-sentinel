@@ -2,6 +2,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import MessageDetailRoute from './page';
 
+const searchParams = new URLSearchParams();
+vi.mock('next/navigation', async (importActual) => {
+  const actual = await importActual<Record<string, unknown>>();
+  return {
+    ...actual,
+    useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
+    useSearchParams: () => searchParams,
+    usePathname: () => '/messages/view',
+  };
+});
+
 vi.mock('@/lib/messages/query', () => ({
   getMessage: vi.fn().mockResolvedValue({
     id: 'm-1',
@@ -50,8 +61,9 @@ vi.mock('@/components/account/SessionGreeting', () => ({
   useSessionState: () => ({ loading: false, signedIn: false, username: null, sub: null }),
 }));
 
-describe('MessageDetailRoute (/messages/[id])', () => {
+describe('MessageDetailRoute (/messages/view)', () => {
   beforeEach(() => {
+    searchParams.delete('id');
     vi.stubGlobal(
       'matchMedia',
       vi.fn().mockReturnValue({
@@ -65,9 +77,14 @@ describe('MessageDetailRoute (/messages/[id])', () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it('resolves the route param and renders the message + recording list', async () => {
-    const ui = await MessageDetailRoute({ params: Promise.resolve({ id: 'm-1' }) });
-    render(ui);
+  it('shows a hint when no id is in the URL', () => {
+    render(<MessageDetailRoute />);
+    expect(screen.getByText(/no message id supplied/i)).toBeInTheDocument();
+  });
+
+  it('renders the message + recording list when id is present', async () => {
+    searchParams.set('id', 'm-1');
+    render(<MessageDetailRoute />);
     await waitFor(() => {
       expect(screen.getAllByText('MAINSAIL').length).toBeGreaterThan(0);
       expect(screen.getByText(/11\.175 MHz · USB/)).toBeInTheDocument();
@@ -75,8 +92,8 @@ describe('MessageDetailRoute (/messages/[id])', () => {
   });
 
   it('shows an audio-not-ready placeholder when webCanonicalKey is null', async () => {
-    const ui = await MessageDetailRoute({ params: Promise.resolve({ id: 'm-1' }) });
-    render(ui);
+    searchParams.set('id', 'm-1');
+    render(<MessageDetailRoute />);
     await waitFor(() => {
       expect(screen.getByLabelText('Audio not yet ready')).toBeInTheDocument();
     });
