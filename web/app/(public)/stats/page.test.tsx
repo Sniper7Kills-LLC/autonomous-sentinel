@@ -62,8 +62,8 @@ describe('StatsIndexPage', () => {
     render(<StatsIndexPage />);
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: /daily counts/i })).toBeInTheDocument();
-      expect(screen.getByRole('heading', { name: /character counts/i })).toBeInTheDocument();
-      expect(screen.getByRole('heading', { name: /codeword counts/i })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: /character frequency/i })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: /codeword frequency/i })).toBeInTheDocument();
     });
   });
 });

@@ -4,9 +4,17 @@ import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { ChartShell } from '@/components/charts/ChartShell';
 import { DailyCountChart } from '@/components/charts/DailyCountChart';
-import { HistogramChart } from '@/components/charts/HistogramChart';
+import { CharacterFrequencyChart } from '@/components/charts/CharacterFrequencyChart';
+import { CodewordFrequencyChart } from '@/components/charts/CodewordFrequencyChart';
 import { useStatsMessages } from '@/components/charts/StatsLoader';
+import type { DisplayMessage } from '@/lib/messages/types';
 import styles from './StatsSection.module.css';
+
+const allstations = (messages: DisplayMessage[]) =>
+  messages.filter((m) => m.type === 'ALLSTATIONS');
+
+const WINDOW_NOTE =
+  'Aggregated over the most-recent-N Message window (not the full historical corpus); server-side full-corpus aggregation is deferred — see #499 / #500.';
 
 const DEEP_LINKS: { href: string; label: string }[] = [
   { href: '/stats', label: 'Overview' },
@@ -51,11 +59,11 @@ export function StatsOverview() {
         <ChartShell title="Daily counts" eyebrow="§03.A" small>
           <DailyCountChart messages={messages} />
         </ChartShell>
-        <ChartShell title="Character counts" eyebrow="§03.B" small>
-          <HistogramChart messages={messages} field="characterCount" />
+        <ChartShell title="Character frequency" eyebrow="§03.B" small>
+          <CharacterFrequencyChart messages={allstations(messages)} />
         </ChartShell>
-        <ChartShell title="Codeword counts" eyebrow="§03.C" small>
-          <HistogramChart messages={messages} field="codewordCount" />
+        <ChartShell title="Codeword frequency" eyebrow="§03.C" small>
+          <CodewordFrequencyChart messages={messages} />
         </ChartShell>
       </div>
       <p className={styles.indexFootnote}>
@@ -96,11 +104,12 @@ export function StatsCharacterCounts() {
   return (
     <ChartShell
       eyebrow="§03.B"
-      title="Character-count distribution"
+      title="Character frequency"
       note={
         <>
-          ALLSTATIONS broadcasts have a canonical 30-character body; 22 and 28 also occur in-spec.
-          Off-spec lengths are flagged on the detail page.
+          How many times each character (A–Z, 0–9) appears across ALLSTATIONS message bodies in the
+          window — a per-character frequency ranking of the decoded alphabet, not a body-length
+          distribution. {WINDOW_NOTE}
         </>
       }
     >
@@ -109,7 +118,7 @@ export function StatsCharacterCounts() {
       ) : error ? (
         <ErrorBox text={error} />
       ) : (
-        <HistogramChart messages={messages} field="characterCount" />
+        <CharacterFrequencyChart messages={allstations(messages)} />
       )}
     </ChartShell>
   );
@@ -120,11 +129,12 @@ export function StatsCodewordCounts() {
   return (
     <ChartShell
       eyebrow="§03.C"
-      title="Codeword-count distribution"
+      title="Codeword frequency"
       note={
         <>
-          Codeword count is the number of pronounceable codeword groups in the body — distinct from
-          character count, which is the raw character length of the same body.
+          How many times each distinct codeword (contiguous [A-Z0-9] groups of 3+ characters) was
+          used across message bodies in the window, ranked. Not a per-message codeword-count
+          distribution. {WINDOW_NOTE}
         </>
       }
     >
@@ -133,7 +143,7 @@ export function StatsCodewordCounts() {
       ) : error ? (
         <ErrorBox text={error} />
       ) : (
-        <HistogramChart messages={messages} field="codewordCount" />
+        <CodewordFrequencyChart messages={messages} />
       )}
     </ChartShell>
   );

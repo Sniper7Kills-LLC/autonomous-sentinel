@@ -1,11 +1,15 @@
 import type { DisplayMessage } from './types';
 
 /**
- * Pure aggregation helpers consumed by the stats section charts (#80, #81, #82).
+ * Pure aggregation helpers consumed by the stats section charts.
  *
  * The Stats page fetches Messages via `listMessages` and feeds them through
  * these helpers — keeping all chart math out of React renders so the
  * transforms can be unit-tested without spinning up a DOM.
+ *
+ * Character/codeword *frequency* aggregations live in `@/lib/stats/frequency`
+ * (#499 / #500). The old per-row count histogram was removed alongside the
+ * `characterCount` / `codewordCount` field drop (#501).
  */
 
 export type DailyCountBucket = {
@@ -27,28 +31,4 @@ export function aggregateDailyCounts(
   return [...map.entries()]
     .map(([date, count]) => ({ date, count }))
     .sort((a, b) => a.date.localeCompare(b.date));
-}
-
-export type CountHistogramBucket = {
-  value: number;
-  count: number;
-};
-
-/**
- * Histogram of an integer-valued field across the Messages set. Used for
- * character-count + codeword-count distributions.
- */
-export function aggregateValueHistogram<K extends keyof DisplayMessage>(
-  messages: DisplayMessage[],
-  field: K,
-): CountHistogramBucket[] {
-  const map = new Map<number, number>();
-  for (const m of messages) {
-    const v = m[field];
-    if (typeof v !== 'number' || !Number.isFinite(v)) continue;
-    map.set(v, (map.get(v) ?? 0) + 1);
-  }
-  return [...map.entries()]
-    .map(([value, count]) => ({ value, count }))
-    .sort((a, b) => a.value - b.value);
 }
