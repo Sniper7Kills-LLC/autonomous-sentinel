@@ -28,6 +28,9 @@ export interface SpectrogramPayload {
 export interface SpectrogramStore {
   get(key: string): Promise<SpectrogramPayload | null>;
   put(key: string, value: SpectrogramPayload): Promise<void>;
+  /** Release any underlying handle (e.g. an open IndexedDB connection).
+   *  Optional — the in-memory test double has nothing to release. */
+  close?(): void;
 }
 
 /**

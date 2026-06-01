@@ -108,17 +108,25 @@ export function Spectrogram({
     // the canvas renders whenever `open` is true) so cleanup frees the exact
     // node this effect painted, not a later one.
     const canvas = canvasRef.current;
+    // Per-effect liveness flag. `cancelRef` is shared and gets reset to
+    // false the instant this effect re-runs (e.g. `recordingId` changed),
+    // which would let a prior in-flight task slip past the shared guard and
+    // paint a stale recording onto the new canvas. `stale` is local to this
+    // closure and only ever flipped true by *this* effect's cleanup, so a
+    // superseded run can never set state or paint.
+    let stale = false;
     cancelRef.current = false;
     setError(null);
     setStatus('computing');
 
     void (async () => {
+      let store: SpectrogramStore | null = null;
       try {
-        const store = await openSpectrogramStore();
+        store = await openSpectrogramStore();
         const cacheKey = spectrogramCacheKey(recordingId);
 
         const cached = store ? await store.get(cacheKey) : null;
-        if (cancelRef.current) return;
+        if (stale || cancelRef.current) return;
         if (cached) {
           paint(cached);
           setStatus('ready');
@@ -128,22 +136,29 @@ export function Spectrogram({
         const payload = await computeSpectrogram(
           webCanonicalKey,
           spectrogramBinKey,
-          () => cancelRef.current,
+          () => stale || cancelRef.current,
         );
-        if (cancelRef.current || !payload) return;
+        if (stale || cancelRef.current || !payload) return;
         paint(payload);
         if (store) await store.put(cacheKey, payload).catch(() => undefined);
+        if (stale || cancelRef.current) return;
         setStatus('ready');
       } catch (err) {
-        if (cancelRef.current) return;
+        if (stale || cancelRef.current) return;
         setError(err instanceof Error ? err.message : String(err));
         setStatus('error');
+      } finally {
+        // Release the IndexedDB connection so repeated toggles / recording
+        // switches don't accumulate open DB handles.
+        store?.close?.();
       }
     })();
 
     return () => {
-      // Cancel any in-flight compute + free the canvas backing store so a
-      // long recording's bitmap is released the moment the panel closes.
+      // Cancel any in-flight compute + mark this run superseded + free the
+      // canvas backing store so a long recording's bitmap is released the
+      // moment the panel closes or the recording changes.
+      stale = true;
       cancelRef.current = true;
       if (canvas) {
         canvas.width = 0;
@@ -252,6 +267,9 @@ async function openSpectrogramStore(): Promise<SpectrogramStore | null> {
           tx.onsuccess = () => resolve();
           tx.onerror = () => resolve();
         }),
+      // Close the connection so repeated panel toggles don't leak open DB
+      // handles. Safe to call once after the read+write completes.
+      close: () => db.close(),
     };
   } catch {
     return null;
@@ -295,7 +313,10 @@ async function computeSpectrogram(
     const buffer = await ctx.decodeAudioData(bytes);
     samples = buffer.getChannelData(0);
   } finally {
-    void ctx.close?.();
+    // Acknowledge (don't swallow silently) a close rejection — closing a
+    // throwaway decode context is best-effort and must not mask the real
+    // result/error from the decode above.
+    void ctx.close?.().catch(() => {});
   }
   if (isCancelled()) return null;
 
