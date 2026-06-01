@@ -127,9 +127,14 @@ describe('DebugDetailsPanel', () => {
     // whisper-local backend block (#593), so match all occurrences.
     expect(screen.getByText(/Transcription confidence:/)).toBeInTheDocument();
     expect(screen.getAllByText(/0\.64/).length).toBeGreaterThanOrEqual(1);
-    // Rules section with caveat label
-    await waitFor(() => expect(screen.getByText(/not a per-message link/i)).toBeInTheDocument());
-    expect(screen.getByText('SKYKING\\s+SKYKING')).toBeInTheDocument();
+    // Rules section with caveat label. Assert the caveat AND the rule
+    // pattern in one waitFor — both land in the same async rules render,
+    // so a slow CI tick must not fail the second (pattern) assertion
+    // before the rules section has fully painted (flaky web-checks fix).
+    await waitFor(() => {
+      expect(screen.getByText(/not a per-message link/i)).toBeInTheDocument();
+      expect(screen.getByText('SKYKING\\s+SKYKING')).toBeInTheDocument();
+    });
   });
 
   it('shows the panel for moderators too', async () => {
