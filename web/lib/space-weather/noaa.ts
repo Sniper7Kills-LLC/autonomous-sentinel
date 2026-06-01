@@ -28,8 +28,15 @@ export type PropagationBandName = 'Quiet' | 'Unsettled' | 'Active' | 'Storm';
 
 export interface PropagationBand {
   name: PropagationBandName;
-  /** Hex color, chosen for sufficient contrast in both light + dark themes. */
+  /** Hex band color (chip background swatch). */
   color: string;
+  /**
+   * Hex text color to render ON `color`. Chosen so the (color, textColor)
+   * pair clears WCAG AA 4.5:1 for normal text — asserted in noaa.test.ts via
+   * the shared `lib/a11y/contrast` helper. Light bands take dark text; the
+   * dark Storm band takes white.
+   */
+  textColor: string;
   /** One-line human description of conditions. */
   description: string;
 }
@@ -116,29 +123,39 @@ export function parseLatestKp(payload: Json): number | null {
   return toNumber(row['kp_index'] ?? row['estimated_kp'] ?? row['kp']);
 }
 
+/** Dark text for the light bands (Quiet/Unsettled/Active/Unknown). */
+const TEXT_DARK = '#0b0f14';
+/** White text for the dark Storm band. */
+const TEXT_LIGHT = '#ffffff';
+
 const BAND_QUIET: PropagationBand = {
   name: 'Quiet',
   color: '#2e9e5b',
+  textColor: TEXT_DARK,
   description: 'Geomagnetically quiet — HF propagation is favorable.',
 };
 const BAND_UNSETTLED: PropagationBand = {
   name: 'Unsettled',
   color: '#c8a415',
+  textColor: TEXT_DARK,
   description: 'Unsettled field — HF mostly usable, some fading possible.',
 };
 const BAND_ACTIVE: PropagationBand = {
   name: 'Active',
   color: '#d97316',
+  textColor: TEXT_DARK,
   description: 'Active field — degraded HF, expect absorption on lower bands.',
 };
 const BAND_STORM: PropagationBand = {
   name: 'Storm',
   color: '#d63d3d',
+  textColor: TEXT_LIGHT,
   description: 'Geomagnetic storm — poor HF, frequent blackouts likely.',
 };
 const BAND_UNKNOWN: PropagationBand = {
   name: 'Unsettled',
   color: '#7a8088',
+  textColor: TEXT_DARK,
   description: 'Space-weather data unavailable — conditions unknown.',
 };
 

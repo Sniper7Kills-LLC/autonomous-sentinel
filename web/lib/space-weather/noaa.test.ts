@@ -10,6 +10,7 @@ import {
   SFI_URL,
   KP_URL,
 } from './noaa';
+import { contrastRatio, AA_BODY } from '@/lib/a11y/contrast';
 
 function jsonResponse(body: unknown, ok = true, status = 200): Response {
   return {
@@ -121,6 +122,20 @@ describe('propagationBand', () => {
     ];
     const colors = new Set(names.map((b) => b.color));
     expect(colors.size).toBe(4);
+  });
+
+  it('every band text/background pair clears WCAG AA 4.5:1', () => {
+    // Cover all five band objects (the four Kp bands + the unknown band).
+    const bands = [
+      propagationBand(150, 1), // Quiet
+      propagationBand(150, 3), // Unsettled
+      propagationBand(150, 4), // Active
+      propagationBand(150, 6), // Storm
+      propagationBand(150, null), // Unknown
+    ];
+    for (const band of bands) {
+      expect(contrastRatio(band.textColor, band.color)).toBeGreaterThanOrEqual(AA_BODY);
+    }
   });
 });
 

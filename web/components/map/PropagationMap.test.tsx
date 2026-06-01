@@ -203,7 +203,12 @@ describe('PropagationMap', () => {
   const READING = {
     sfi: 142,
     kp: 2,
-    band: { name: 'Quiet' as const, color: '#2e9e5b', description: 'favorable' },
+    band: {
+      name: 'Quiet' as const,
+      color: '#2e9e5b',
+      textColor: '#0b0f14',
+      description: 'favorable',
+    },
     fetchedAt: Date.UTC(2026, 5, 1, 8, 30),
   };
 

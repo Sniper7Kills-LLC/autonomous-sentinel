@@ -293,7 +293,7 @@ export function PropagationMap({ initialPropagation = false }: PropagationMapPro
               <>
                 <span
                   className={styles.chipBand}
-                  style={{ background: weather.band.color }}
+                  style={{ background: weather.band.color, color: weather.band.textColor }}
                   title={weather.band.description}
                 >
                   {weather.band.name}

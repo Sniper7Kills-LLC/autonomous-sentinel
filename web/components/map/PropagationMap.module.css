@@ -96,10 +96,9 @@
 .chipBand {
   padding: 0.1rem 0.4rem;
   border-radius: var(--radius-sm);
-  color: #fff;
   font-weight: 700;
-  /* Dark text shadow keeps the label legible across all band colors. */
-  text-shadow: 0 1px 1px rgb(0 0 0 / 45%);
+  /* Background + text color are set inline from band.color / band.textColor;
+     the pair is verified to clear WCAG AA 4.5:1 in noaa.test.ts. */
 }
 
 .chipValue {
