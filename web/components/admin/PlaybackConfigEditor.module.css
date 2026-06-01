@@ -1,0 +1,109 @@
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  border: 1px solid var(--border, #3a3a3a);
+  border-radius: 6px;
+  padding: 1rem 1.25rem;
+}
+
+.formTitle {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.85rem;
+  align-items: start;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.label {
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.input {
+  font: inherit;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border, #3a3a3a);
+  border-radius: 4px;
+  background: var(--surface, #1b1b1b);
+  color: inherit;
+}
+
+.textarea {
+  font: inherit;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border, #3a3a3a);
+  border-radius: 4px;
+  background: var(--surface, #1b1b1b);
+  color: inherit;
+  resize: vertical;
+  min-height: 4rem;
+}
+
+.fieldError {
+  color: var(--danger, #f87171);
+  font-size: 0.75rem;
+}
+
+.hint {
+  font-size: 0.72rem;
+  opacity: 0.6;
+}
+
+.formActions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.muted {
+  opacity: 0.75;
+  font-size: 0.85rem;
+}
+
+.statusErr {
+  color: var(--danger, #f87171);
+  font-size: 0.85rem;
+}
+
+.statusOk {
+  color: var(--success, #4ade80);
+  font-size: 0.85rem;
+}
+
+.statsPlaceholder {
+  border: 1px dashed var(--border, #3a3a3a);
+  border-radius: 6px;
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.statsTitle {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.deferNote {
+  font-size: 0.78rem;
+  opacity: 0.65;
+  border-top: 1px dashed var(--border, #3a3a3a);
+  padding-top: 0.75rem;
+}
