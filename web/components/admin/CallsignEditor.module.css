@@ -1,0 +1,181 @@
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.4rem;
+  border-bottom: 1px solid var(--border, #3a3a3a);
+}
+
+.tab {
+  font: inherit;
+  font-size: 0.85rem;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: inherit;
+  opacity: 0.7;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+}
+
+.tab:hover {
+  opacity: 1;
+}
+
+.tabActive {
+  opacity: 1;
+  border-bottom-color: var(--accent, #7dd3fc);
+  font-weight: 600;
+}
+
+.sourceBadge {
+  display: inline-block;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  border: 1px solid var(--border, #3a3a3a);
+  opacity: 0.85;
+}
+
+.checkboxRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.count {
+  margin-left: auto;
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: 0.5rem 0.65rem;
+  border-bottom: 1px solid var(--border, #3a3a3a);
+  vertical-align: top;
+}
+
+.table th {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+}
+
+.rowActions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.empty {
+  opacity: 0.7;
+  padding: 1rem 0;
+}
+
+.muted {
+  opacity: 0.75;
+}
+
+.statusErr {
+  color: var(--danger, #f87171);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  border: 1px solid var(--border, #3a3a3a);
+  border-radius: 6px;
+  padding: 1rem 1.25rem;
+}
+
+.formTitle {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.85rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.label {
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.input,
+.textarea {
+  font: inherit;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border, #3a3a3a);
+  border-radius: 4px;
+  background: var(--surface, #1b1b1b);
+  color: inherit;
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 4rem;
+}
+
+.fieldError {
+  color: var(--danger, #f87171);
+  font-size: 0.75rem;
+}
+
+.hint {
+  font-size: 0.72rem;
+  opacity: 0.6;
+}
+
+.formActions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.deferNote {
+  font-size: 0.78rem;
+  opacity: 0.65;
+  border-top: 1px dashed var(--border, #3a3a3a);
+  padding-top: 0.75rem;
+}
