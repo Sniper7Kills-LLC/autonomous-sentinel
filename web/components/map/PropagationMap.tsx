@@ -44,25 +44,39 @@ const SDR_COLOR = '#21c0c0';
 
 type Status = 'loading' | 'ready' | 'error';
 
-/** Escape user/admin text before it goes into a popup's innerHTML. */
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
+/**
+ * Build popup content as a DOM node (no innerHTML injection vector).
+ * All user/admin text set via textContent, so special chars are inert.
+ */
+function popupElement(p: MapPoint): HTMLElement {
+  const container = document.createElement('div');
 
-function popupHtml(p: MapPoint): string {
-  const lines: string[] = [`<strong>${escapeHtml(p.name)}</strong>`];
+  const title = document.createElement('strong');
+  title.textContent = p.name;
+  container.appendChild(title);
+
   if (p.type === 'transmitter') {
-    if (p.meta.callsign) lines.push(`Callsign: ${escapeHtml(p.meta.callsign)}`);
-    lines.push(`Freqs: ${escapeHtml(formatFrequencies(p.meta.frequencyKhzList))}`);
+    if (p.meta.callsign) {
+      const callsignDiv = document.createElement('div');
+      callsignDiv.textContent = `Callsign: ${p.meta.callsign}`;
+      container.appendChild(callsignDiv);
+    }
+    const freqDiv = document.createElement('div');
+    freqDiv.textContent = `Freqs: ${formatFrequencies(p.meta.frequencyKhzList)}`;
+    container.appendChild(freqDiv);
   } else {
-    lines.push(`SDR &middot; ${escapeHtml(granularityLabel(p.meta.granularity))}`);
+    const sdrDiv = document.createElement('div');
+    sdrDiv.textContent = `SDR · ${granularityLabel(p.meta.granularity)}`;
+    container.appendChild(sdrDiv);
   }
-  if (p.meta.notes) lines.push(escapeHtml(p.meta.notes));
-  return lines.map((l) => `<div>${l}</div>`).join('');
+
+  if (p.meta.notes) {
+    const notesDiv = document.createElement('div');
+    notesDiv.textContent = p.meta.notes;
+    container.appendChild(notesDiv);
+  }
+
+  return container;
 }
 
 export function PropagationMap() {
@@ -159,24 +173,25 @@ export function PropagationMap() {
     if (!map) return;
     let cancelled = false;
 
+    // Initialize markers array at the start so any exception doesn't leave stale refs.
+    for (const m of markersRef.current) {
+      try {
+        m.remove();
+      } catch {
+        /* noop */
+      }
+    }
+    markersRef.current = [];
+
     void (async () => {
       const maplibre = (await import('maplibre-gl')).default;
       if (cancelled || !mapRef.current) return;
-
-      for (const m of markersRef.current) {
-        try {
-          m.remove();
-        } catch {
-          /* noop */
-        }
-      }
-      markersRef.current = [];
 
       for (const p of points) {
         if (p.type === 'transmitter' && !showTransmitters) continue;
         if (p.type === 'sdr' && !showSdrs) continue;
         try {
-          const popup = new maplibre.Popup({ offset: 12 }).setHTML(popupHtml(p));
+          const popup = new maplibre.Popup({ offset: 12 }).setDOMContent(popupElement(p));
           const marker = new maplibre.Marker({
             color: p.type === 'transmitter' ? TRANSMITTER_COLOR : SDR_COLOR,
           })

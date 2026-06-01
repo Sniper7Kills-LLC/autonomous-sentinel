@@ -31,6 +31,9 @@ vi.mock('maplibre-gl', () => {
     setHTML() {
       return this;
     }
+    setDOMContent() {
+      return this;
+    }
   }
   class FakeMarker {
     private rec: { lngLat: [number, number] | null; removed: boolean };
@@ -159,5 +162,30 @@ describe('PropagationMap', () => {
     loadMapDataMock.mockRejectedValue(new Error('boom'));
     render(<PropagationMap />);
     expect(await screen.findByText(/Could not load map data/i)).toBeInTheDocument();
+  });
+
+  it('escapes HTML injection attempts in the accessible table', async () => {
+    const maliciousPoints: MapPoint[] = [
+      {
+        type: 'transmitter',
+        id: 't-injection',
+        name: '<img src=x onerror="alert(1)">',
+        lat: 0,
+        lon: 0,
+        meta: { callsign: '";DROP--', frequencyKhzList: null, notes: "';alert(2)//" },
+      },
+    ];
+    loadMapDataMock.mockResolvedValue({
+      points: maliciousPoints,
+      transmitterCount: 1,
+      sdrCount: 0,
+    });
+    render(<PropagationMap />);
+    const table = await screen.findByRole('table');
+    // Verify malicious strings appear escaped as plain text (not as markup)
+    const nameCell = within(table).getByText('<img src=x onerror="alert(1)">');
+    expect(nameCell).toBeInTheDocument();
+    // Ensure content is in text, not parsed as HTML
+    expect(nameCell.innerHTML).toBe('&lt;img src=x onerror="alert(1)"&gt;');
   });
 });

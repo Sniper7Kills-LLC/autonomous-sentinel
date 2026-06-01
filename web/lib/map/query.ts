@@ -19,6 +19,11 @@ import { toMapPoints, type MapPoint, type RawSdrPublic, type RawTransmitter } fr
  * use `userPool`. The Amplify Gen 2 `Schema` type does not resolve under
  * eslint's monorepo-root run, so each accessor is funneled through
  * `unknown` and re-typed to the structural shape we consume.
+ *
+ * Partial-failure resilience: uses Promise.allSettled so one source failing
+ * (e.g. listSdrPublic timeout) doesn't blank the entire map. Transmitters
+ * will still render if SDRs fail and vice versa. Only if BOTH fail is an
+ * error thrown; a single failure is logged but non-fatal.
  */
 
 type RawListResult<T> = {
@@ -76,13 +81,32 @@ export interface MapData {
   sdrCount: number;
 }
 
-/** Fetch transmitters + public SDRs and project them to plottable points. */
+/** Fetch transmitters + public SDRs and project them to plottable points.
+ *  Uses Promise.allSettled so one source failing doesn't blank the entire map. */
 export async function loadMapData(): Promise<MapData> {
   const authMode = await resolveAuthMode();
-  const [transmitters, sdrs] = await Promise.all([
+  const [transmittersResult, sdrsResult] = await Promise.allSettled([
     listAllTransmitters(authMode),
     listPublicSdrs(authMode),
   ]);
+
+  const transmitters = transmittersResult.status === 'fulfilled' ? transmittersResult.value : [];
+  const sdrs = sdrsResult.status === 'fulfilled' ? sdrsResult.value : [];
+
+  // Log failures but don't throw unless both sources fail.
+  if (transmittersResult.status === 'rejected') {
+    console.warn('Failed to load transmitters:', transmittersResult.reason);
+  }
+  if (sdrsResult.status === 'rejected') {
+    console.warn('Failed to load SDRs:', sdrsResult.reason);
+  }
+
+  if (transmittersResult.status === 'rejected' && sdrsResult.status === 'rejected') {
+    throw new Error(
+      `Map data sources failed: transmitters (${transmittersResult.reason}), SDRs (${sdrsResult.reason})`,
+    );
+  }
+
   const points = toMapPoints(transmitters, sdrs);
   return {
     points,
