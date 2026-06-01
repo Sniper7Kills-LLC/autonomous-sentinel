@@ -47,6 +47,7 @@ import { BannedRegionPage } from './models/banned-region-page';
 import { LinguisticConfig } from './models/linguistic-config';
 import { ReputationConfig } from './models/reputation-config';
 import { PlaybackConfig } from './models/playback-config';
+import { BudgetConfig } from './models/budget-config';
 import { LinguisticRule } from './models/linguistic-rule';
 import { LinguisticPromptTemplate } from './models/linguistic-prompt-template';
 import {
@@ -95,6 +96,7 @@ export const schema = a
     LinguisticConfig,
     ReputationConfig,
     PlaybackConfig,
+    BudgetConfig,
     LinguisticRule,
     LinguisticPromptTemplate,
     BannedRegionPage,
