@@ -49,6 +49,8 @@ import { ReputationConfig } from './models/reputation-config';
 import { PlaybackConfig } from './models/playback-config';
 import { BudgetConfig } from './models/budget-config';
 import { CostSnapshot, runCostSnapshotNow } from './models/cost-snapshot';
+import { dlqAdmin } from '../functions/dlqAdmin/resource';
+import { listDlqMessages, requeueDlqMessage, dropDlqMessage } from './models/dlq-admin';
 import { RevenueSnapshot } from './models/revenue-snapshot';
 import { LinguisticRule } from './models/linguistic-rule';
 import { LinguisticPromptTemplate } from './models/linguistic-prompt-template';
@@ -178,6 +180,14 @@ export const schema = a
     // so it never enters the FunctionDirectiveStack — no
     // FunctionDirectiveStack↔data circular dependency.
     runCostSnapshotNow,
+
+    // Admin DLQ + manual reprocess (#107). All three resolved by the
+    // dlqAdmin Lambda; admin-only. The Lambda peeks/sends/deletes on the
+    // neutral PipelineQueuesStack queues (one-way edge, no CFN cycle) and
+    // writes AuditLog + Recording via the Amplify Data client.
+    listDlqMessages,
+    requeueDlqMessage,
+    dropDlqMessage,
   })
   .authorization((allow) => [
     // Schema-level Lambda access grants.
@@ -229,6 +239,10 @@ export const schema = a
     // scopes keep room for a future switch to the Amplify Data
     // client without re-touching the schema-level grant.
     allow.resource(notificationPreferenceMutations).to(['query', 'mutate']),
+    // dlqAdmin marks a dropped recording terminally FAILED + writes the
+    // DLQ_REQUEUE / DLQ_DROP audit rows through the Amplify Data client
+    // (#107). SQS access is granted directly in backend.ts, not here.
+    allow.resource(dlqAdmin).to(['query', 'mutate']),
   ]);
 
 export type Schema = ClientSchema<typeof schema>;

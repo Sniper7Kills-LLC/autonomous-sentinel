@@ -46,6 +46,7 @@ import { fieldVoteOrphanJanitor } from './functions/fieldVoteOrphanJanitor/resou
 import { deployBadge } from './functions/deployBadge/resource';
 import { costSnapshotWorker } from './functions/costSnapshotWorker/resource';
 import { costSnapshotTrigger } from './functions/costSnapshotTrigger/resource';
+import { dlqAdmin } from './functions/dlqAdmin/resource';
 import { stripeRevenueWorker } from './functions/stripeRevenueWorker/resource';
 import { attachBudgetAlarms, attachBudgetThrottleAction, readBudgetConfig } from './budgets';
 import { applyCognitoTokenValidity } from './cognito-token-validity';
@@ -86,6 +87,7 @@ const backend = defineBackend({
   deployBadge,
   costSnapshotWorker,
   costSnapshotTrigger,
+  dlqAdmin,
   stripeRevenueWorker,
 });
 
@@ -664,6 +666,36 @@ backend.addOutput({
     linguisticQueueUrl: pipelineQueues.linguistic.main.queueUrl,
     linguisticDlqUrl: pipelineQueues.linguistic.dlq.queueUrl,
   },
+});
+
+// Admin DLQ + manual-reprocess resolver wiring (#107).
+//
+// `dlqAdmin` is the AppSync resolver behind `listDlqMessages` /
+// `requeueDlqMessage` / `dropDlqMessage`. It lives in the data stack
+// (resourceGroupName:'data'); these grants reference the neutral
+// `PipelineQueuesStack` queues only — a one-way function → queue-stack
+// edge that does NOT close a CloudFormation cycle (the queue stack has
+// no outgoing edges). AuditLog + Recording writes flow through the
+// Amplify Data client via the schema-level `allow.resource(dlqAdmin)`
+// grant in data/resource.ts, so no cross-stack DDB table ARN is imported
+// here.
+//
+// Per stage:
+//   - DLQ: grantConsumeMessages → ReceiveMessage (peek) + DeleteMessage
+//     (requeue/drop) + GetQueueAttributes.
+//   - primary queue: grantSendMessages → requeue re-enqueue.
+const dlqAdminLambda = backend.dlqAdmin.resources.lambda as LambdaFunction;
+const dlqStageEnv: Record<keyof typeof pipelineQueues, { main: string; dlq: string }> = {
+  preprocess: { main: 'PREPROCESS_QUEUE_URL', dlq: 'PREPROCESS_DLQ_URL' },
+  transcribe: { main: 'TRANSCRIBE_QUEUE_URL', dlq: 'TRANSCRIBE_DLQ_URL' },
+  linguistic: { main: 'LINGUISTIC_QUEUE_URL', dlq: 'LINGUISTIC_DLQ_URL' },
+};
+(Object.keys(dlqStageEnv) as (keyof typeof pipelineQueues)[]).forEach((stage) => {
+  const { main, dlq } = pipelineQueues[stage];
+  dlqAdminLambda.addEnvironment(dlqStageEnv[stage].main, main.queueUrl);
+  dlqAdminLambda.addEnvironment(dlqStageEnv[stage].dlq, dlq.queueUrl);
+  dlq.grantConsumeMessages(dlqAdminLambda);
+  main.grantSendMessages(dlqAdminLambda);
 });
 
 // Per-Lambda reserved-concurrency caps (#68). Bounds the worst-

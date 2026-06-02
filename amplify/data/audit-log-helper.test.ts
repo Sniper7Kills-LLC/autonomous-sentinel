@@ -388,8 +388,9 @@ describe('audit helper — every action enum value works', () => {
     // (MESSAGE_SUBMIT_RECORDINGLESS) + #505 (RECORDING_REPROCESS) + #566
     // (RECORDING_REPARSE).
     // Source of truth is `amplify/data/models/audit-log.ts`.
-    expect(AUDIT_ACTIONS).toHaveLength(27);
-    expect(new Set(AUDIT_ACTIONS).size).toBe(27);
+    // + #107 (DLQ_REQUEUE + DLQ_DROP) → 29.
+    expect(AUDIT_ACTIONS).toHaveLength(29);
+    expect(new Set(AUDIT_ACTIONS).size).toBe(29);
   });
 
   it('exports every value defined on the AuditLog.action enum', () => {
@@ -405,6 +406,8 @@ describe('audit helper — every action enum value works', () => {
         'RECORDING_RESTORE',
         'RECORDING_REPROCESS',
         'RECORDING_REPARSE',
+        'DLQ_REQUEUE',
+        'DLQ_DROP',
         'COMMENT_DELETE',
         'USER_BAN',
         'USER_UNBAN',
