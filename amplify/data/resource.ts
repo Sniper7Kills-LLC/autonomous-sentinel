@@ -48,7 +48,7 @@ import { LinguisticConfig } from './models/linguistic-config';
 import { ReputationConfig } from './models/reputation-config';
 import { PlaybackConfig } from './models/playback-config';
 import { BudgetConfig } from './models/budget-config';
-import { CostSnapshot, runCostSnapshotNow } from './models/cost-snapshot';
+import { CostSnapshot } from './models/cost-snapshot';
 import { RevenueSnapshot } from './models/revenue-snapshot';
 import { LinguisticRule } from './models/linguistic-rule';
 import { LinguisticPromptTemplate } from './models/linguistic-prompt-template';
@@ -172,11 +172,9 @@ export const schema = a
     getMyNotificationPreference,
     setNotificationPreference,
 
-    // Admin on-demand cost-snapshot sync (#644) — bound directly to the
-    // existing costSnapshotWorker Lambda (no trigger Lambda, no SQS, no
-    // second EventBridge rule). The worker self-detects EventBridge cron vs
-    // AppSync mutation and returns a summary only on the mutation path.
-    runCostSnapshotNow,
+    // On-demand cost-snapshot sync is deferred to an SQS-based design (#644):
+    // the costSnapshotWorker can't be both an AppSync resolver and a cron
+    // target in this stack without a FunctionDirectiveStack↔data circular dep.
   })
   .authorization((allow) => [
     // Schema-level Lambda access grants.
