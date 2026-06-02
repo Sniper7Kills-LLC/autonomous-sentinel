@@ -75,21 +75,23 @@ export function request(ctx) {
 
   /** @type {Record<string, string>} */
   const expressionNames = {
-    '#voterId': 'voterId',
     '#value': 'value',
     '#weightAtVoteTime': 'weightAtVoteTime',
   };
   /** @type {Record<string, { S?: string; N?: string }>} */
   const expressionValues = {
-    ':voterId': { S: voterId },
     ':value': { S: value },
     // Template literal instead of `String(liveWeight)` — APPSYNC_JS
     // rejects calls to the `String` global constructor (#323).
     ':weightAtVoteTime': { N: `${liveWeight}` },
   };
 
+  // `voterId` (the RANGE half of the composite PK `(revisionId, voterId)`)
+  // is deliberately NOT in this SET: DynamoDB rejects an UpdateExpression
+  // that touches a key attribute. Both key halves are written automatically
+  // from the `key` parameter on upsert. Including voterId here made every
+  // castRevisionVote fail (#663).
   const setClauses = [
-    '#voterId = if_not_exists(#voterId, :voterId)',
     '#weightAtVoteTime = if_not_exists(#weightAtVoteTime, :weightAtVoteTime)',
     '#value = :value',
   ];
@@ -112,5 +114,9 @@ export function request(ctx) {
  * @param {CastRevisionVoteContext} ctx
  */
 export function response(ctx) {
+  // Surface a data-source error instead of swallowing it (#663).
+  if (ctx.error) {
+    util.error(ctx.error.message, ctx.error.type);
+  }
   return ctx.result;
 }

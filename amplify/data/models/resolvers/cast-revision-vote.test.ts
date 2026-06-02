@@ -39,9 +39,16 @@ describe('castRevisionVote request resolver', () => {
     expect(op.key.voterId?.S).toBe('sub-voter-1');
   });
 
-  it('pins voterId via if_not_exists so re-casts never re-stamp it', () => {
+  it('does NOT set voterId in the update expression (it is a key attribute, #663)', () => {
     const op = request(ctxFor({ revisionId: 'rev-1', value: 'UP' }));
-    expect(op.update.expression).toMatch(/#voterId = if_not_exists/);
+    // voterId is the RANGE half of the composite PK — DynamoDB rejects
+    // setting a key attribute in an UpdateExpression. It is written from
+    // the `key` parameter on upsert instead.
+    expect(op.update.expression).not.toMatch(/#voterId/);
+    expect(op.update.expressionValues[':voterId']).toBeUndefined();
+    expect(op.update.expressionNames['#voterId']).toBeUndefined();
+    // ...but it IS still part of the key.
+    expect(op.key.voterId?.S).toBe('sub-voter-1');
   });
 
   it('overwrites value on every call (re-casts flip UP / DOWN)', () => {
@@ -52,7 +59,7 @@ describe('castRevisionVote request resolver', () => {
 
   it('derives voterId from ctx.identity.sub (sub-as-id, #259)', () => {
     const op = request(ctxFor({ revisionId: 'rev-7', value: 'UP' }, 'sub-voter-from-jwt'));
-    expect(op.update.expressionValues[':voterId']?.S).toBe('sub-voter-from-jwt');
+    // voterId flows into the key (not the SET expression — see #663 above).
     expect(op.key.voterId?.S).toBe('sub-voter-from-jwt');
   });
 
@@ -127,5 +134,14 @@ describe('castRevisionVote response resolver', () => {
     };
     const result = response(ctxFor({ revisionId: 'rev-1', value: 'UP' }, 'sub-voter-1', row));
     expect(result).toEqual(row);
+  });
+
+  it('surfaces a data-source error instead of swallowing it (#663)', () => {
+    const ctx = {
+      arguments: { revisionId: 'rev-1', value: 'UP' },
+      identity: { sub: 'sub-voter-1' },
+      error: { message: 'Cannot update attribute voterId', type: 'DynamoDB:ValidationException' },
+    } as unknown as CastRevisionVoteContext;
+    expect(() => response(ctx)).toThrow(/Cannot update attribute voterId/);
   });
 });

@@ -99,7 +99,6 @@ export function request(ctx) {
 
   /** @type {Record<string, string>} */
   const expressionNames = {
-    '#fieldKey': 'fieldKey',
     '#messageId': 'messageId',
     '#field': 'field',
     '#voterId': 'voterId',
@@ -110,7 +109,6 @@ export function request(ctx) {
   };
   /** @type {Record<string, { S?: string; N?: string }>} */
   const expressionValues = {
-    ':fieldKey': { S: fieldKey },
     ':messageId': { S: messageId },
     ':field': { S: field },
     ':voterId': { S: voterId },
@@ -123,8 +121,13 @@ export function request(ctx) {
 
   // Natural key + weight snapshot pinned with `if_not_exists` so re-casts
   // never restamp them; `value` + `lastCastAt` are mutable on every call.
+  //
+  // `fieldKey` (the table HASH key) is deliberately NOT in this SET: DynamoDB
+  // rejects an UpdateExpression that touches a key attribute
+  // ("Cannot update attribute fieldKey. This attribute is part of the key").
+  // On an upsert the key is written automatically from the `key` parameter
+  // below. Including it here made every castFieldVote fail (#663).
   const setClauses = [
-    '#fieldKey = if_not_exists(#fieldKey, :fieldKey)',
     '#messageId = if_not_exists(#messageId, :messageId)',
     '#field = if_not_exists(#field, :field)',
     '#voterId = if_not_exists(#voterId, :voterId)',
@@ -149,5 +152,11 @@ export function request(ctx) {
  * @param {CastFieldVoteContext} ctx
  */
 export function response(ctx) {
+  // Surface a data-source error instead of swallowing it. Without this, a
+  // failed UpdateItem returned `ctx.result = null` with NO GraphQL error,
+  // hiding the #663 key-in-SET ValidationException for a long time.
+  if (ctx.error) {
+    util.error(ctx.error.message, ctx.error.type);
+  }
   return ctx.result;
 }

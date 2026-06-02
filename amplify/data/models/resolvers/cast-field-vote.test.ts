@@ -50,10 +50,14 @@ describe('castFieldVote request resolver', () => {
       ctxFor({ messageId: 'msg-abc', field: 'TYPE', value: 'SKYKING' }, 'sub-voter-9'),
     );
 
-    // The composite key column itself must be persisted on first write.
-    expect(op.update.expression).toMatch(/#fieldKey = if_not_exists/);
-    // messageId / field / voterId are pinned on first write but never
-    // overwritten — the natural key components must stay stable.
+    // `fieldKey` is the table HASH key — DynamoDB rejects setting a key
+    // attribute in an UpdateExpression, so it MUST NOT appear in SET (#663).
+    // It is written from the `key` parameter on upsert instead.
+    expect(op.update.expression).not.toMatch(/#fieldKey/);
+    expect(op.update.expressionValues[':fieldKey']).toBeUndefined();
+    expect(op.update.expressionNames['#fieldKey']).toBeUndefined();
+    // messageId / field / voterId are NON-key columns, pinned on first write
+    // but never overwritten — the natural key components must stay stable.
     expect(op.update.expression).toMatch(/#messageId = if_not_exists/);
     expect(op.update.expression).toMatch(/#field = if_not_exists/);
     expect(op.update.expression).toMatch(/#voterId = if_not_exists/);
@@ -64,7 +68,8 @@ describe('castFieldVote request resolver', () => {
     expect(op.update.expressionValues[':field']?.S).toBe('TYPE');
     expect(op.update.expressionValues[':voterId']?.S).toBe('sub-voter-9');
     expect(op.update.expressionValues[':value']?.S).toBe('SKYKING');
-    expect(op.update.expressionValues[':fieldKey']?.S).toBe('msg-abc#TYPE#sub-voter-9');
+    // The key is still synthesised + supplied via the key param.
+    expect(op.key.fieldKey?.S).toBe('msg-abc#TYPE#sub-voter-9');
   });
 
   it('derives voterId from ctx.identity.sub (sub-as-id, #259)', () => {
@@ -153,5 +158,14 @@ describe('castFieldVote response resolver', () => {
       ctxFor({ messageId: 'msg-1', field: 'SENDER', value: 'SKYKING' }, 'sub-voter-1', row),
     );
     expect(result).toEqual(row);
+  });
+
+  it('surfaces a data-source error instead of swallowing it (#663)', () => {
+    const ctx = {
+      arguments: { messageId: 'msg-1', field: 'SENDER', value: 'X' },
+      identity: { sub: 'sub-voter-1' },
+      error: { message: 'Cannot update attribute fieldKey', type: 'DynamoDB:ValidationException' },
+    } as unknown as CastFieldVoteContext;
+    expect(() => response(ctx)).toThrow(/Cannot update attribute fieldKey/);
   });
 });
