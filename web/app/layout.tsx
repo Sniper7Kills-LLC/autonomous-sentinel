@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Atkinson_Hyperlegible, JetBrains_Mono } from 'next/font/google';
 import { ThemeProvider, NO_FLASH_SCRIPT } from '../components/theme/ThemeProvider';
 import './globals.css';
@@ -27,6 +27,10 @@ export const metadata: Metadata = {
     title: 'Autonomous Sentinel',
     statusBarStyle: 'black-translucent',
   },
+};
+
+// Next 15 requires themeColor in the viewport export, not metadata.
+export const viewport: Viewport = {
   themeColor: '#0b0f14',
 };
 
