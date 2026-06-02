@@ -9,6 +9,13 @@ type GateState = 'checking' | 'allowed' | 'denied';
 
 interface AdminGateProps {
   children: ReactNode;
+  /**
+   * Optional one-line description of the gated area, shown in the denial
+   * notice. Defaults to a generic message so the gate reads correctly on
+   * any admin page (the hardcoded "Linguistic Logic" text was wrong
+   * everywhere except that one page).
+   */
+  description?: string;
 }
 
 /**
@@ -20,7 +27,7 @@ interface AdminGateProps {
  * server-side, so this only decides what to render. Errors fetching the
  * session are treated as denied.
  */
-export function AdminGate({ children }: AdminGateProps) {
+export function AdminGate({ children, description }: AdminGateProps) {
   const [state, setState] = useState<GateState>('checking');
 
   useEffect(() => {
@@ -51,7 +58,7 @@ export function AdminGate({ children }: AdminGateProps) {
       <div className={styles.denied} role="alert" data-testid="admin-denied">
         <p className={styles.deniedTitle}>Admin access required</p>
         <p className={styles.muted}>
-          This area manages the Linguistic Logic configuration and is restricted to administrators.
+          {description ?? 'This area is restricted to administrators.'}
         </p>
         <p className={styles.muted}>
           <Link href="/" className={styles.link}>
