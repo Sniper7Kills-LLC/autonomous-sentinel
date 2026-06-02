@@ -262,10 +262,43 @@ export async function fetchCostSnapshots(fromDate: string): Promise<CostSnapshot
   return out;
 }
 
-// Admin on-demand cost-sync (`runCostSnapshotNow`) was removed — the
-// EventBridge trigger reintroduced a CFN circular dependency. On-demand
-// sync is deferred to the SQS-based follow-up (#644); the daily cron
-// keeps the snapshots fresh.
+/** Summary the `runCostSnapshotNow` mutation returns to the admin UI. */
+export interface CostSyncResult {
+  snapshotDate: string;
+  rowsWritten: number;
+  totalUsd: number;
+}
+
+/**
+ * Admin on-demand cost-snapshot sync (#644).
+ *
+ * Invokes the `runCostSnapshotNow` AppSync mutation, which is bound
+ * directly to the `costSnapshotWorker` Lambda (no trigger Lambda / SQS /
+ * second EventBridge rule). The worker runs its three-source snapshot
+ * synchronously and returns a `{ snapshotDate, rowsWritten, totalUsd }`
+ * summary. Group-gated to `admin` server-side, so it must use the Cognito
+ * `userPool` token (the default guest/iam auth returns Unauthorized).
+ */
+export async function runCostSnapshotNow(): Promise<CostSyncResult> {
+  const client = getDataClient();
+  const mutateFn = client.mutations.runCostSnapshotNow as unknown as (
+    input: Record<string, never>,
+    options: { authMode: 'userPool' },
+  ) => Promise<{ data?: unknown; errors?: { message: string }[] | null }>;
+
+  const res = await mutateFn({}, { authMode: 'userPool' });
+  if (res.errors?.length) {
+    throw new Error(res.errors.map((e) => e.message).join('; '));
+  }
+
+  const raw: unknown = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+  const obj = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+  return {
+    snapshotDate: typeof obj.snapshotDate === 'string' ? obj.snapshotDate : '',
+    rowsWritten: num(obj.rowsWritten),
+    totalUsd: num(obj.totalUsd),
+  };
+}
 
 /**
  * Page through RevenueSnapshot rows. Always uses `userPool` — these
