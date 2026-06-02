@@ -41,6 +41,7 @@ import { notificationPreferenceMutations } from './functions/notificationPrefere
 import { listAuditLogPublic } from './functions/listAuditLogPublic/resource';
 import { legacyClaimWorker } from './functions/legacyClaimWorker/resource';
 import { linguisticConfigStream } from './functions/linguisticConfigStream/resource';
+import { revisionVoteScoreStream } from './functions/revisionVoteScoreStream/resource';
 import { legacyClaimReplaySweeper } from './functions/legacyClaimReplaySweeper/resource';
 import { fieldVoteOrphanJanitor } from './functions/fieldVoteOrphanJanitor/resource';
 import { deployBadge } from './functions/deployBadge/resource';
@@ -84,6 +85,7 @@ const backend = defineBackend({
   legacyClaimReplaySweeper,
   fieldVoteOrphanJanitor,
   linguisticConfigStream,
+  revisionVoteScoreStream,
   deployBadge,
   costSnapshotWorker,
   costSnapshotTrigger,
@@ -1205,6 +1207,84 @@ backend.addOutput({
     linguisticReprocessDlqUrl: reprocessDlq.queueUrl,
   },
 });
+
+// RevisionVote → voteScore recompute stream (#653).
+//
+// A DynamoDB stream on the RevisionVote table drives the
+// `revisionVoteScoreStream` Lambda: on every vote insert/modify/remove it
+// Queries the affected revision's votes (by the `revisionId` PK) and writes
+// the summed `TranscriptRevision.voteScore` back via the Amplify Data IAM
+// client (granted by `allow.resource(revisionVoteScoreStream)`).
+//
+// Same circular-dependency shape as `linguisticConfigStream` (#317): the
+// Lambda is `resourceGroupName: 'data'`, so the table-stream → Lambda edge
+// stays inside the data stack. The only extra grant is a `dynamodb:Query`
+// on the RevisionVote table itself (intra-data-stack, no cross-stack ARN).
+const revisionVoteScoreStreamLambda = backend.revisionVoteScoreStream.resources
+  .lambda as LambdaFunction;
+const revisionVoteTable = backend.data.resources.tables['RevisionVote'];
+if (!revisionVoteTable) {
+  throw new Error('backend: RevisionVote table not found on data resources');
+}
+const revisionVoteCfnTable =
+  backend.data.resources.cfnResources.amplifyDynamoDbTables['RevisionVote'];
+if (!revisionVoteCfnTable) {
+  throw new Error('backend: RevisionVote CFN table wrapper not found on data resources');
+}
+revisionVoteScoreStreamLambda.addEnvironment(
+  'REVISION_VOTE_TABLE_NAME',
+  revisionVoteTable.tableName,
+);
+// Query the base table by the `revisionId` partition key to recompute a
+// revision's score (no Scan — cost scales per revision, not per table).
+revisionVoteScoreStreamLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:Query'],
+    resources: [revisionVoteTable.tableArn, `${revisionVoteTable.tableArn}/index/*`],
+  }),
+);
+revisionVoteCfnTable.streamSpecification = {
+  streamViewType: StreamViewType.KEYS_ONLY,
+};
+const revisionVoteStreamArn = revisionVoteTable.tableStreamArn;
+if (!revisionVoteStreamArn) {
+  throw new Error(
+    'backend: RevisionVote table stream ARN unavailable after enabling streamSpecification',
+  );
+}
+const revisionVoteStreamReadPolicy = new Policy(
+  Stack.of(revisionVoteTable),
+  'RevisionVoteStreamReadPolicy',
+  {
+    statements: [
+      new PolicyStatement({
+        actions: [
+          'dynamodb:DescribeStream',
+          'dynamodb:GetRecords',
+          'dynamodb:GetShardIterator',
+          'dynamodb:ListStreams',
+        ],
+        resources: [revisionVoteStreamArn],
+      }),
+    ],
+  },
+);
+revisionVoteScoreStreamLambda.role?.attachInlinePolicy(revisionVoteStreamReadPolicy);
+const revisionVoteStreamMapping = new EventSourceMapping(
+  Stack.of(revisionVoteTable),
+  'RevisionVoteStreamMapping',
+  {
+    target: revisionVoteScoreStreamLambda,
+    eventSourceArn: revisionVoteStreamArn,
+    startingPosition: StartingPosition.LATEST,
+    // Batch a few votes per invoke — recompute is idempotent + keyed by
+    // revisionId, so batching just dedupes work within a window.
+    batchSize: 10,
+    maxBatchingWindow: Duration.seconds(5),
+    retryAttempts: 3,
+  },
+);
+revisionVoteStreamMapping.node.addDependency(revisionVoteStreamReadPolicy);
 
 // Amazon Transcribe backend (c) + async finalizer (#585, epic #582).
 //
