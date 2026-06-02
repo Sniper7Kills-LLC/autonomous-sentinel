@@ -23,6 +23,7 @@ const ADMIN_SECTIONS: { href: string; label: string; ready: boolean }[] = [
   { href: '/admin/linguistic', label: 'Linguistic Logic', ready: true },
   { href: '/admin/dlq', label: 'DLQ + reprocess', ready: true }, // #107
   { href: '/admin/moderation', label: 'Moderation queue', ready: true }, // #118
+  { href: '/admin/bans', label: 'Ban management', ready: true }, // #112
   { href: '/admin/audit', label: 'Audit log', ready: true }, // #111
   { href: '/admin/transmitters', label: 'Transmitters', ready: true }, // #108
   { href: '/admin/callsigns', label: 'Callsigns', ready: true }, // #109

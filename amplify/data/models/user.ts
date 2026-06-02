@@ -173,6 +173,25 @@ export const banUser = a
   .handler(a.handler.function(userMutations));
 
 /**
+ * `unbanUser` — admin clears the ban fields on a target row (#112).
+ *
+ * Inverse of `banUser`: sets `bannedAt = null`, `bannedReason = null`,
+ * `bannedById = null`. Emits a `USER_UNBAN` AuditLog entry (the action
+ * already exists on the AuditLog enum). Idempotent — un-banning a row
+ * that is not banned returns it untouched + writes no audit. Returns the
+ * post-mutation User row.
+ */
+export const unbanUser = a
+  .mutation()
+  .arguments({
+    targetCognitoSub: a.string().required(),
+    reason: a.string(),
+  })
+  .returns(a.ref('User'))
+  .authorization((allow) => allow.group('admin'))
+  .handler(a.handler.function(userMutations));
+
+/**
  * `getUserPublic` — PII-filtered wrapper around GetItem (issue #248).
  *
  * Public profile pages hit this for guest + authenticated callers. The

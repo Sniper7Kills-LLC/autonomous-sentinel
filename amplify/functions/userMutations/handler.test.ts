@@ -373,7 +373,9 @@ describe('userMutations handler — selfDelete', () => {
       const event = makeEvent({ fieldName: 'selfDelete', arguments: {} });
       await handler(event, {} as Context, () => undefined);
 
-      const auditCalls = auditSpy.mock.calls.map((c) => (c as unknown[])[1] as Record<string, unknown>);
+      const auditCalls = auditSpy.mock.calls.map(
+        (c) => (c as unknown[])[1] as Record<string, unknown>,
+      );
       const sdrAudits = auditCalls.filter((a) => a.targetType === 'Sdr');
       expect(sdrAudits).toHaveLength(2);
       const auditedIds = sdrAudits.map((a) => a.targetId as string).sort();
@@ -387,7 +389,9 @@ describe('userMutations handler — selfDelete', () => {
       const event = makeEvent({ fieldName: 'selfDelete', arguments: {} });
       await handler(event, {} as Context, () => undefined);
 
-      const auditCalls = auditSpy.mock.calls.map((c) => (c as unknown[])[1] as Record<string, unknown>);
+      const auditCalls = auditSpy.mock.calls.map(
+        (c) => (c as unknown[])[1] as Record<string, unknown>,
+      );
       const exactAudit = auditCalls.find(
         (a) => a.targetType === 'Sdr' && a.targetId === 'sdr-exact',
       );
@@ -466,7 +470,9 @@ describe('userMutations handler — selfDelete', () => {
       expect(sdrListSpy).toHaveBeenCalledOnce();
       expect(sdrUpdateSpy).not.toHaveBeenCalled();
       // Only the User audit fires.
-      const auditCalls = auditSpy.mock.calls.map((c) => (c as unknown[])[1] as Record<string, unknown>);
+      const auditCalls = auditSpy.mock.calls.map(
+        (c) => (c as unknown[])[1] as Record<string, unknown>,
+      );
       expect(auditCalls).toHaveLength(1);
       expect(auditCalls[0]?.targetType).toBe('User');
     });
@@ -649,5 +655,92 @@ describe('userMutations handler — banUser', () => {
     expect(result.cognitoSub).toBe('target-sub-456');
     expect(result.bannedReason).toBe('spam');
     expect(result.bannedById).toBe('cognito-sub-actor-123');
+  });
+});
+
+describe('userMutations handler — unbanUser (#112)', () => {
+  let users: Map<string, UserRow>;
+  let userUpdateSpy: ReturnType<typeof vi.fn>;
+  let auditSpy: Mock<() => Promise<string>>;
+
+  function setup(banned: boolean) {
+    users = new Map<string, UserRow>([
+      [
+        'target-sub-456',
+        {
+          cognitoSub: 'target-sub-456',
+          email: 'target@example.com',
+          displayName: 'Target',
+          ...(banned
+            ? { bannedAt: '2026-05-01T00:00:00.000Z', bannedReason: 'spam', bannedById: 'admin-x' }
+            : {}),
+        },
+      ],
+    ]);
+    userUpdateSpy = vi.fn((input: Partial<UserRow> & { cognitoSub: string }) => {
+      const before = users.get(input.cognitoSub);
+      const merged: UserRow = { ...(before ?? { cognitoSub: input.cognitoSub }), ...input };
+      users.set(input.cognitoSub, merged);
+      return Promise.resolve({ data: merged, errors: undefined });
+    });
+    auditSpy = vi.fn<() => Promise<string>>(() => Promise.resolve('audit-id-3'));
+    __setDeps({
+      dataClient: {
+        models: {
+          User: {
+            get: vi.fn((input: { cognitoSub: string }) =>
+              Promise.resolve({ data: users.get(input.cognitoSub) ?? null, errors: undefined }),
+            ),
+            update: userUpdateSpy,
+          },
+          Sdr: {
+            listSdrByOwnerId: vi.fn(() => Promise.resolve({ data: [], errors: undefined })),
+            update: vi.fn(),
+          },
+        },
+      } as unknown as UserMutationsDataClient,
+      audit: auditSpy,
+    });
+  }
+
+  function adminUnban() {
+    const event = makeEvent({
+      fieldName: 'unbanUser',
+      arguments: { targetCognitoSub: 'target-sub-456', reason: 'appeal granted' },
+    });
+    if (event.identity && 'groups' in event.identity) event.identity.groups = ['admin'];
+    return event;
+  }
+
+  it('rejects non-admin callers', async () => {
+    setup(true);
+    const event = makeEvent({
+      fieldName: 'unbanUser',
+      arguments: { targetCognitoSub: 'target-sub-456' },
+    });
+    if (event.identity && 'groups' in event.identity) event.identity.groups = ['member'];
+    await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(/admin/i);
+    expect(userUpdateSpy).not.toHaveBeenCalled();
+  });
+
+  it('clears ban fields + writes a USER_UNBAN audit on a banned user', async () => {
+    setup(true);
+    await handler(adminUnban(), {} as Context, () => undefined);
+
+    const patch = userUpdateSpy.mock.calls[0]?.[0] as UserRow;
+    expect(patch.bannedAt).toBeNull();
+    expect(patch.bannedReason).toBeNull();
+    expect(patch.bannedById).toBeNull();
+    const [, opts] = auditSpy.mock.calls[0] as unknown as [unknown, Record<string, unknown>];
+    expect(opts.action).toBe('USER_UNBAN');
+    expect(opts.reason).toBe('appeal granted');
+  });
+
+  it('is a no-op on a user that is not banned (no update, no audit)', async () => {
+    setup(false);
+    const result = (await handler(adminUnban(), {} as Context, () => undefined)) as UserRow;
+    expect(result.cognitoSub).toBe('target-sub-456');
+    expect(userUpdateSpy).not.toHaveBeenCalled();
+    expect(auditSpy).not.toHaveBeenCalled();
   });
 });

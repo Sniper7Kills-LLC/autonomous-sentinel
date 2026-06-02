@@ -322,6 +322,61 @@ async function dispatchBanUser(
   return after;
 }
 
+async function dispatchUnbanUser(
+  event: Parameters<AppSyncResolverHandler<Record<string, unknown>, UserRow | null>>[0],
+  deps: { client: UserMutationsDataClient; audit: AuditFn; now: () => Date },
+): Promise<UserRow | null> {
+  if (!isAdmin(event.identity)) {
+    throw new Error('unbanUser: caller is not in the admin group');
+  }
+  const actorSub = identitySub(event.identity);
+  if (!actorSub) {
+    throw new Error('unbanUser: caller has no identity sub');
+  }
+
+  const args = event.arguments;
+  const target = typeof args.targetCognitoSub === 'string' ? args.targetCognitoSub : '';
+  const reason = typeof args.reason === 'string' ? args.reason : '';
+  if (!target) {
+    throw new Error('unbanUser: targetCognitoSub argument is required');
+  }
+
+  const fetched = await deps.client.models.User.get({ cognitoSub: target });
+  const before = fetched.data;
+  if (!before) {
+    throw new Error(`unbanUser: User row not found for cognitoSub=${target}`);
+  }
+  // Idempotent — un-banning a row that is not banned returns it untouched
+  // and writes no audit entry (mirrors the softDeleteMessage no-op path).
+  if (!before.bannedAt) {
+    return before;
+  }
+
+  const patch: Partial<UserRow> & { cognitoSub: string } = {
+    cognitoSub: target,
+    bannedAt: null,
+    bannedReason: null,
+    bannedById: null,
+  };
+  const updated = await deps.client.models.User.update(patch);
+  if (updated.errors) {
+    throw new Error(`unbanUser: User.update returned errors: ${JSON.stringify(updated.errors)}`);
+  }
+  const after = updated.data ?? { ...before, ...patch };
+
+  const normalisedReason: string | null = reason ? reason : null;
+  await deps.audit(auditContextFrom(event), {
+    action: 'USER_UNBAN',
+    targetType: 'User',
+    targetId: target,
+    before: snapshot(before),
+    after: snapshot(after),
+    reason: normalisedReason,
+  });
+
+  return after;
+}
+
 /**
  * Cheap row snapshot for the audit `before` / `after` diff. The helper's
  * `diffShallow` only inspects own enumerable keys; copying via the
@@ -352,6 +407,8 @@ export const handler: AppSyncResolverHandler<Record<string, unknown>, UserRow | 
       return dispatchSelfDelete(event, deps);
     case 'banUser':
       return dispatchBanUser(event, deps);
+    case 'unbanUser':
+      return dispatchUnbanUser(event, deps);
     default:
       throw new Error(`userMutations: unsupported fieldName "${field}"`);
   }

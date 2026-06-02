@@ -1,5 +1,5 @@
 import { type ClientSchema, a, defineData } from '@aws-amplify/backend';
-import { User, selfDelete, banUser, getUserPublic } from './models/user';
+import { User, selfDelete, banUser, unbanUser, getUserPublic } from './models/user';
 import { userMutations } from '../functions/userMutations/resource';
 import { postConfirmation } from '../functions/postConfirmation/resource';
 import { messageMutations } from '../functions/messageMutations/resource';
@@ -134,6 +134,7 @@ export const schema = a
     // User lifecycle mutations + PII-filtered read — issue #248
     selfDelete,
     banUser,
+    unbanUser,
     getUserPublic,
 
     // Message soft-delete — issue #28
