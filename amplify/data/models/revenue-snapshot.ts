@@ -35,6 +35,10 @@ export const RevenueSnapshot = a
   })
   .identifier(['snapshotDate', 'subject'])
   .authorization((allow) => [
-    allow.groups(['moderator', 'admin']).to(['read']),
-    allow.groups(['admin']).to(['create', 'update', 'delete']),
+    // A group may appear in only ONE allow.groups rule (Amplify rejects a
+    // duplicate @auth directive for the same group — synth-time error that
+    // CI lint/typecheck/test do NOT catch). So admin gets one full-perm
+    // rule and moderator one read rule, rather than listing admin twice.
+    allow.groups(['moderator']).to(['read']),
+    allow.groups(['admin']).to(['read', 'create', 'update', 'delete']),
   ]);
