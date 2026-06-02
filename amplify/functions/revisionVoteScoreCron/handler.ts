@@ -121,10 +121,17 @@ async function defaultWriteScore(
       TableName: transcriptRevisionTable(),
       Key: marshall({ id: revisionId }),
       // `id` (the key) is NOT in SET — DynamoDB rejects updating a key attr
-      // (#663). The row already exists (created by submitTranscriptRevision)
-      // so createdAt/updatedAt are intact; we only move voteScore + updatedAt.
-      UpdateExpression: 'SET #voteScore = :s, #updatedAt = :now',
-      ExpressionAttributeNames: { '#voteScore': 'voteScore', '#updatedAt': 'updatedAt' },
+      // (#663). The row already exists (created via AppSync) so createdAt is
+      // present; we move voteScore + updatedAt, and pin createdAt with
+      // if_not_exists as a defensive net (no-op when present) per the #665
+      // non-null-AWSDateTime lesson.
+      UpdateExpression:
+        'SET #voteScore = :s, #updatedAt = :now, #createdAt = if_not_exists(#createdAt, :now)',
+      ExpressionAttributeNames: {
+        '#voteScore': 'voteScore',
+        '#updatedAt': 'updatedAt',
+        '#createdAt': 'createdAt',
+      },
       ExpressionAttributeValues: marshall({ ':s': voteScore, ':now': nowIso }),
       // Only update a revision that still exists; a deleted revision is a no-op.
       ConditionExpression: 'attribute_exists(id)',
