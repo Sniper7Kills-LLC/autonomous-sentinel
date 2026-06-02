@@ -27,6 +27,7 @@ import {
   type AuditContext,
   type AuditOptions,
 } from '../../data/audit-log-helper';
+import { recomputeReputation, type ReputationHelperClient } from '../../data/reputation-helper';
 
 /**
  * Linguistic Lambda (#433 stage 4).
@@ -344,6 +345,8 @@ export interface LinguisticDeps {
   audit?: LinguisticAuditFn;
   /** Low-confidence Amazon Transcribe escalation re-enqueue (#588). */
   escalate?: EscalateFn;
+  /** Reputation recompute on Recording publish (#480). Injected in tests. */
+  repRecompute?: (client: ReputationHelperClient, userId: string) => Promise<number>;
   now?: () => Date;
   uuid?: () => string;
 }
@@ -584,6 +587,11 @@ function bedrockFallback(transcript: string, opts?: FallbackOpts): Promise<Fallb
 /** Resolve the AuditLog writer (injected in tests, real helper in prod). */
 function auditFn(ctx: AuditContext, opts: AuditOptions): Promise<string> {
   return (injected.audit ?? defaultAudit)(ctx, opts);
+}
+
+/** Resolve the reputation recompute (injected in tests, real helper in prod). */
+function repRecomputeFn(client: ReputationHelperClient, userId: string): Promise<number> {
+  return (injected.repRecompute ?? recomputeReputation)(client, userId);
 }
 
 /** The backend a low-confidence whisper transcript escalates to (#588). */
@@ -1558,6 +1566,26 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
     throw new Error(
       `linguistic: Recording.update returned errors: ${JSON.stringify(updated.errors)}`,
     );
+  }
+
+  // Reputation recompute on publish (#480). A PUBLISHED recording is a
+  // validated submission for its uploader. Best-effort + inline (not a DDB
+  // stream, which would close a data-stack CFN cycle — #658/#661). Skips
+  // the PARSE_FAILED branch. uploaderId comes from the update's returned
+  // row (Amplify returns the full item).
+  if (!aiParseFailed) {
+    const uploaderId = (updated.data as { uploaderId?: string | null } | null)?.uploaderId;
+    if (uploaderId) {
+      try {
+        await repRecomputeFn(client as unknown as ReputationHelperClient, uploaderId);
+      } catch (err) {
+        console.error('linguistic: reputation recompute failed (non-fatal)', {
+          recordingId: msg.recordingId,
+          uploaderId,
+          err,
+        });
+      }
+    }
   }
 
   // Re-run supersede (#556): the Recording now points at the fresh
