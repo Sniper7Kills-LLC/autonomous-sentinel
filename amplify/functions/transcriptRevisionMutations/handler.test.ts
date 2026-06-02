@@ -143,7 +143,7 @@ describe('transcriptRevisionMutations — dispatch', () => {
 
   it('rejects an unknown fieldName', async () => {
     const { client, auditSpy } = makeStubs();
-    __setDeps({ dataClient: client, audit: auditSpy });
+    __setDeps({ dataClient: client, audit: auditSpy, repRecompute: vi.fn().mockResolvedValue(1) });
     const event = makeEvent({ fieldName: 'somethingElse' });
     await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(/fieldName/i);
   });
@@ -156,7 +156,7 @@ describe('transcriptRevisionMutations — submitTranscriptRevision', () => {
     const { client, auditSpy } = makeStubs({
       recordings: [{ id: 'rec-1', transcriptionFailed: true }],
     });
-    __setDeps({ dataClient: client, audit: auditSpy });
+    __setDeps({ dataClient: client, audit: auditSpy, repRecompute: vi.fn().mockResolvedValue(1) });
     const event = makeEvent({
       arguments: { recordingId: 'rec-1', proposedText: 'hello' },
     });
@@ -166,21 +166,21 @@ describe('transcriptRevisionMutations — submitTranscriptRevision', () => {
 
   it('rejects when recordingId is missing', async () => {
     const { client, auditSpy } = makeStubs();
-    __setDeps({ dataClient: client, audit: auditSpy });
+    __setDeps({ dataClient: client, audit: auditSpy, repRecompute: vi.fn().mockResolvedValue(1) });
     const event = makeEvent({ arguments: { proposedText: 'hi' } });
     await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(/recordingId/i);
   });
 
   it('rejects when proposedText is empty', async () => {
     const { client, auditSpy } = makeStubs();
-    __setDeps({ dataClient: client, audit: auditSpy });
+    __setDeps({ dataClient: client, audit: auditSpy, repRecompute: vi.fn().mockResolvedValue(1) });
     const event = makeEvent({ arguments: { recordingId: 'rec-1', proposedText: '' } });
     await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(/proposedText/i);
   });
 
   it('rejects when the target Recording does not exist', async () => {
     const { client, auditSpy } = makeStubs();
-    __setDeps({ dataClient: client, audit: auditSpy });
+    __setDeps({ dataClient: client, audit: auditSpy, repRecompute: vi.fn().mockResolvedValue(1) });
     const event = makeEvent({
       arguments: { recordingId: 'no-such-rec', proposedText: 'hi' },
     });
@@ -193,7 +193,7 @@ describe('transcriptRevisionMutations — submitTranscriptRevision', () => {
         { id: 'rec-good', transcriptionFailed: false, transcript: 'SKYKING SKYKING do not answer' },
       ],
     });
-    __setDeps({ dataClient: client, audit: auditSpy });
+    __setDeps({ dataClient: client, audit: auditSpy, repRecompute: vi.fn().mockResolvedValue(1) });
     const event = makeEvent({
       arguments: { recordingId: 'rec-good', proposedText: 'SKYKING do not answer — corrected' },
     });
@@ -216,7 +216,11 @@ describe('transcriptRevisionMutations — submitTranscriptRevision', () => {
       const { client, auditSpy } = makeStubs({
         recordings: [{ id: 'rec-empty', transcriptionFailed: false, transcript }],
       });
-      __setDeps({ dataClient: client, audit: auditSpy });
+      __setDeps({
+        dataClient: client,
+        audit: auditSpy,
+        repRecompute: vi.fn().mockResolvedValue(1),
+      });
       const event = makeEvent({
         arguments: { recordingId: 'rec-empty', proposedText: 'nothing to fix' },
       });
@@ -230,7 +234,7 @@ describe('transcriptRevisionMutations — submitTranscriptRevision', () => {
     const { client, revisionCreateSpy, auditSpy } = makeStubs({
       recordings: [{ id: 'rec-bad', transcriptionFailed: true }],
     });
-    __setDeps({ dataClient: client, audit: auditSpy });
+    __setDeps({ dataClient: client, audit: auditSpy, repRecompute: vi.fn().mockResolvedValue(1) });
     const event = makeEvent({
       arguments: { recordingId: 'rec-bad', proposedText: 'hi' },
     });
@@ -249,7 +253,7 @@ describe('transcriptRevisionMutations — submitTranscriptRevision', () => {
     const { client, auditSpy } = makeStubs({
       recordings: [{ id: 'rec-bad', transcriptionFailed: true }],
     });
-    __setDeps({ dataClient: client, audit: auditSpy });
+    __setDeps({ dataClient: client, audit: auditSpy, repRecompute: vi.fn().mockResolvedValue(1) });
     const event = makeEvent({
       arguments: { recordingId: 'rec-bad', proposedText: 'hi' },
     });
@@ -266,7 +270,7 @@ describe('transcriptRevisionMutations — acceptTranscriptRevision', () => {
     const { client, auditSpy } = makeStubs({
       revisions: [{ id: 'rev-1', recordingId: 'rec-1', proposedText: 'accepted', proposedBy: 'X' }],
     });
-    __setDeps({ dataClient: client, audit: auditSpy });
+    __setDeps({ dataClient: client, audit: auditSpy, repRecompute: vi.fn().mockResolvedValue(1) });
     const event = makeEvent({
       fieldName: 'acceptTranscriptRevision',
       arguments: { revisionId: 'rev-1' },
@@ -278,7 +282,7 @@ describe('transcriptRevisionMutations — acceptTranscriptRevision', () => {
 
   it('rejects when revisionId argument is missing', async () => {
     const { client, auditSpy } = makeStubs();
-    __setDeps({ dataClient: client, audit: auditSpy });
+    __setDeps({ dataClient: client, audit: auditSpy, repRecompute: vi.fn().mockResolvedValue(1) });
     const event = makeEvent({ fieldName: 'acceptTranscriptRevision', arguments: {} });
     if (event.identity && 'groups' in event.identity) {
       event.identity.groups = ['admin'];
@@ -288,7 +292,7 @@ describe('transcriptRevisionMutations — acceptTranscriptRevision', () => {
 
   it('rejects when the target TranscriptRevision does not exist', async () => {
     const { client, auditSpy } = makeStubs();
-    __setDeps({ dataClient: client, audit: auditSpy });
+    __setDeps({ dataClient: client, audit: auditSpy, repRecompute: vi.fn().mockResolvedValue(1) });
     const event = makeEvent({
       fieldName: 'acceptTranscriptRevision',
       arguments: { revisionId: 'no-such' },
@@ -323,6 +327,7 @@ describe('transcriptRevisionMutations — acceptTranscriptRevision', () => {
       dataClient: client,
       audit: auditSpy,
       now: () => new Date('2026-05-17T01:00:00.000Z'),
+      repRecompute: vi.fn().mockResolvedValue(1),
     });
     const event = makeEvent({
       fieldName: 'acceptTranscriptRevision',
@@ -338,6 +343,51 @@ describe('transcriptRevisionMutations — acceptTranscriptRevision', () => {
     )?.[0] as TranscriptRevisionRow;
     expect(acceptedPatch.accepted).toBe(true);
     expect(acceptedPatch.acceptedAt).toBe('2026-05-17T01:00:00.000Z');
+  });
+
+  it('recomputes the proposer reputation after accepting (#480)', async () => {
+    const { client, auditSpy } = makeStubs({
+      recordings: [{ id: 'rec-1', transcript: 'old', transcriptionFailed: true }],
+      revisions: [
+        { id: 'rev-1', recordingId: 'rec-1', proposedText: 'new', proposedBy: 'author-9' },
+      ],
+    });
+    const repSpy = vi.fn().mockResolvedValue(2.5);
+    __setDeps({ dataClient: client, audit: auditSpy, repRecompute: repSpy });
+    const event = makeEvent({
+      fieldName: 'acceptTranscriptRevision',
+      arguments: { revisionId: 'rev-1' },
+    });
+    if (event.identity && 'groups' in event.identity) event.identity.groups = ['admin'];
+    await handler(event, {} as Context, () => undefined);
+
+    expect(repSpy).toHaveBeenCalledWith(expect.anything(), 'author-9');
+  });
+
+  it('still accepts when the reputation recompute throws (best-effort, #480)', async () => {
+    const { client, auditSpy, revisionUpdateSpy } = makeStubs({
+      recordings: [{ id: 'rec-1', transcript: 'old', transcriptionFailed: true }],
+      revisions: [
+        { id: 'rev-1', recordingId: 'rec-1', proposedText: 'new', proposedBy: 'author-9' },
+      ],
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    __setDeps({
+      dataClient: client,
+      audit: auditSpy,
+      repRecompute: vi.fn().mockRejectedValue(new Error('rep down')),
+    });
+    const event = makeEvent({
+      fieldName: 'acceptTranscriptRevision',
+      arguments: { revisionId: 'rev-1' },
+    });
+    if (event.identity && 'groups' in event.identity) event.identity.groups = ['admin'];
+    await handler(event, {} as Context, () => undefined);
+
+    const acceptedPatch = revisionUpdateSpy.mock.calls.find(
+      (c) => (c[0] as { id: string }).id === 'rev-1',
+    )?.[0] as TranscriptRevisionRow;
+    expect(acceptedPatch.accepted).toBe(true);
   });
 
   it('cascades superseded=true to all sibling revisions on the same Recording', async () => {
@@ -377,7 +427,7 @@ describe('transcriptRevisionMutations — acceptTranscriptRevision', () => {
         },
       ],
     });
-    __setDeps({ dataClient: client, audit: auditSpy });
+    __setDeps({ dataClient: client, audit: auditSpy, repRecompute: vi.fn().mockResolvedValue(1) });
     const event = makeEvent({
       fieldName: 'acceptTranscriptRevision',
       arguments: { revisionId: 'rev-winner' },
@@ -419,7 +469,7 @@ describe('transcriptRevisionMutations — acceptTranscriptRevision', () => {
         },
       ],
     });
-    __setDeps({ dataClient: client, audit: auditSpy });
+    __setDeps({ dataClient: client, audit: auditSpy, repRecompute: vi.fn().mockResolvedValue(1) });
     const event = makeEvent({
       fieldName: 'acceptTranscriptRevision',
       arguments: { revisionId: 'rev-1' },
@@ -453,7 +503,7 @@ describe('transcriptRevisionMutations — acceptTranscriptRevision', () => {
         },
       ],
     });
-    __setDeps({ dataClient: client, audit: auditSpy });
+    __setDeps({ dataClient: client, audit: auditSpy, repRecompute: vi.fn().mockResolvedValue(1) });
     const event = makeEvent({
       fieldName: 'acceptTranscriptRevision',
       arguments: { revisionId: 'rev-1' },
@@ -496,7 +546,7 @@ describe('transcriptRevisionMutations — acceptTranscriptRevision', () => {
         },
       ],
     });
-    __setDeps({ dataClient: client, audit: auditSpy });
+    __setDeps({ dataClient: client, audit: auditSpy, repRecompute: vi.fn().mockResolvedValue(1) });
     const event = makeEvent({
       fieldName: 'acceptTranscriptRevision',
       arguments: { revisionId: 'rev-done' },
