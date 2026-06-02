@@ -234,6 +234,35 @@ describe('dlqAdmin handler (#107)', () => {
       );
     });
 
+    it('does NOT delete from the DLQ when the Recording.update fails (no message loss)', async () => {
+      const send = vi.fn().mockResolvedValue({});
+      const update = vi.fn().mockResolvedValue({ data: null, errors: [{ message: 'DDB down' }] });
+      const audit = vi.fn().mockResolvedValue('audit-id');
+      __setDeps({
+        sqs: { send } as never,
+        dataClient: { models: { Recording: { update } } },
+        audit,
+        now: () => new Date('2026-06-02T00:00:00.000Z'),
+      });
+
+      await expect(
+        handler(
+          event('dropDlqMessage', {
+            stage: 'linguistic',
+            receiptHandle: 'rh-d',
+            recordingId: 'rec-7',
+          }),
+          context,
+          cb,
+        ),
+      ).rejects.toThrow(/Recording.update returned errors/);
+
+      // Update ran (and failed) → message must still be on the DLQ + no audit.
+      expect(update).toHaveBeenCalledTimes(1);
+      expect(send).not.toHaveBeenCalled();
+      expect(audit).not.toHaveBeenCalled();
+    });
+
     it('drops without a Recording update when no recordingId is known', async () => {
       const send = vi.fn().mockResolvedValue({});
       const update = vi.fn();

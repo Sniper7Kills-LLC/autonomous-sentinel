@@ -183,7 +183,8 @@ function parseBody(body: string): { recordingId: string | null; errorReason: str
       parsed.errorReason ?? parsed.failedReason ?? parsed.error ?? parsed.reason;
     return {
       recordingId: typeof idCandidate === 'string' && idCandidate.length > 0 ? idCandidate : null,
-      errorReason: typeof reasonCandidate === 'string' ? reasonCandidate : null,
+      errorReason:
+        typeof reasonCandidate === 'string' && reasonCandidate.length > 0 ? reasonCandidate : null,
     };
   } catch {
     return { recordingId: null, errorReason: null };
@@ -311,11 +312,11 @@ async function dispatchDrop(
     typeof event.arguments.recordingId === 'string' ? event.arguments.recordingId : null;
   const reason = typeof event.arguments.reason === 'string' ? event.arguments.reason : null;
 
-  const dlqUrl = envUrl(DLQ_QUEUE_ENV[stage]);
-  await deps.sqs.send(new DeleteMessageCommand({ QueueUrl: dlqUrl, ReceiptHandle: receiptHandle }));
-
-  // Mark the Recording terminally FAILED so it leaves the active
-  // pipeline and the My-Uploads / admin views reflect the drop.
+  // Mark the Recording terminally FAILED FIRST, then delete from the DLQ.
+  // Ordering matters for failure safety: if the Recording.update throws,
+  // the message stays on the DLQ (nothing lost — the admin can re-drop).
+  // Deleting first would risk losing the message while leaving the
+  // recording un-FAILED on an update error.
   if (recordingId) {
     const client = await deps.getClient();
     const now = deps.now().toISOString();
@@ -332,6 +333,9 @@ async function dispatchDrop(
       );
     }
   }
+
+  const dlqUrl = envUrl(DLQ_QUEUE_ENV[stage]);
+  await deps.sqs.send(new DeleteMessageCommand({ QueueUrl: dlqUrl, ReceiptHandle: receiptHandle }));
 
   await deps.audit(auditContextFrom(event), {
     action: 'DLQ_DROP',
