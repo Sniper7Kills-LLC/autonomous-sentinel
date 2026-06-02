@@ -333,6 +333,8 @@ function snapshot(row: UserRow): Record<string, unknown> {
 
 export const handler: AppSyncResolverHandler<Record<string, unknown>, UserRow | null> = async (
   event,
+  _context,
+  _callback,
 ) => {
   const client = injected.dataClient ?? (await getDefaultClient());
   const auditFn: AuditFn = injected.audit ?? ((ctx, opts) => defaultAudit(ctx, opts));

@@ -32,6 +32,7 @@ export function Footer({ buildId = BUILD_SHA }: FooterProps) {
         <a href="#map">Propagation map</a>
         <a href="/donate">Donate</a>
         <a href="/support">Supporter tiers</a>
+        <a href="/transparency">Cost transparency</a>
       </nav>
 
       <nav className={styles.col} aria-label="Footer resources">

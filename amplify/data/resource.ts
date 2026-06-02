@@ -21,6 +21,7 @@ import {
 } from './models/recording';
 import { Sdr, listSdrPublic } from './models/sdr';
 import { listSdrPublicLambda } from '../functions/listSdrPublicLambda/resource';
+import { costSnapshotWorker } from '../functions/costSnapshotWorker/resource';
 import { Transmitter } from './models/transmitter';
 import { Comment, submitComment, softDeleteComment } from './models/comment';
 import { FieldVote, FieldVoteField, castFieldVote } from './models/field-vote';
@@ -48,6 +49,8 @@ import { LinguisticConfig } from './models/linguistic-config';
 import { ReputationConfig } from './models/reputation-config';
 import { PlaybackConfig } from './models/playback-config';
 import { BudgetConfig } from './models/budget-config';
+import { CostSnapshot } from './models/cost-snapshot';
+import { RevenueSnapshot } from './models/revenue-snapshot';
 import { LinguisticRule } from './models/linguistic-rule';
 import { LinguisticPromptTemplate } from './models/linguistic-prompt-template';
 import {
@@ -97,6 +100,11 @@ export const schema = a
     ReputationConfig,
     PlaybackConfig,
     BudgetConfig,
+
+    // Cost transparency (#303) — public AWS-spend rows + gated revenue
+    CostSnapshot,
+    RevenueSnapshot,
+
     LinguisticRule,
     LinguisticPromptTemplate,
     BannedRegionPage,
@@ -164,6 +172,19 @@ export const schema = a
     // NotificationPreference KMS-encrypted webhook URL + lazy-create — issue #288
     getMyNotificationPreference,
     setNotificationPreference,
+
+    // Admin on-demand cost-snapshot trigger — issue #303. Binds the
+    // EXISTING costSnapshotWorker (already in defineBackend +
+    // resourceGroupName:'data') as an AppSync mutation resolver, so the
+    // resolver stays in the data stack — no second Lambda, no new
+    // cross-stack reference. The worker detects the AppSync event shape
+    // and returns a `{ snapshotDate, rowsWritten, totalUsd }` summary.
+    runCostSnapshotNow: a
+      .mutation()
+      .arguments({})
+      .returns(a.json())
+      .handler(a.handler.function(costSnapshotWorker))
+      .authorization((allow) => allow.groups(['admin'])),
   })
   .authorization((allow) => [
     // Schema-level Lambda access grants.
