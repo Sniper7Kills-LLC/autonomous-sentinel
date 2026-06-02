@@ -263,9 +263,8 @@ export async function fetchCostSnapshots(fromDate: string): Promise<CostSnapshot
 }
 
 export interface RunCostSnapshotResult {
-  snapshotDate: string;
-  rowsWritten: number;
-  totalUsd: number;
+  /** The trigger queues an EventBridge event; the worker runs async. */
+  status: 'queued';
 }
 
 type RawMutationResult = {
@@ -275,10 +274,12 @@ type RawMutationResult = {
 
 /**
  * Admin-only on-demand trigger (#303). Invokes the `runCostSnapshotNow`
- * mutation (backed by the existing costSnapshotWorker) so an admin can
- * run the pull without waiting for the 05:00 cron. `userPool` auth —
- * the server gates the mutation to the `admin` group. Returns the
- * worker's `{ snapshotDate, rowsWritten, totalUsd }` summary.
+ * mutation, which is backed by the `costSnapshotTrigger` Lambda — it
+ * fires an EventBridge event and returns immediately, so the response is
+ * `{ status: 'queued' }`, NOT row counts. The worker runs fire-and-
+ * forget a few seconds later; the UI refetches cost data after a short
+ * delay (or on next load) to surface the fresh rows. `userPool` auth —
+ * the server gates the mutation to the `admin` group.
  */
 export async function runCostSnapshotNow(): Promise<RunCostSnapshotResult> {
   const client = getDataClient();
@@ -290,15 +291,9 @@ export async function runCostSnapshotNow(): Promise<RunCostSnapshotResult> {
   if (raw.errors?.length) {
     throw new Error(raw.errors.map((e) => e.message).join('; '));
   }
-  const result = (typeof raw.data === 'string' ? JSON.parse(raw.data) : raw.data) as
-    | Partial<RunCostSnapshotResult>
-    | null
-    | undefined;
-  return {
-    snapshotDate: typeof result?.snapshotDate === 'string' ? result.snapshotDate : '',
-    rowsWritten: typeof result?.rowsWritten === 'number' ? result.rowsWritten : 0,
-    totalUsd: typeof result?.totalUsd === 'number' ? result.totalUsd : 0,
-  };
+  // A non-error response means the trigger accepted the request and
+  // emitted the EventBridge event — the only outcome is "queued".
+  return { status: 'queued' };
 }
 
 /**

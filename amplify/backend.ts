@@ -45,6 +45,7 @@ import { legacyClaimReplaySweeper } from './functions/legacyClaimReplaySweeper/r
 import { fieldVoteOrphanJanitor } from './functions/fieldVoteOrphanJanitor/resource';
 import { deployBadge } from './functions/deployBadge/resource';
 import { costSnapshotWorker } from './functions/costSnapshotWorker/resource';
+import { costSnapshotTrigger } from './functions/costSnapshotTrigger/resource';
 import { stripeRevenueWorker } from './functions/stripeRevenueWorker/resource';
 import { attachBudgetAlarms, attachBudgetThrottleAction, readBudgetConfig } from './budgets';
 import { applyCognitoTokenValidity } from './cognito-token-validity';
@@ -84,6 +85,7 @@ const backend = defineBackend({
   linguisticConfigStream,
   deployBadge,
   costSnapshotWorker,
+  costSnapshotTrigger,
   stripeRevenueWorker,
 });
 
@@ -590,6 +592,45 @@ costSnapshotWorkerLambda.addToRolePolicy(
 new Rule(costSnapshotWorkerLambda.stack, 'CostSnapshotDaily', {
   description: 'Daily AWS-spend snapshot for the public /transparency page (#303).',
   schedule: Schedule.cron({ minute: '0', hour: '5' }),
+  targets: [new LambdaTarget(costSnapshotWorkerLambda)],
+});
+
+// Admin on-demand cost-snapshot wiring (#303) — EventBridge fan-out
+// that AVOIDS the CFN circular dependency that killed deploy 174/175.
+//
+// Original (broken) design bound the worker itself as the
+// `runCostSnapshotNow` AppSync resolver. That placed the worker in the
+// data FunctionDirectiveStack while it ALSO owned the cron Rule + IAM
+// here → FunctionDirectiveStack ↔ data-stack cycle.
+//
+// Cycle-free design:
+//   1. The resolver is the tiny `costSnapshotTrigger` Lambda, which
+//      references NOTHING about the worker — it only fires one
+//      EventBridge event (events:PutEvents to the default bus).
+//   2. A second Rule on the WORKER'S OWN stack matches that custom
+//      event and runs the worker. This Rule references only the worker
+//      (same stack), so no new cross-stack edge is created.
+// The worker handler treats any non-AppSync event (including this
+// custom event — it has `source`/`detail-type` but no AppSync
+// `arguments`/`fieldName`/`identity` markers) as a normal run: it
+// writes rows and returns void.
+const costSnapshotTriggerLambda = backend.costSnapshotTrigger.resources.lambda as LambdaFunction;
+costSnapshotTriggerLambda.addToRolePolicy(
+  new PolicyStatement({
+    // PutEvents to the default bus does not support resource-level ARN
+    // scoping for the implicit default bus in all partitions; `*` is the
+    // tightest practical grant for a single PutEvents call.
+    actions: ['events:PutEvents'],
+    resources: ['*'],
+  }),
+);
+new Rule(costSnapshotWorkerLambda.stack, 'CostSnapshotManualSync', {
+  description:
+    'Admin on-demand cost snapshot — runs the worker on the eam.admin manual event (#303).',
+  eventPattern: {
+    source: ['eam.admin'],
+    detailType: ['CostSnapshotManualSync'],
+  },
   targets: [new LambdaTarget(costSnapshotWorkerLambda)],
 });
 
