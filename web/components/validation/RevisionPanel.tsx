@@ -4,12 +4,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Field, Textarea } from '@/components/ui/Field';
 import {
+  acceptTranscriptRevision,
   castRevisionVote,
   listRevisionsForRecording,
   submitTranscriptRevision,
   type DisplayRevision,
   type RevisionVoteValue,
 } from '@/lib/revisions/query';
+import { fetchCallerGroups, isModeratorOrAdmin } from '@/lib/auth/roles';
 import { diffTranscript, hasChanges, type DiffSegment } from '@/lib/revisions/diff';
 import { containsProfanity } from '@/lib/moderation/profanity';
 import styles from './RevisionPanel.module.css';
@@ -55,6 +57,29 @@ export function RevisionPanel({
   const [revisions, setRevisions] = useState<DisplayRevision[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Moderator/admin gate for the Accept control. Server enforces the
+  // same authorization on `acceptTranscriptRevision`; this only decides
+  // what to render (#654, mirrors the #505 reprocess-button pattern).
+  const [canAccept, setCanAccept] = useState(false);
+
+  useEffect(() => {
+    if (!signedIn) {
+      setCanAccept(false);
+      return;
+    }
+    let active = true;
+    void (async () => {
+      try {
+        const groups = await fetchCallerGroups();
+        if (active) setCanAccept(isModeratorOrAdmin(groups));
+      } catch {
+        if (active) setCanAccept(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [signedIn]);
 
   const refresh = useCallback(async () => {
     try {
@@ -125,6 +150,7 @@ export function RevisionPanel({
         <RevisionRows
           revisions={revisions}
           canVote={signedIn}
+          canAccept={canAccept}
           refresh={refresh}
           setError={setError}
         />
@@ -136,6 +162,7 @@ export function RevisionPanel({
 interface RevisionRowsProps {
   revisions: DisplayRevision[];
   canVote: boolean;
+  canAccept: boolean;
   refresh: () => Promise<void>;
   setError: (msg: string | null) => void;
 }
@@ -144,10 +171,12 @@ interface RevisionRowsProps {
  * Render-list wrapper that owns the single-flight vote guard. While
  * `votingId` is non-null, every row's `canVote` flips false so a
  * rapid second click does not re-submit before the resolver returns
- * + the refresh fetches the new tally.
+ * + the refresh fetches the new tally. The same `acceptingId` guard
+ * serialises Accept clicks (#654).
  */
-function RevisionRows({ revisions, canVote, refresh, setError }: RevisionRowsProps) {
+function RevisionRows({ revisions, canVote, canAccept, refresh, setError }: RevisionRowsProps) {
   const [votingId, setVotingId] = useState<string | null>(null);
+  const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const handleVote = useCallback(
     async (revisionId: string, value: RevisionVoteValue) => {
       if (votingId) return;
@@ -164,6 +193,30 @@ function RevisionRows({ revisions, canVote, refresh, setError }: RevisionRowsPro
     },
     [votingId, refresh, setError],
   );
+  const handleAccept = useCallback(
+    async (revisionId: string) => {
+      if (acceptingId) return;
+      if (
+        typeof window !== 'undefined' &&
+        !window.confirm(
+          'Accept this revision as the transcript? Other proposals will be superseded.',
+        )
+      ) {
+        return;
+      }
+      setAcceptingId(revisionId);
+      try {
+        setError(null);
+        await acceptTranscriptRevision(revisionId);
+        await refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setAcceptingId(null);
+      }
+    },
+    [acceptingId, refresh, setError],
+  );
   return (
     <div className={styles.list}>
       {sortRevisions(revisions).map((rev) => (
@@ -171,8 +224,12 @@ function RevisionRows({ revisions, canVote, refresh, setError }: RevisionRowsPro
           key={rev.id}
           revision={rev}
           canVote={canVote && votingId === null}
+          canAccept={canAccept && acceptingId === null}
           onVote={(value) => {
             void handleVote(rev.id, value);
+          }}
+          onAccept={() => {
+            void handleAccept(rev.id);
           }}
         />
       ))}
@@ -194,10 +251,15 @@ function sortRevisions(rows: DisplayRevision[]): DisplayRevision[] {
 interface RevisionRowProps {
   revision: DisplayRevision;
   canVote: boolean;
+  canAccept: boolean;
   onVote: (value: RevisionVoteValue) => void;
+  onAccept: () => void;
 }
 
-function RevisionRow({ revision, canVote, onVote }: RevisionRowProps) {
+function RevisionRow({ revision, canVote, canAccept, onVote, onAccept }: RevisionRowProps) {
+  // Accept is only meaningful on a live (non-accepted, non-superseded)
+  // proposal; the server is idempotent on already-accepted rows.
+  const showAccept = canAccept && !revision.accepted && !revision.superseded;
   const cls = [
     styles.rev,
     revision.accepted ? styles.revAccepted : '',
@@ -240,11 +302,28 @@ function RevisionRow({ revision, canVote, onVote }: RevisionRowProps) {
           )}
           {revision.superseded && <span className={styles.tag}>SUPERSEDED</span>}
           {revision.source && <span className={styles.tag}>{revision.source}</span>}
+          {revision.proposedBy && (
+            <span className={styles.subtle} title={`Proposed by ${revision.proposedBy}`}>
+              by {shortId(revision.proposedBy)}
+            </span>
+          )}
           {revision.createdAt && <span>{formatTs(revision.createdAt)}</span>}
         </div>
+        {showAccept && (
+          <div className={styles.revActions}>
+            <Button variant="success" size="sm" onClick={onAccept}>
+              Accept
+            </Button>
+          </div>
+        )}
       </div>
     </article>
   );
+}
+
+/** Short, human-scannable form of a Cognito sub for attribution. */
+function shortId(id: string): string {
+  return id.length > 12 ? `${id.slice(0, 8)}…` : id;
 }
 
 interface SubmitRowProps {

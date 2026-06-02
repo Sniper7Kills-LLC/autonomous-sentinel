@@ -139,6 +139,10 @@
   letter-spacing: 0.04em;
 }
 
+.revActions {
+  margin-top: 0.5rem;
+}
+
 .tag {
   padding: 0.1rem 0.4rem;
   background: var(--surface-2);
