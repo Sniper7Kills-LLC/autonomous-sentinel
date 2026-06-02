@@ -298,9 +298,15 @@ describe('getLinguisticConfig', () => {
     getConfigMock.mockResolvedValue({ data: { key: 'thresholds', value: { SKYKING: 0.9 } } });
     const out = await getLinguisticConfig('thresholds');
     expect(out).toEqual({ SKYKING: 0.9 });
-    const arg = getConfigMock.mock.calls[0]![0] as Record<string, unknown>;
-    expect(arg.key).toBe('thresholds');
-    expect(arg.authMode).toBe('userPool');
+    // Regression: authMode is the SECOND arg to model.get (identifier is the
+    // first). Spreading it into the identifier object silently drops it and
+    // the read 401s against the admin-only LinguisticConfig. The identifier
+    // arg must carry ONLY the key; the options arg must carry authMode.
+    const idArg = getConfigMock.mock.calls[0]![0] as Record<string, unknown>;
+    const optsArg = getConfigMock.mock.calls[0]![1] as Record<string, unknown>;
+    expect(idArg.key).toBe('thresholds');
+    expect(idArg.authMode).toBeUndefined();
+    expect(optsArg.authMode).toBe('userPool');
   });
 
   it('returns undefined when the row does not exist', async () => {
