@@ -198,7 +198,7 @@ function decodeForm(event: APIGatewayProxyEventV2): URLSearchParams {
   return new URLSearchParams(raw);
 }
 
-export const handler: APIGatewayProxyHandlerV2 = async (event) => {
+export const handler: APIGatewayProxyHandlerV2 = async (event, _context, _callback) => {
   const path = event.requestContext.http.path;
   const method = event.requestContext.http.method.toUpperCase();
 

@@ -245,7 +245,7 @@ async function ensureUserRow(input: {
   }
 }
 
-export const handler: PostConfirmationTriggerHandler = async (event) => {
+export const handler: PostConfirmationTriggerHandler = async (event, _context, _callback) => {
   const { userPoolId, userName, triggerSource } = event;
 
   // Only react to genuine confirmations. PostConfirmation_ConfirmForgotPassword

@@ -180,6 +180,8 @@ async function getClient(): Promise<AuditLogPublicDataClient> {
 
 export const handler: AppSyncResolverHandler<PublicAuditQueryArgs, PublicAuditQueryResult> = async (
   event,
+  _context,
+  _callback,
 ) => {
   const { targetType, targetId, limit, nextToken } = event.arguments;
   if (!targetType || !targetId) {

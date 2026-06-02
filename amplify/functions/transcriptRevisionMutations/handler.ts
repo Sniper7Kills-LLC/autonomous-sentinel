@@ -311,7 +311,7 @@ async function dispatchAccept(
 export const handler: AppSyncResolverHandler<
   Record<string, unknown>,
   TranscriptRevisionRow | null
-> = async (event) => {
+> = async (event, _context, _callback) => {
   const client = injected.dataClient ?? (await getDefaultClient());
   const auditFn: AuditFn = injected.audit ?? ((ctx, opts) => defaultAudit(ctx, opts));
   const now = injected.now ?? (() => new Date());

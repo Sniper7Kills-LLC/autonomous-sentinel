@@ -231,7 +231,7 @@ function chunk<T>(items: T[], size: number): T[][] {
   return out;
 }
 
-export const handler: Handler<ScheduledEvent, void> = async () => {
+export const handler: Handler<ScheduledEvent, void> = async (_event, _context, _callback) => {
   const deps = resolveDeps();
   const batchSize = deps.batchSize ?? 25;
 
