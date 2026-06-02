@@ -262,39 +262,10 @@ export async function fetchCostSnapshots(fromDate: string): Promise<CostSnapshot
   return out;
 }
 
-export interface RunCostSnapshotResult {
-  /** The trigger queues an EventBridge event; the worker runs async. */
-  status: 'queued';
-}
-
-type RawMutationResult = {
-  data?: unknown;
-  errors?: { message: string }[] | null;
-};
-
-/**
- * Admin-only on-demand trigger (#303). Invokes the `runCostSnapshotNow`
- * mutation, which is backed by the `costSnapshotTrigger` Lambda — it
- * fires an EventBridge event and returns immediately, so the response is
- * `{ status: 'queued' }`, NOT row counts. The worker runs fire-and-
- * forget a few seconds later; the UI refetches cost data after a short
- * delay (or on next load) to surface the fresh rows. `userPool` auth —
- * the server gates the mutation to the `admin` group.
- */
-export async function runCostSnapshotNow(): Promise<RunCostSnapshotResult> {
-  const client = getDataClient();
-  const mutateFn = (client.mutations as Record<string, unknown>).runCostSnapshotNow as (
-    input: Record<string, unknown>,
-    opts: Record<string, unknown>,
-  ) => Promise<RawMutationResult>;
-  const raw = await mutateFn({}, { authMode: 'userPool' });
-  if (raw.errors?.length) {
-    throw new Error(raw.errors.map((e) => e.message).join('; '));
-  }
-  // A non-error response means the trigger accepted the request and
-  // emitted the EventBridge event — the only outcome is "queued".
-  return { status: 'queued' };
-}
+// Admin on-demand cost-sync (`runCostSnapshotNow`) was removed — the
+// EventBridge trigger reintroduced a CFN circular dependency. On-demand
+// sync is deferred to the SQS-based follow-up (#644); the daily cron
+// keeps the snapshots fresh.
 
 /**
  * Page through RevenueSnapshot rows. Always uses `userPool` — these
