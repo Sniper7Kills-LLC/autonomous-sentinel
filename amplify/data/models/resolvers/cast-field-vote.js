@@ -106,6 +106,8 @@ export function request(ctx) {
     '#weightAtVoteTime': 'weightAtVoteTime',
     '#firstCastAt': 'firstCastAt',
     '#lastCastAt': 'lastCastAt',
+    '#createdAt': 'createdAt',
+    '#updatedAt': 'updatedAt',
   };
   /** @type {Record<string, { S?: string; N?: string }>} */
   const expressionValues = {
@@ -135,6 +137,12 @@ export function request(ctx) {
     '#firstCastAt = if_not_exists(#firstCastAt, :now)',
     '#value = :value',
     '#lastCastAt = :now',
+    // Amplify-managed timestamps. This resolver writes via raw UpdateItem
+    // (no AppSync auto-stamp), and both are non-nullable `AWSDateTime!` on
+    // the model, so the row fails on read without them (#665, same class
+    // as #649). createdAt is pinned once; updatedAt moves every write.
+    '#createdAt = if_not_exists(#createdAt, :now)',
+    '#updatedAt = :now',
   ];
 
   return {

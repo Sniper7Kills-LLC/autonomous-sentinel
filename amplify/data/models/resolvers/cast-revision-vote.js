@@ -73,10 +73,15 @@ export function request(ctx) {
   const liveWeight =
     typeof ctx.prev?.result?.computedWeight === 'number' ? ctx.prev.result.computedWeight : 1;
 
+  // `util.time.nowISO8601()` — APPSYNC_JS rejects `new Date()`.
+  const now = util.time.nowISO8601();
+
   /** @type {Record<string, string>} */
   const expressionNames = {
     '#value': 'value',
     '#weightAtVoteTime': 'weightAtVoteTime',
+    '#createdAt': 'createdAt',
+    '#updatedAt': 'updatedAt',
   };
   /** @type {Record<string, { S?: string; N?: string }>} */
   const expressionValues = {
@@ -84,6 +89,7 @@ export function request(ctx) {
     // Template literal instead of `String(liveWeight)` — APPSYNC_JS
     // rejects calls to the `String` global constructor (#323).
     ':weightAtVoteTime': { N: `${liveWeight}` },
+    ':now': { S: now },
   };
 
   // `voterId` (the RANGE half of the composite PK `(revisionId, voterId)`)
@@ -94,6 +100,11 @@ export function request(ctx) {
   const setClauses = [
     '#weightAtVoteTime = if_not_exists(#weightAtVoteTime, :weightAtVoteTime)',
     '#value = :value',
+    // Amplify-managed timestamps — raw UpdateItem bypasses AppSync's
+    // auto-stamp, and both are non-nullable `AWSDateTime!`, so the row
+    // fails on read without them (#665). createdAt pinned once.
+    '#createdAt = if_not_exists(#createdAt, :now)',
+    '#updatedAt = :now',
   ];
 
   return {
