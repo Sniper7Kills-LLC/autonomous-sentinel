@@ -21,7 +21,6 @@ import {
 } from './models/recording';
 import { Sdr, listSdrPublic } from './models/sdr';
 import { listSdrPublicLambda } from '../functions/listSdrPublicLambda/resource';
-import { costSnapshotTrigger } from '../functions/costSnapshotTrigger/resource';
 import { Transmitter } from './models/transmitter';
 import { Comment, submitComment, softDeleteComment } from './models/comment';
 import { FieldVote, FieldVoteField, castFieldVote } from './models/field-vote';
@@ -173,22 +172,9 @@ export const schema = a
     getMyNotificationPreference,
     setNotificationPreference,
 
-    // Admin on-demand cost-snapshot trigger — issue #303. Bound to the
-    // SEPARATE `costSnapshotTrigger` Lambda (NOT the worker). The trigger
-    // only fires an EventBridge custom event (events:PutEvents) and
-    // returns `{ status: 'queued' }`; a Rule on the worker's own stack
-    // matches that event and runs the worker. Because the resolver →
-    // trigger edge references nothing about the worker, and the worker →
-    // Rule edge stays in the worker's stack, there is no
-    // FunctionDirectiveStack ↔ data-stack cross-reference — this is the
-    // cycle-free replacement for the direct binding that failed deploy
-    // 174/175.
-    runCostSnapshotNow: a
-      .mutation()
-      .arguments({})
-      .returns(a.json())
-      .handler(a.handler.function(costSnapshotTrigger))
-      .authorization((allow) => allow.groups(['admin'])),
+    // Admin on-demand cost-snapshot trigger (#303) was removed — it
+    // reintroduced a CFN circular dependency. On-demand sync is deferred
+    // to the SQS-based follow-up (#644); the daily cron remains.
   })
   .authorization((allow) => [
     // Schema-level Lambda access grants.

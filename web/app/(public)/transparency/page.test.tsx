@@ -1,14 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import TransparencyPage from './page';
 
-const { fetchCostSnapshots, fetchRevenueSnapshots, fetchCallerGroups, runCostSnapshotNow } =
-  vi.hoisted(() => ({
-    fetchCostSnapshots: vi.fn(),
-    fetchRevenueSnapshots: vi.fn(),
-    fetchCallerGroups: vi.fn(),
-    runCostSnapshotNow: vi.fn(),
-  }));
+const { fetchCostSnapshots, fetchRevenueSnapshots, fetchCallerGroups } = vi.hoisted(() => ({
+  fetchCostSnapshots: vi.fn(),
+  fetchRevenueSnapshots: vi.fn(),
+  fetchCallerGroups: vi.fn(),
+}));
 
 vi.mock('@/lib/cost/transparency', async (importActual) => {
   const actual = await importActual<Record<string, unknown>>();
@@ -16,7 +14,6 @@ vi.mock('@/lib/cost/transparency', async (importActual) => {
     ...actual,
     fetchCostSnapshots,
     fetchRevenueSnapshots,
-    runCostSnapshotNow,
   };
 });
 
@@ -74,7 +71,6 @@ describe('TransparencyPage (#303)', () => {
     fetchCostSnapshots.mockResolvedValue(COST_ROWS);
     fetchRevenueSnapshots.mockResolvedValue([]);
     fetchCallerGroups.mockResolvedValue([]);
-    runCostSnapshotNow.mockResolvedValue({ status: 'queued' });
   });
 
   it('renders the cost panel with the AWS total for everyone', async () => {
@@ -121,60 +117,5 @@ describe('TransparencyPage (#303)', () => {
     fetchCostSnapshots.mockRejectedValue(new Error('boom'));
     render(<TransparencyPage />);
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/boom/));
-  });
-
-  it('hides the "Sync now" button for a guest', async () => {
-    render(<TransparencyPage />);
-    await waitFor(() => expect(screen.getByText(/Total: \$2\.50/)).toBeInTheDocument());
-    expect(screen.queryByRole('button', { name: /sync now/i })).not.toBeInTheDocument();
-  });
-
-  it('hides the "Sync now" button for a moderator (admin-only)', async () => {
-    fetchCallerGroups.mockResolvedValue(['moderator']);
-    render(<TransparencyPage />);
-    await waitFor(() => expect(screen.getByText(/Revenue \(admin/i)).toBeInTheDocument());
-    expect(screen.queryByRole('button', { name: /sync now/i })).not.toBeInTheDocument();
-  });
-
-  it('shows "Sync now" for an admin and queues the mutation + delayed refetch on click', async () => {
-    vi.useFakeTimers();
-    try {
-      fetchCallerGroups.mockResolvedValue(['admin']);
-      render(<TransparencyPage />);
-
-      // Drain the mount effect (promises) under fake timers.
-      const btn = await vi.waitFor(() => screen.getByRole('button', { name: /sync now/i }));
-      // One initial cost fetch on mount.
-      expect(fetchCostSnapshots).toHaveBeenCalledTimes(1);
-
-      fireEvent.click(btn);
-
-      await vi.waitFor(() => expect(runCostSnapshotNow).toHaveBeenCalledTimes(1));
-      // Queued status (NOT row counts — the worker runs async).
-      await vi.waitFor(() =>
-        expect(screen.getByRole('status')).toHaveTextContent(/Sync queued — refresh in ~1 min/i),
-      );
-      // Refetch is deferred ~1 min; not yet fired.
-      expect(fetchCostSnapshots).toHaveBeenCalledTimes(1);
-
-      // Advance past the refetch delay → second cost fetch.
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(fetchCostSnapshots).toHaveBeenCalledTimes(2);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('shows an error when the sync mutation fails', async () => {
-    fetchCallerGroups.mockResolvedValue(['admin']);
-    runCostSnapshotNow.mockRejectedValue(new Error('not authorized'));
-    render(<TransparencyPage />);
-
-    const btn = await screen.findByRole('button', { name: /sync now/i });
-    fireEvent.click(btn);
-
-    await waitFor(() =>
-      expect(screen.getByText(/Sync failed: not authorized/i)).toBeInTheDocument(),
-    );
   });
 });
