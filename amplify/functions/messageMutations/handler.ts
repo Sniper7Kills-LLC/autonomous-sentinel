@@ -406,6 +406,8 @@ async function dispatchSubmitRecordingLess(
 
 export const handler: AppSyncResolverHandler<Record<string, unknown>, MessageRow | null> = async (
   event,
+  _context,
+  _callback,
 ) => {
   const client = injected.dataClient ?? (await getDefaultClient());
   const auditFn: AuditFn = injected.audit ?? ((ctx, opts) => defaultAudit(ctx, opts));
