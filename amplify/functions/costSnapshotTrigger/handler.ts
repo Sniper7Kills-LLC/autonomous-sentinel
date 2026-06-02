@@ -81,7 +81,14 @@ export function extractRequestedBy(identity: unknown): string | null {
   return typeof sub === 'string' ? sub : null;
 }
 
-export const handler: AppSyncResolverHandler<unknown, TriggerResult> = async (event) => {
+// `_context`/`_callback` declared (unused) so the 3-arg Lambda Handler
+// call sites in the tests aren't flagged by CodeQL
+// js/superfluous-trailing-arguments (same fix as #400).
+export const handler: AppSyncResolverHandler<unknown, TriggerResult> = async (
+  event,
+  _context,
+  _callback,
+) => {
   const deps = resolveDeps();
   const requestedBy = extractRequestedBy(event.identity);
   await deps.putEvents({ requestedBy });
