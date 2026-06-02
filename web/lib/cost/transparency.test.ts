@@ -1,12 +1,23 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   aggregateCost,
   aggregateRevenue,
   windowStartDate,
   formatBytes,
+  runCostSnapshotNow,
   type CostSnapshotRow,
   type RevenueSnapshotRow,
 } from './transparency';
+
+const { runCostSnapshotNowMutation } = vi.hoisted(() => ({
+  runCostSnapshotNowMutation: vi.fn(),
+}));
+
+vi.mock('@/lib/amplifyClient', () => ({
+  getDataClient: () => ({
+    mutations: { runCostSnapshotNow: runCostSnapshotNowMutation },
+  }),
+}));
 
 function cost(
   partial: Partial<CostSnapshotRow> &
@@ -177,6 +188,33 @@ describe('transparency aggregation (#303)', () => {
       expect(formatBytes(512)).toBe('512 B');
       expect(formatBytes(1536)).toBe('1.5 KB');
       expect(formatBytes(5 * 1024 * 1024)).toBe('5.0 MB');
+    });
+  });
+
+  describe('runCostSnapshotNow (#644)', () => {
+    beforeEach(() => {
+      runCostSnapshotNowMutation.mockReset();
+    });
+
+    it('calls the userPool-auth mutation and returns the parsed status (object data)', async () => {
+      runCostSnapshotNowMutation.mockResolvedValue({ data: { status: 'queued' }, errors: null });
+      const out = await runCostSnapshotNow();
+      expect(out).toEqual({ status: 'queued' });
+      expect(runCostSnapshotNowMutation).toHaveBeenCalledWith({}, { authMode: 'userPool' });
+    });
+
+    it('parses a JSON-string data payload', async () => {
+      runCostSnapshotNowMutation.mockResolvedValue({ data: '{"status":"queued"}', errors: null });
+      const out = await runCostSnapshotNow();
+      expect(out).toEqual({ status: 'queued' });
+    });
+
+    it('throws when the mutation returns errors', async () => {
+      runCostSnapshotNowMutation.mockResolvedValue({
+        data: null,
+        errors: [{ message: 'Unauthorized' }],
+      });
+      await expect(runCostSnapshotNow()).rejects.toThrow('Unauthorized');
     });
   });
 });

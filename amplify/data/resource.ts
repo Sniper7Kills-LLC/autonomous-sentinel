@@ -48,7 +48,7 @@ import { LinguisticConfig } from './models/linguistic-config';
 import { ReputationConfig } from './models/reputation-config';
 import { PlaybackConfig } from './models/playback-config';
 import { BudgetConfig } from './models/budget-config';
-import { CostSnapshot } from './models/cost-snapshot';
+import { CostSnapshot, runCostSnapshotNow } from './models/cost-snapshot';
 import { RevenueSnapshot } from './models/revenue-snapshot';
 import { LinguisticRule } from './models/linguistic-rule';
 import { LinguisticPromptTemplate } from './models/linguistic-prompt-template';
@@ -172,9 +172,12 @@ export const schema = a
     getMyNotificationPreference,
     setNotificationPreference,
 
-    // On-demand cost-snapshot sync is deferred to an SQS-based design (#644):
-    // the costSnapshotWorker can't be both an AppSync resolver and a cron
-    // target in this stack without a FunctionDirectiveStack↔data circular dep.
+    // On-demand cost-snapshot sync (#644). Bound to costSnapshotTrigger,
+    // which only does an sqs:SendMessage to the cost-snapshot queue; the
+    // worker consumes that queue as an SQS event source (not a resolver),
+    // so it never enters the FunctionDirectiveStack — no
+    // FunctionDirectiveStack↔data circular dependency.
+    runCostSnapshotNow,
   })
   .authorization((allow) => [
     // Schema-level Lambda access grants.

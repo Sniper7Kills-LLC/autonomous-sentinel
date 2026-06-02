@@ -1,12 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import TransparencyPage from './page';
 
-const { fetchCostSnapshots, fetchRevenueSnapshots, fetchCallerGroups } = vi.hoisted(() => ({
-  fetchCostSnapshots: vi.fn(),
-  fetchRevenueSnapshots: vi.fn(),
-  fetchCallerGroups: vi.fn(),
-}));
+const { fetchCostSnapshots, fetchRevenueSnapshots, fetchCallerGroups, runCostSnapshotNow } =
+  vi.hoisted(() => ({
+    fetchCostSnapshots: vi.fn(),
+    fetchRevenueSnapshots: vi.fn(),
+    fetchCallerGroups: vi.fn(),
+    runCostSnapshotNow: vi.fn(),
+  }));
 
 vi.mock('@/lib/cost/transparency', async (importActual) => {
   const actual = await importActual<Record<string, unknown>>();
@@ -14,6 +16,7 @@ vi.mock('@/lib/cost/transparency', async (importActual) => {
     ...actual,
     fetchCostSnapshots,
     fetchRevenueSnapshots,
+    runCostSnapshotNow,
   };
 });
 
@@ -117,5 +120,37 @@ describe('TransparencyPage (#303)', () => {
     fetchCostSnapshots.mockRejectedValue(new Error('boom'));
     render(<TransparencyPage />);
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/boom/));
+  });
+
+  describe('admin Sync now button (#644)', () => {
+    it('hides the button for a non-admin (moderator) caller', async () => {
+      fetchCallerGroups.mockResolvedValue(['moderator']);
+      render(<TransparencyPage />);
+      await waitFor(() => expect(screen.getByText(/Total: \$2\.50/)).toBeInTheDocument());
+      expect(screen.queryByRole('button', { name: /Sync now/i })).not.toBeInTheDocument();
+    });
+
+    it('shows the button for an admin and queues a sync on click', async () => {
+      fetchCallerGroups.mockResolvedValue(['admin']);
+      runCostSnapshotNow.mockResolvedValue({ status: 'queued' });
+      render(<TransparencyPage />);
+      const btn = await screen.findByRole('button', { name: /Sync now/i });
+      fireEvent.click(btn);
+      await waitFor(() => expect(runCostSnapshotNow).toHaveBeenCalledTimes(1));
+      await waitFor(() =>
+        expect(screen.getByRole('status')).toHaveTextContent(/Sync queued — refresh in ~1 min/i),
+      );
+    });
+
+    it('surfaces a sync failure message', async () => {
+      fetchCallerGroups.mockResolvedValue(['admin']);
+      runCostSnapshotNow.mockRejectedValue(new Error('Unauthorized'));
+      render(<TransparencyPage />);
+      const btn = await screen.findByRole('button', { name: /Sync now/i });
+      fireEvent.click(btn);
+      await waitFor(() =>
+        expect(screen.getByRole('status')).toHaveTextContent(/Sync failed: Unauthorized/i),
+      );
+    });
   });
 });
