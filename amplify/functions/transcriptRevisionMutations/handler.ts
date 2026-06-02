@@ -11,13 +11,14 @@ import {
  *
  * Two dispatch cases:
  *
- *   - `submitTranscriptRevision` — authenticated. Gates creation
- *     to Recordings whose `transcriptionFailed=true` (per
- *     CLAUDE.md "Manual transcription" rule). `proposedBy` set
- *     from `ctx.identity.sub`; `source` hardcoded to `MANUAL`
- *     (the only path users can submit through). Successfully-
- *     transcribed recordings reject revision creation — comments
- *     are the right surface for those.
+ *   - `submitTranscriptRevision` — authenticated. `proposedBy`
+ *     set from `ctx.identity.sub`. The recording's transcription
+ *     state picks the source (#652): `transcriptionFailed=true`
+ *     → `MANUAL` (user supplies the first transcript);
+ *     `transcriptionFailed=false` with an existing transcript →
+ *     `CORRECTION` (user proposes a fix). Both create a
+ *     non-accepted, votable proposal; neither overwrites the
+ *     recording transcript directly.
  *
  *   - `acceptTranscriptRevision` — admin/mod. Flips the target
  *     revision to `accepted=true` + `acceptedAt=now`, cascades
@@ -38,12 +39,8 @@ import {
  *     with a DDB conditional-write Recording-level guard if it
  *     becomes observable.
  *
- * MACHINE / CORRECTION sources are out of scope for these
- * mutations:
- *   - `MACHINE` rows are inserted by the transcribe Lambda
- *     directly (phase 3 pipeline).
- *   - `CORRECTION` rows belong to a separate "user corrects an
- *     already-accepted transcript" flow that lands later.
+ * `MACHINE` rows are out of scope here — they are inserted by the
+ * transcribe Lambda directly (phase 3 pipeline).
  */
 
 export type TranscriptRevisionRow = {
@@ -193,19 +190,34 @@ async function dispatchSubmit(
   if (!recording) {
     throw new Error(`submitTranscriptRevision: Recording not found for id=${recordingId}`);
   }
-  if (!recording.transcriptionFailed) {
-    // CLAUDE.md "Manual transcription" rule — comments are the
-    // right surface for successfully-transcribed recordings.
-    throw new Error(
-      `submitTranscriptRevision: Recording ${recordingId} has transcriptionFailed=false; use comments instead`,
-    );
+
+  // Two user-submission paths land here (#287 + #652), distinguished by
+  // the recording's transcription state:
+  //   - transcriptionFailed=true  → MANUAL: the recording has no usable
+  //     transcript, so the user supplies the first one (the original
+  //     "manual transcription" flow).
+  //   - transcriptionFailed=false → CORRECTION: the recording already has
+  //     a machine transcript; the user proposes a fix. Requires a
+  //     non-empty existing transcript (nothing to correct otherwise).
+  // Both create a non-accepted, votable proposal — neither overwrites the
+  // recording transcript directly (acceptTranscriptRevision does that).
+  let source: 'MANUAL' | 'CORRECTION';
+  if (recording.transcriptionFailed) {
+    source = 'MANUAL';
+  } else {
+    if (!(recording.transcript ?? '').trim()) {
+      throw new Error(
+        `submitTranscriptRevision: Recording ${recordingId} has no transcript to correct`,
+      );
+    }
+    source = 'CORRECTION';
   }
 
   const created = await deps.client.models.TranscriptRevision.create({
     recordingId,
     proposedText,
     proposedBy: authorSub,
-    source: 'MANUAL',
+    source,
     voteScore: 0,
     accepted: false,
     superseded: false,
