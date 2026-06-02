@@ -43,6 +43,7 @@ import { legacyClaimWorker } from './functions/legacyClaimWorker/resource';
 import { linguisticConfigStream } from './functions/linguisticConfigStream/resource';
 import { legacyClaimReplaySweeper } from './functions/legacyClaimReplaySweeper/resource';
 import { fieldVoteOrphanJanitor } from './functions/fieldVoteOrphanJanitor/resource';
+import { revisionVoteScoreCron } from './functions/revisionVoteScoreCron/resource';
 import { deployBadge } from './functions/deployBadge/resource';
 import { costSnapshotWorker } from './functions/costSnapshotWorker/resource';
 import { costSnapshotTrigger } from './functions/costSnapshotTrigger/resource';
@@ -83,6 +84,7 @@ const backend = defineBackend({
   legacyClaimWorker,
   legacyClaimReplaySweeper,
   fieldVoteOrphanJanitor,
+  revisionVoteScoreCron,
   linguisticConfigStream,
   deployBadge,
   costSnapshotWorker,
@@ -512,6 +514,47 @@ new Rule(fieldVoteOrphanJanitorLambda.stack, 'FieldVoteOrphanJanitorDailySweep',
   description: 'Daily cleanup of FieldVote rows whose messageId no longer resolves (#270).',
   schedule: Schedule.cron({ minute: '0', hour: '4' }),
   targets: [new LambdaTarget(fieldVoteOrphanJanitorLambda)],
+});
+
+// Revision voteScore recompute cron (#653).
+//
+// Recomputes `TranscriptRevision.voteScore` from the live RevisionVote rows
+// on a schedule (every 30 min) rather than via a DDB stream — a stream
+// consumer on RevisionVote (which carries the castRevisionVote resolver)
+// closes a CFN cycle that sandbox can't catch (reverted #658/#661). Raw DDB
+// only — Scan RevisionVote + UpdateItem TranscriptRevision, both intra-data-
+// stack grants, no allow.resource — so it is cycle-safe like the janitor.
+const revisionVoteScoreCronLambda = backend.revisionVoteScoreCron.resources
+  .lambda as LambdaFunction;
+const revisionVoteTableForCron = backend.data.resources.tables['RevisionVote'];
+const transcriptRevisionTableForCron = backend.data.resources.tables['TranscriptRevision'];
+if (!revisionVoteTableForCron || !transcriptRevisionTableForCron) {
+  throw new Error('backend: RevisionVote / TranscriptRevision table not found for voteScore cron');
+}
+revisionVoteScoreCronLambda.addEnvironment(
+  'REVISION_VOTE_TABLE_NAME',
+  revisionVoteTableForCron.tableName,
+);
+revisionVoteScoreCronLambda.addEnvironment(
+  'TRANSCRIPT_REVISION_TABLE_NAME',
+  transcriptRevisionTableForCron.tableName,
+);
+revisionVoteScoreCronLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:Scan'],
+    resources: [revisionVoteTableForCron.tableArn],
+  }),
+);
+revisionVoteScoreCronLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:UpdateItem'],
+    resources: [transcriptRevisionTableForCron.tableArn],
+  }),
+);
+new Rule(revisionVoteScoreCronLambda.stack, 'RevisionVoteScoreRecompute', {
+  description: 'Recompute TranscriptRevision.voteScore from RevisionVote rows every 30 min (#653).',
+  schedule: Schedule.rate(Duration.minutes(30)),
+  targets: [new LambdaTarget(revisionVoteScoreCronLambda)],
 });
 
 // Cost-transparency snapshot worker wiring (#303).
