@@ -302,10 +302,18 @@ type RawConfig = {
 export async function getLinguisticConfig(key: string): Promise<unknown> {
   const model = modelOps<RawConfig>('LinguisticConfig');
   const get = (
-    model as { get?: (input: Record<string, unknown>) => Promise<RawMutResult<RawConfig>> }
+    model as {
+      get?: (
+        input: Record<string, unknown>,
+        options?: Record<string, unknown>,
+      ) => Promise<RawMutResult<RawConfig>>;
+    }
   ).get;
   if (!get) throw new Error('LinguisticConfig.get is unavailable.');
-  const res = await get({ key, ...USER_POOL });
+  // authMode is the SECOND arg to model.get (identifier first). Passing it
+  // inside the identifier object silently drops it → the read falls back to
+  // the client-default auth and 401s against the admin-only model.
+  const res = await get({ key }, USER_POOL);
   throwOnErrors(res.errors, `getLinguisticConfig(${key})`);
   return res.data?.value;
 }
