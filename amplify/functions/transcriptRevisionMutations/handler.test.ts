@@ -13,9 +13,10 @@ import {
  * Lambda-resolver tests for TranscriptRevision custom mutations (#287 / #34).
  *
  * Two mutations:
- *   - `submitTranscriptRevision` — authenticated. Gates creation on
- *     `Recording.transcriptionFailed=true` per CLAUDE.md "Manual
- *     transcription" rule.
+ *   - `submitTranscriptRevision` — authenticated. Source picked from
+ *     the recording's state (#652): `transcriptionFailed=true` → MANUAL;
+ *     `transcriptionFailed=false` with an existing transcript →
+ *     CORRECTION; non-failed with no transcript is rejected.
  *   - `acceptTranscriptRevision` — admin/mod. Sets `accepted=true`,
  *     cascades `superseded=true` to all sibling revisions on the
  *     same Recording, rewrites `Recording.transcript`. Emits
@@ -206,16 +207,24 @@ describe('transcriptRevisionMutations — submitTranscriptRevision', () => {
     expect(input.superseded).toBe(false);
   });
 
-  it('rejects a CORRECTION when the recording has no transcript to correct (#652)', async () => {
-    const { client, auditSpy } = makeStubs({
-      recordings: [{ id: 'rec-empty', transcriptionFailed: false, transcript: '' }],
-    });
-    __setDeps({ dataClient: client, audit: auditSpy });
-    const event = makeEvent({
-      arguments: { recordingId: 'rec-empty', proposedText: 'nothing to fix' },
-    });
-    await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(/no transcript/i);
-  });
+  it.each([
+    ['empty', ''],
+    ['whitespace-only', '   \n\t '],
+  ])(
+    'rejects a CORRECTION when the recording transcript is %s (#652)',
+    async (_label, transcript) => {
+      const { client, auditSpy } = makeStubs({
+        recordings: [{ id: 'rec-empty', transcriptionFailed: false, transcript }],
+      });
+      __setDeps({ dataClient: client, audit: auditSpy });
+      const event = makeEvent({
+        arguments: { recordingId: 'rec-empty', proposedText: 'nothing to fix' },
+      });
+      await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(
+        /no transcript/i,
+      );
+    },
+  );
 
   it('allows MANUAL submission when Recording.transcriptionFailed is true', async () => {
     const { client, revisionCreateSpy, auditSpy } = makeStubs({
