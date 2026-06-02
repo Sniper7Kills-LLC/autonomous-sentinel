@@ -74,11 +74,7 @@ describe('TransparencyPage (#303)', () => {
     fetchCostSnapshots.mockResolvedValue(COST_ROWS);
     fetchRevenueSnapshots.mockResolvedValue([]);
     fetchCallerGroups.mockResolvedValue([]);
-    runCostSnapshotNow.mockResolvedValue({
-      snapshotDate: '2026-05-31',
-      rowsWritten: 3,
-      totalUsd: 2.5,
-    });
+    runCostSnapshotNow.mockResolvedValue({ status: 'queued' });
   });
 
   it('renders the cost panel with the AWS total for everyone', async () => {
@@ -140,20 +136,33 @@ describe('TransparencyPage (#303)', () => {
     expect(screen.queryByRole('button', { name: /sync now/i })).not.toBeInTheDocument();
   });
 
-  it('shows "Sync now" for an admin and triggers the mutation + refetch on click', async () => {
-    fetchCallerGroups.mockResolvedValue(['admin']);
-    render(<TransparencyPage />);
+  it('shows "Sync now" for an admin and queues the mutation + delayed refetch on click', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchCallerGroups.mockResolvedValue(['admin']);
+      render(<TransparencyPage />);
 
-    const btn = await screen.findByRole('button', { name: /sync now/i });
-    // One initial cost fetch on mount.
-    expect(fetchCostSnapshots).toHaveBeenCalledTimes(1);
+      // Drain the mount effect (promises) under fake timers.
+      const btn = await vi.waitFor(() => screen.getByRole('button', { name: /sync now/i }));
+      // One initial cost fetch on mount.
+      expect(fetchCostSnapshots).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(btn);
+      fireEvent.click(btn);
 
-    await waitFor(() => expect(runCostSnapshotNow).toHaveBeenCalledTimes(1));
-    // Success status + refetch (second cost fetch).
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/Synced/i));
-    expect(fetchCostSnapshots).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => expect(runCostSnapshotNow).toHaveBeenCalledTimes(1));
+      // Queued status (NOT row counts — the worker runs async).
+      await vi.waitFor(() =>
+        expect(screen.getByRole('status')).toHaveTextContent(/Sync queued — refresh in ~1 min/i),
+      );
+      // Refetch is deferred ~1 min; not yet fired.
+      expect(fetchCostSnapshots).toHaveBeenCalledTimes(1);
+
+      // Advance past the refetch delay → second cost fetch.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fetchCostSnapshots).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('shows an error when the sync mutation fails', async () => {

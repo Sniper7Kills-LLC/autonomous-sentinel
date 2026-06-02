@@ -17,11 +17,17 @@ import {
 } from '@/lib/cost/transparency';
 
 const WINDOW_DAYS = 30;
+/**
+ * After the admin queues a sync, the worker runs fire-and-forget via
+ * EventBridge. Refetch cost data once after this delay so the page
+ * surfaces freshly-written rows without a manual reload.
+ */
+const SYNC_REFETCH_DELAY_MS = 60_000;
 
 type SyncState =
   | { status: 'idle' }
   | { status: 'running' }
-  | { status: 'done'; rowsWritten: number; snapshotDate: string }
+  | { status: 'queued' }
   | { status: 'error'; message: string };
 
 export default function TransparencyPage() {
@@ -53,11 +59,9 @@ export default function TransparencyPage() {
         if (!cancelled) setLoading(false);
       }
 
-      // Revenue is admin/moderator only — only attempt the gated read
-      // when the caller is in one of those groups. The server enforces
-      // the same authz; this just avoids a guaranteed authz error for
-      // everyone else. The "Sync now" trigger is admin-only (stricter
-      // than the revenue read).
+      // Revenue read is admin/moderator only; the on-demand "Sync now"
+      // trigger is admin-only (stricter). The server enforces both — this
+      // just avoids guaranteed authz errors for everyone else.
       try {
         const groups = await fetchCallerGroups();
         if (!cancelled && isAdmin(groups)) setShowSync(true);
@@ -78,14 +82,13 @@ export default function TransparencyPage() {
   const handleSync = useCallback(async (): Promise<void> => {
     setSync({ status: 'running' });
     try {
-      const result = await runCostSnapshotNow();
-      setSync({
-        status: 'done',
-        rowsWritten: result.rowsWritten,
-        snapshotDate: result.snapshotDate,
-      });
-      // Refetch so the panel reflects the freshly written rows.
-      await loadCost();
+      await runCostSnapshotNow();
+      setSync({ status: 'queued' });
+      // The worker runs async via EventBridge — refetch once after a
+      // short delay so the freshly-written rows appear.
+      setTimeout(() => {
+        void loadCost();
+      }, SYNC_REFETCH_DELAY_MS);
     } catch (e) {
       setSync({ status: 'error', message: e instanceof Error ? e.message : 'Sync failed.' });
     }
@@ -111,12 +114,8 @@ export default function TransparencyPage() {
             >
               {sync.status === 'running' ? 'Syncing…' : 'Sync now'}
             </button>
-            {sync.status === 'done' && (
-              <span role="status">
-                {' '}
-                Synced — {sync.rowsWritten} row{sync.rowsWritten === 1 ? '' : 's'} for{' '}
-                {sync.snapshotDate || 'latest day'}.
-              </span>
+            {sync.status === 'queued' && (
+              <span role="status"> Sync queued — refresh in ~1 min.</span>
             )}
             {sync.status === 'error' && <span role="alert"> Sync failed: {sync.message}</span>}
           </div>
