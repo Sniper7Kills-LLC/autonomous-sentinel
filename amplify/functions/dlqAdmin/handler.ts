@@ -13,7 +13,8 @@ import {
 
 /**
  * Lambda-backed AppSync resolver for the admin DLQ + manual-reprocess
- * view (#107). Dispatches on `event.info.fieldName`:
+ * view (#107). Dispatches on the resolver field name (top-level
+ * `event.fieldName` in prod, `event.info.fieldName` in the typed shape):
  *
  *   - `listDlqMessages` — peek the requested stage's DLQ (visibility
  *     timeout 0, no delete) and return stuck messages with friendly
@@ -358,7 +359,13 @@ export const handler: AppSyncResolverHandler<
   const sqs = injected.sqs ?? sqsClient();
   const audit: AuditFn = injected.audit ?? defaultAudit;
   const now = injected.now ?? (() => new Date());
-  const fieldName = event.info?.fieldName;
+  // AppSync's Lambda-data-source payload carries `fieldName` at the TOP
+  // level of the event; the `AppSyncResolverHandler` type only surfaces it
+  // under `info.fieldName`, which is what unit-test fixtures mirror. Reading
+  // only `event.info?.fieldName` made every real invocation dispatch on
+  // `undefined` ("unsupported fieldName undefined", #651 prod regression).
+  // Accept both shapes — same fix as transcriptRevisionMutations.
+  const fieldName = (event as unknown as { fieldName?: string }).fieldName ?? event.info?.fieldName;
 
   switch (fieldName) {
     case 'listDlqMessages':

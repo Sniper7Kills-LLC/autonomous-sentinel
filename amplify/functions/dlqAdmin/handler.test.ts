@@ -75,6 +75,22 @@ describe('dlqAdmin handler (#107)', () => {
         /unsupported fieldName/,
       );
     });
+
+    it('dispatches on the top-level fieldName shape AppSync actually sends (#651 regression)', async () => {
+      const send = vi.fn().mockResolvedValue({ Messages: [] });
+      __setDeps({ sqs: { send } as never });
+      // Real AppSync Lambda-resolver payload: fieldName at the TOP level,
+      // no `info.fieldName`. Must NOT throw "unsupported fieldName undefined".
+      const prodEvent = {
+        arguments: { stage: 'preprocess' },
+        identity: adminIdentity,
+        fieldName: 'listDlqMessages',
+        request: { headers: {} },
+      } as never;
+      const res = (await handler(prodEvent, context, cb)) as unknown as { stage: string };
+      expect(res.stage).toBe('preprocess');
+      expect(send).toHaveBeenCalled();
+    });
   });
 
   describe('listDlqMessages', () => {
