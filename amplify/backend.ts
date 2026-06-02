@@ -580,11 +580,10 @@ costSnapshotWorkerLambda.addToRolePolicy(
 );
 // s3:ListBucket uses a WILDCARD resource (`*`) rather than the media
 // bucket ARN. Referencing the storage-stack bucket ARN here imports a
-// cross-stack value into the worker's role; combined with the
-// `runCostSnapshotNow` mutation binding the worker into the data stack,
-// that cross-stack import reintroduces the CloudFormation circular
-// dependency (#644). The handler still scopes its scan to the bucket via
-// the `MEDIA_BUCKET_NAME` env var, so the effective access is unchanged.
+// cross-stack value into the worker's role, which contributed to the
+// CloudFormation circular dependency (#644). The handler still scopes its
+// scan to the bucket via the `MEDIA_BUCKET_NAME` env var, so the effective
+// access is unchanged.
 costSnapshotWorkerLambda.addToRolePolicy(
   new PolicyStatement({
     actions: ['s3:ListBucket'],
@@ -601,14 +600,12 @@ new Rule(costSnapshotWorkerLambda.stack, 'CostSnapshotDaily', {
   targets: [new LambdaTarget(costSnapshotWorkerLambda)],
 });
 
-// Admin on-demand cost-sync (#644): the `runCostSnapshotNow` mutation is
-// bound DIRECTLY to this same worker Lambda as its AppSync resolver in
-// `amplify/data/resource.ts` — NO separate trigger Lambda, NO SQS, and NO
-// second EventBridge rule. The worker self-detects the invocation source
-// (EventBridge cron vs AppSync mutation) and returns a summary only on the
-// mutation path. The worker keeps exactly ONE rule: CostSnapshotDaily.
-// Using wildcard S3 IAM + grantWriteData (above) keeps the worker free of
-// cross-stack ARN imports, which is what previously caused the CFN cycle.
+// On-demand cost-sync (#644) is deferred to an SQS-based design: the worker
+// cannot be both an AppSync resolver and a cron target in this stack without
+// a FunctionDirectiveStack↔data CloudFormation circular dependency. The
+// worker is cron-only — exactly ONE rule: CostSnapshotDaily. Using wildcard
+// S3 IAM + grantWriteData (above) keeps the worker free of cross-stack ARN
+// imports, which is what previously caused the CFN cycle.
 
 // Stripe revenue worker — STUB cron (#303; deferral #206 / #208).
 //
