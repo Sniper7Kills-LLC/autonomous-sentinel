@@ -13,11 +13,14 @@ import { transcriptRevisionMutations } from '../../functions/transcriptRevisionM
  *     cascades `superseded=true` to siblings on the same Recording,
  *     rewrites `Recording.transcript`, emits `MESSAGE_EDIT` audit.
  *
- * `source` distinguishes:
+ * `source` distinguishes (set server-side by `submitTranscriptRevision`
+ * from the recording's transcription state — #652):
  *   - `MACHINE` — produced by the Whisper / transcribe Lambda
  *   - `MANUAL` — user-submitted on a `transcriptionFailed=true` Recording
- *   - `CORRECTION` — user proposes a fix to a previously accepted transcript
- *     (separate flow; lands later)
+ *     (the recording had no usable transcript)
+ *   - `CORRECTION` — user proposes a fix to a successfully-transcribed
+ *     recording. A non-accepted, votable proposal; `acceptTranscriptRevision`
+ *     (mod/admin) is what rewrites `Recording.transcript`.
  */
 export const TranscriptRevision = a
   .model({
@@ -58,13 +61,13 @@ export const TranscriptRevision = a
   ]);
 
 /**
- * `submitTranscriptRevision` — authenticated manual submission (#287).
+ * `submitTranscriptRevision` — authenticated submission (#287 + #652).
  *
- * Gated to Recordings with `transcriptionFailed=true` per CLAUDE.md.
- * `proposedBy` derived from `ctx.identity.sub`; `source` forced to
- * `MANUAL`. The server-side check is the only thing keeping
- * recording-less spam off the comment / revision surface (per the
- * recording-less submission flow tracked at #285).
+ * `proposedBy` derived from `ctx.identity.sub`. The recording's
+ * transcription state picks `source` server-side: `transcriptionFailed=true`
+ * → `MANUAL`; otherwise (existing transcript present) → `CORRECTION`. Both
+ * land as non-accepted, votable proposals — the client cannot set `source`
+ * or `proposedBy`, nor bypass the recording-state check.
  */
 export const submitTranscriptRevision = a
   .mutation()

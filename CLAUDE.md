@@ -261,11 +261,13 @@ For each registered SDR location, pull live NOAA solar flux index / K-index data
 - Ban evasion detection at v1: **email + IP only**. Cognito Advanced Security Features ($0.05/MAU) skipped at v1 for cost; browser fingerprint library skipped. Escalate to fingerprint (FingerprintPro) + Cognito ASF if ban evasion becomes a real problem.
 - **Banned users blocked at Stripe Checkout** (no donations from banned accounts; ban remains effective regardless of money sent).
 
-### Manual transcription
+### Manual transcription + corrections
 
-- **Strictly gated** to `transcription_failed=true` recordings. Anyone can submit a manual transcript on a failed recording (becomes a revision proposal under community vote).
-- Comments / corrections on successfully-transcribed recordings: use the existing comment + abuse-flag system, **not** a new transcription submission. Preserves the "no manual entry" rule.
-- Manual transcripts pass through the same profanity / hate-speech auto-flag as comments (Q156 — spammers will try to inject bad content here).
+`submitTranscriptRevision` is the single user write path; `source` is chosen server-side from the recording's transcription state (#652). Both land as **non-accepted, votable proposals** — `acceptTranscriptRevision` (mod/admin) is the only thing that rewrites `Recording.transcript` (append-revision model; recording stays source of truth).
+
+- **`transcription_failed=true` → `MANUAL`.** Anyone can submit a manual transcript on a failed recording (the recording has no usable transcript). Becomes a revision proposal under community vote.
+- **`transcription_failed=false` (existing transcript) → `CORRECTION`.** A signed-in user can propose a fix to a successfully-transcribed recording via the inline correction form; it becomes a votable revision proposal alongside any others. (Supersedes the earlier "use comments instead for successful transcripts" rule — the community-validation Vote design + the inline correction UI always intended transcript-revision proposals here. General discussion still uses comments.)
+- Manual transcripts + corrections pass through the same profanity / hate-speech auto-flag as comments (Q156 — spammers will try to inject bad content here).
 
 ### Content moderation
 

@@ -186,17 +186,35 @@ describe('transcriptRevisionMutations — submitTranscriptRevision', () => {
     await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(/Recording/);
   });
 
-  it('rejects MANUAL submissions when Recording.transcriptionFailed is false (CLAUDE.md gate)', async () => {
-    const { client, auditSpy } = makeStubs({
-      recordings: [{ id: 'rec-good', transcriptionFailed: false }],
+  it('creates a CORRECTION revision on a successfully-transcribed recording (#652)', async () => {
+    const { client, revisionCreateSpy, auditSpy } = makeStubs({
+      recordings: [
+        { id: 'rec-good', transcriptionFailed: false, transcript: 'SKYKING SKYKING do not answer' },
+      ],
     });
     __setDeps({ dataClient: client, audit: auditSpy });
     const event = makeEvent({
-      arguments: { recordingId: 'rec-good', proposedText: 'my correction' },
+      arguments: { recordingId: 'rec-good', proposedText: 'SKYKING do not answer — corrected' },
     });
-    await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(
-      /transcriptionFailed/i,
-    );
+    await handler(event, {} as Context, () => undefined);
+
+    const input = revisionCreateSpy.mock.calls[0]?.[0] as TranscriptRevisionRow;
+    expect(input.recordingId).toBe('rec-good');
+    expect(input.source).toBe('CORRECTION');
+    expect(input.proposedBy).toBe('cog-author-001');
+    expect(input.accepted).toBe(false);
+    expect(input.superseded).toBe(false);
+  });
+
+  it('rejects a CORRECTION when the recording has no transcript to correct (#652)', async () => {
+    const { client, auditSpy } = makeStubs({
+      recordings: [{ id: 'rec-empty', transcriptionFailed: false, transcript: '' }],
+    });
+    __setDeps({ dataClient: client, audit: auditSpy });
+    const event = makeEvent({
+      arguments: { recordingId: 'rec-empty', proposedText: 'nothing to fix' },
+    });
+    await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(/no transcript/i);
   });
 
   it('allows MANUAL submission when Recording.transcriptionFailed is true', async () => {
