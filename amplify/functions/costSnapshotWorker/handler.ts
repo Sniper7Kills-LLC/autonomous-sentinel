@@ -205,24 +205,41 @@ async function defaultFetchS3Prefixes(snapshotDate: string): Promise<CostRow[]> 
   return mapS3PrefixRows(snapshotDate, accumulateS3Prefixes(objects));
 }
 
+/**
+ * Build the DynamoDB item for one CostRow.
+ *
+ * `createdAt` / `updatedAt` are stamped here because these rows are written
+ * straight to DynamoDB via `BatchWriteItem` (bypassing AppSync). Amplify Data
+ * auto-adds both to the `CostSnapshot` model as non-nullable `AWSDateTime!`,
+ * but only stamps them on AppSync mutations — a raw SDK PutRequest must set
+ * them itself or every subsequent `listCostSnapshots` read fails with a
+ * "Cannot return null for non-nullable type: 'AWSDateTime'" error (#649).
+ *
+ * Daily rows overwrite the same `(snapshotDate, subject)` key, so a plain Put
+ * resets both timestamps on re-run; acceptable for a daily snapshot.
+ */
+export function buildSnapshotItem(row: CostRow, nowIso: string) {
+  return {
+    snapshotDate: row.snapshotDate,
+    subject: row.subject,
+    category: row.category,
+    usdAmount: row.usdAmount,
+    unit: row.unit,
+    meta: JSON.stringify(row.meta),
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  };
+}
+
 async function defaultWriteRows(rows: CostRow[]): Promise<void> {
   if (rows.length === 0) return;
   const table = tableName();
+  const nowIso = new Date().toISOString();
   for (let i = 0; i < rows.length; i += 25) {
     const chunk = rows.slice(i, i + 25);
     const requests: WriteRequest[] = chunk.map((row) => ({
       PutRequest: {
-        Item: marshall(
-          {
-            snapshotDate: row.snapshotDate,
-            subject: row.subject,
-            category: row.category,
-            usdAmount: row.usdAmount,
-            unit: row.unit,
-            meta: JSON.stringify(row.meta),
-          },
-          { removeUndefinedValues: true },
-        ),
+        Item: marshall(buildSnapshotItem(row, nowIso), { removeUndefinedValues: true }),
       },
     }));
     let pending: WriteRequest[] | undefined = requests;

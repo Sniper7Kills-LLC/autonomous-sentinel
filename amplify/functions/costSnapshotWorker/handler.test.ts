@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { ScheduledEvent, SQSEvent, Context } from 'aws-lambda';
-import { handler, isSqsEvent, __setDeps, __resetDeps, type WorkerDeps } from './handler';
+import {
+  handler,
+  isSqsEvent,
+  buildSnapshotItem,
+  __setDeps,
+  __resetDeps,
+  type WorkerDeps,
+} from './handler';
 import type { CostRow } from './cost-rows';
 
 const event = {} as ScheduledEvent;
@@ -97,6 +104,26 @@ describe('costSnapshotWorker handler (#303)', () => {
     });
 
     await expect(handler(event, context, cb)).rejects.toThrow('DDB down');
+  });
+
+  describe('buildSnapshotItem — Amplify auto-fields (#649)', () => {
+    it('stamps non-null createdAt + updatedAt so AWSDateTime! reads do not fail', () => {
+      const nowIso = '2026-06-01T05:00:00.000Z';
+      const item = buildSnapshotItem(row('AWS Lambda'), nowIso);
+      expect(item.createdAt).toBe(nowIso);
+      expect(item.updatedAt).toBe(nowIso);
+    });
+
+    it('preserves the row business fields and serializes meta to JSON', () => {
+      const item = buildSnapshotItem(
+        { ...row('preprocess'), meta: { invocations: 12 } },
+        '2026-06-01T05:00:00.000Z',
+      );
+      expect(item.snapshotDate).toBe('2026-05-31');
+      expect(item.subject).toBe('preprocess');
+      expect(item.category).toBe('AWS_SERVICE');
+      expect(item.meta).toBe(JSON.stringify({ invocations: 12 }));
+    });
   });
 
   describe('event-shape detection', () => {
