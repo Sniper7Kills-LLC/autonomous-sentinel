@@ -1,4 +1,5 @@
 import { a } from '@aws-amplify/backend';
+import { costSnapshotWorker } from '../../functions/costSnapshotWorker/resource';
 
 /**
  * CostSnapshot — daily AWS spend rows for the public `/transparency`
@@ -46,3 +47,24 @@ export const CostSnapshot = a
     allow.authenticated().to(['read']),
     allow.groups(['admin']).to(['read', 'create', 'update', 'delete']),
   ]);
+
+/**
+ * `runCostSnapshotNow` — admin-only on-demand cost-snapshot sync (#644).
+ *
+ * Bound DIRECTLY to the existing `costSnapshotWorker` Lambda as its AppSync
+ * resolver — NO separate trigger Lambda, NO SQS queue, and NO second
+ * EventBridge rule (the second rule + cross-stack ARN imports were what
+ * previously cycled CloudFormation). The worker self-detects the invocation
+ * source: the 05:00 cron path returns void, while this mutation path returns
+ * a `{ snapshotDate, rowsWritten, totalUsd }` JSON summary for the admin UI.
+ *
+ * The function's data-stack IAM grant is wired in `data/resource.ts`'s
+ * schema-level `allow.resource(costSnapshotWorker)` block; the AWS-service
+ * grants (Cost Explorer, CloudWatch, S3 wildcard, CostSnapshot writes via
+ * grantWriteData) live in `amplify/backend.ts`.
+ */
+export const runCostSnapshotNow = a
+  .mutation()
+  .returns(a.json())
+  .authorization((allow) => allow.groups(['admin']))
+  .handler(a.handler.function(costSnapshotWorker));

@@ -533,8 +533,11 @@ new Rule(fieldVoteOrphanJanitorLambda.stack, 'FieldVoteOrphanJanitorDailySweep',
 //                                   resource-level scoping).
 //   - cloudwatch:GetMetricData    → account-wide (same — GetMetricData
 //                                   does not support resource ARNs).
-//   - s3:ListBucket               → media bucket only.
-//   - dynamodb:PutItem/BatchWriteItem → CostSnapshot table only.
+//   - s3:ListBucket               → wildcard (`*`); the handler scopes
+//                                   the scan to MEDIA_BUCKET_NAME. Wildcard
+//                                   avoids a cross-stack bucket-ARN import
+//                                   (the CFN-cycle trigger — #644).
+//   - CostSnapshot writes         → grantWriteData (intra-data-stack grant).
 const costSnapshotTable = backend.data.resources.tables['CostSnapshot'];
 if (!costSnapshotTable) {
   throw new Error('backend: CostSnapshot table not found on data resources');
@@ -575,30 +578,37 @@ costSnapshotWorkerLambda.addToRolePolicy(
     resources: ['*'],
   }),
 );
+// s3:ListBucket uses a WILDCARD resource (`*`) rather than the media
+// bucket ARN. Referencing the storage-stack bucket ARN here imports a
+// cross-stack value into the worker's role; combined with the
+// `runCostSnapshotNow` mutation binding the worker into the data stack,
+// that cross-stack import reintroduces the CloudFormation circular
+// dependency (#644). The handler still scopes its scan to the bucket via
+// the `MEDIA_BUCKET_NAME` env var, so the effective access is unchanged.
 costSnapshotWorkerLambda.addToRolePolicy(
   new PolicyStatement({
     actions: ['s3:ListBucket'],
-    resources: [backend.storage.resources.bucket.bucketArn],
+    resources: ['*'],
   }),
 );
-costSnapshotWorkerLambda.addToRolePolicy(
-  new PolicyStatement({
-    actions: ['dynamodb:PutItem', 'dynamodb:BatchWriteItem'],
-    resources: [costSnapshotTable.tableArn],
-  }),
-);
+// DDB writes use an intra-data-stack grant (the CostSnapshot table lives
+// in the data stack, same stack as the worker via resourceGroupName:'data'),
+// avoiding a cross-stack table-ARN import — mirrors AVGN's grantWriteData.
+costSnapshotTable.grantWriteData(costSnapshotWorkerLambda);
 new Rule(costSnapshotWorkerLambda.stack, 'CostSnapshotDaily', {
   description: 'Daily AWS-spend snapshot for the public /transparency page (#303).',
   schedule: Schedule.cron({ minute: '0', hour: '5' }),
   targets: [new LambdaTarget(costSnapshotWorkerLambda)],
 });
 
-// NOTE: admin on-demand cost-sync (the `runCostSnapshotNow` mutation +
-// `costSnapshotTrigger` Lambda + a second `CostSnapshotManualSync`
-// EventBridge rule on the worker's stack) was removed — that second rule
-// in the same stack as the worker reintroduced the CFN circular dependency
-// that blocked deploy. On-demand sync is deferred to the SQS-based
-// follow-up (#644). The worker now has exactly one rule: CostSnapshotDaily.
+// Admin on-demand cost-sync (#644): the `runCostSnapshotNow` mutation is
+// bound DIRECTLY to this same worker Lambda as its AppSync resolver in
+// `amplify/data/resource.ts` — NO separate trigger Lambda, NO SQS, and NO
+// second EventBridge rule. The worker self-detects the invocation source
+// (EventBridge cron vs AppSync mutation) and returns a summary only on the
+// mutation path. The worker keeps exactly ONE rule: CostSnapshotDaily.
+// Using wildcard S3 IAM + grantWriteData (above) keeps the worker free of
+// cross-stack ARN imports, which is what previously caused the CFN cycle.
 
 // Stripe revenue worker — STUB cron (#303; deferral #206 / #208).
 //

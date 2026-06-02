@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { fetchCallerGroups, isModeratorOrAdmin } from '@/lib/auth/roles';
+import { fetchCallerGroups, isModeratorOrAdmin, isAdmin } from '@/lib/auth/roles';
 import {
   aggregateCost,
   aggregateRevenue,
@@ -11,15 +11,13 @@ import {
   formatBytes,
   fetchCostSnapshots,
   fetchRevenueSnapshots,
+  runCostSnapshotNow,
   type CostAggregate,
   type RevenueAggregate,
+  type CostSyncResult,
 } from '@/lib/cost/transparency';
 
 const WINDOW_DAYS = 30;
-
-// Admin on-demand "Sync now" was removed — the EventBridge trigger
-// reintroduced a CFN circular dependency. On-demand sync is deferred to
-// the SQS-based follow-up (#644); the daily cron keeps snapshots fresh.
 
 export default function TransparencyPage() {
   const [cost, setCost] = useState<CostAggregate | null>(null);
@@ -27,6 +25,34 @@ export default function TransparencyPage() {
   const [showRevenue, setShowRevenue] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Admin-only on-demand "Sync now" (#644).
+  const [showSync, setShowSync] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<CostSyncResult | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  async function loadCost(): Promise<void> {
+    const fromDate = windowStartDate(new Date(), WINDOW_DAYS);
+    const costRows = await fetchCostSnapshots(fromDate);
+    setCost(aggregateCost(costRows, fromDate));
+  }
+
+  async function handleSyncNow(): Promise<void> {
+    setSyncing(true);
+    setSyncError(null);
+    setSyncResult(null);
+    try {
+      const result = await runCostSnapshotNow();
+      setSyncResult(result);
+      // Refetch the cost panel so the freshly-written rows show up.
+      await loadCost();
+    } catch (e) {
+      setSyncError(e instanceof Error ? e.message : 'Sync failed.');
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -43,9 +69,12 @@ export default function TransparencyPage() {
       }
 
       // Revenue read is admin/moderator only. The server enforces this —
-      // this just avoids guaranteed authz errors for everyone else.
+      // this just avoids guaranteed authz errors for everyone else. The
+      // on-demand "Sync now" button is admin-only (matches the
+      // `runCostSnapshotNow` group gate).
       try {
         const groups = await fetchCallerGroups();
+        if (!cancelled && isAdmin(groups)) setShowSync(true);
         if (!isModeratorOrAdmin(groups)) return;
         if (!cancelled) setShowRevenue(true);
         const revRows = await fetchRevenueSnapshots(fromDate);
@@ -70,6 +99,22 @@ export default function TransparencyPage() {
 
       <section aria-labelledby="cost-panel-heading">
         <h2 id="cost-panel-heading">AWS spend (last {WINDOW_DAYS} days)</h2>
+
+        {showSync && (
+          <div>
+            <button type="button" onClick={() => void handleSyncNow()} disabled={syncing}>
+              {syncing ? 'Syncing…' : 'Sync now'}
+            </button>
+            {syncResult && (
+              <p role="status">
+                Synced {syncResult.snapshotDate}: {syncResult.rowsWritten} row
+                {syncResult.rowsWritten === 1 ? '' : 's'} written, ${syncResult.totalUsd.toFixed(2)}{' '}
+                total.
+              </p>
+            )}
+            {syncError && <p role="alert">Sync failed: {syncError}</p>}
+          </div>
+        )}
 
         {loading && <p>Loading cost data…</p>}
         {error && <p role="alert">Could not load cost data: {error}</p>}
