@@ -136,6 +136,13 @@ describe('castRevisionVote response resolver', () => {
     expect(result).toEqual(row);
   });
 
+  it('stamps createdAt (once) + updatedAt (always) so AWSDateTime! reads pass (#665)', () => {
+    const op = request(ctxFor({ revisionId: 'rev-1', value: 'UP' }, 'sub-1'));
+    expect(op.update.expression).toMatch(/#createdAt = if_not_exists\(#createdAt, :now\)/);
+    expect(op.update.expression).toMatch(/#updatedAt = :now/);
+    expect(op.update.expressionValues[':now']?.S).toBeTruthy();
+  });
+
   it('surfaces a data-source error instead of swallowing it (#663)', () => {
     const ctx = {
       arguments: { revisionId: 'rev-1', value: 'UP' },

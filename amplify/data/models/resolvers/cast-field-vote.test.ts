@@ -160,6 +160,15 @@ describe('castFieldVote response resolver', () => {
     expect(result).toEqual(row);
   });
 
+  it('stamps createdAt (once) + updatedAt (always) so AWSDateTime! reads pass (#665)', () => {
+    const op = request(ctxFor({ messageId: 'm', field: 'BODY', value: 'X' }, 'sub-1'));
+    expect(op.update.expression).toMatch(/#createdAt = if_not_exists\(#createdAt, :now\)/);
+    expect(op.update.expression).toMatch(/#updatedAt = :now/);
+    expect(op.update.expressionNames['#createdAt']).toBe('createdAt');
+    expect(op.update.expressionNames['#updatedAt']).toBe('updatedAt');
+    expect(op.update.expressionValues[':now']?.S).toBeTruthy();
+  });
+
   it('surfaces a data-source error instead of swallowing it (#663)', () => {
     const ctx = {
       arguments: { messageId: 'msg-1', field: 'SENDER', value: 'X' },
