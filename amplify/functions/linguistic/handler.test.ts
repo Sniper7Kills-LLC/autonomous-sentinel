@@ -386,6 +386,62 @@ describe('linguistic — handler happy path', () => {
     );
   });
 
+  it('recomputes the uploader reputation after publishing (#480)', async () => {
+    const { client, updateSpy } = makeDataStub();
+    // Recording.update returns the full row incl. uploaderId on publish.
+    updateSpy.mockResolvedValue({
+      data: { id: 'rec-1', uploaderId: 'uploader-7', transcriptionStatus: 'PUBLISHED' },
+      errors: null,
+    });
+    const repSpy = vi.fn().mockResolvedValue(1.3);
+    __setDeps({
+      dataClient: client,
+      bedrockFallback: bedrockOk({ type: 'SKYKING', body: 'Skyking, Skyking, do not answer' }),
+      repRecompute: repSpy,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-uuid-1',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-1',
+        transcript: 'Skyking, Skyking, do not answer',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(repSpy).toHaveBeenCalledWith(expect.anything(), 'uploader-7');
+  });
+
+  it('publishes even when the reputation recompute throws (best-effort, #480)', async () => {
+    const { client, updateSpy } = makeDataStub();
+    updateSpy.mockResolvedValue({
+      data: { id: 'rec-1', uploaderId: 'uploader-7', transcriptionStatus: 'PUBLISHED' },
+      errors: null,
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    __setDeps({
+      dataClient: client,
+      bedrockFallback: bedrockOk({ type: 'SKYKING', body: 'Skyking, Skyking, do not answer' }),
+      repRecompute: vi.fn().mockRejectedValue(new Error('rep down')),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-uuid-1',
+    });
+    // Must resolve (not throw) — recompute is best-effort.
+    await expect(
+      handler(
+        makeEvent({
+          recordingId: 'rec-1',
+          transcript: 'Skyking, Skyking, do not answer',
+          enqueuedAt: '2026-05-24T17:55:00Z',
+        }),
+        {} as never,
+        () => undefined,
+      ),
+    ).resolves.toBeUndefined();
+    expect(updateSpy).toHaveBeenCalled();
+  });
+
   it('routes a high-confidence type-only inline match to Bedrock for fields (#552)', async () => {
     // RADIOCHECK scores 0.85 from the inline classifier but carries NO
     // fields — it must still route to Bedrock (type-confidence is not a
