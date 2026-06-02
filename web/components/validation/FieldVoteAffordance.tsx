@@ -88,27 +88,34 @@ export function FieldVoteAffordance({
     return () => window.removeEventListener('mousedown', onDown);
   }, [open]);
 
-  const submitVote = useCallback(async () => {
-    if (voting) return;
-    const value = draft.trim();
-    if (!value) {
-      setError('Enter a value before submitting.');
-      return;
-    }
-    setVoting(true);
-    setError(null);
-    try {
-      await castFieldVote(messageId, field, value);
-      await refresh();
-      // Reset the draft to the canonical baseline so a re-cast
-      // starts fresh rather than from the last-typed text.
-      setDraft(currentValue ?? '');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setVoting(false);
-    }
-  }, [currentValue, draft, field, messageId, refresh, voting]);
+  // Cast a vote for an EXPLICIT value — shared by the free-form
+  // "suggest a value" form and the per-row "endorse this suggestion"
+  // buttons (#668), so endorsing someone else's BODY suggestion is one
+  // click instead of re-typing the whole transcript.
+  const castValue = useCallback(
+    async (rawValue: string) => {
+      if (voting) return;
+      const value = rawValue.trim();
+      if (!value) {
+        setError('Enter a value before submitting.');
+        return;
+      }
+      setVoting(true);
+      setError(null);
+      try {
+        await castFieldVote(messageId, field, value);
+        await refresh();
+        // Reset the draft to the canonical baseline so a re-cast
+        // starts fresh rather than from the last-typed text.
+        setDraft(currentValue ?? '');
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setVoting(false);
+      }
+    },
+    [currentValue, field, messageId, refresh, voting],
+  );
 
   return (
     <span className={styles.wrap} ref={wrapRef}>
@@ -160,13 +167,21 @@ export function FieldVoteAffordance({
             </p>
           ) : (
             <>
-              <TallyView tally={tally} loading={loading} currentValue={currentValue} />
+              <TallyView
+                tally={tally}
+                loading={loading}
+                currentValue={currentValue}
+                voting={voting}
+                onVote={(value) => {
+                  void castValue(value);
+                }}
+              />
               <form
                 noValidate
                 className={styles.form}
                 onSubmit={(e) => {
                   e.preventDefault();
-                  void submitVote();
+                  void castValue(draft);
                 }}
                 aria-label={`Submit ${FIELD_LABELS[field]} vote`}
               >
@@ -220,9 +235,13 @@ interface TallyViewProps {
   tally: FieldVoteTally | null;
   loading: boolean;
   currentValue: string | null;
+  /** True while a cast is in flight — disables the per-row endorse buttons. */
+  voting: boolean;
+  /** Endorse an already-suggested value with one click (#668). */
+  onVote: (value: string) => void;
 }
 
-function TallyView({ tally, loading, currentValue }: TallyViewProps) {
+function TallyView({ tally, loading, currentValue, voting, onVote }: TallyViewProps) {
   if (loading && !tally) {
     return <div className={styles.empty}>Loading tally…</div>;
   }
@@ -231,9 +250,9 @@ function TallyView({ tally, loading, currentValue }: TallyViewProps) {
   }
   const leader = tally.entries[0]?.value;
   return (
-    <div className={styles.tally}>
+    <ul className={styles.tally}>
       {tally.entries.map((entry) => (
-        <div className={styles.tallyRow} key={entry.value}>
+        <li className={styles.tallyRow} key={entry.value}>
           <span
             className={`${styles.tallyValue} ${entry.value === leader ? styles.tallyValueLeader : ''}`}
             title={entry.value}
@@ -245,9 +264,20 @@ function TallyView({ tally, loading, currentValue }: TallyViewProps) {
           <span className={styles.tallyMeta}>
             {entry.voterCount} voter{entry.voterCount === 1 ? '' : 's'}
           </span>
-        </div>
+          {/* One-click endorse — vote for this exact value without re-typing. */}
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={voting || entry.value.length === 0}
+            onClick={() => onVote(entry.value)}
+            aria-label={`Vote for "${entry.value || '(empty)'}"`}
+          >
+            Vote
+          </Button>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }
 

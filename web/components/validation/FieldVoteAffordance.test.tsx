@@ -106,6 +106,24 @@ describe('FieldVoteAffordance', () => {
     });
   });
 
+  it('one-click endorses an existing suggestion via its row Vote button (#668)', async () => {
+    castMock.mockResolvedValue(undefined);
+    render(
+      <FieldVoteAffordance messageId="m" field="TYPE" currentValue="SKYKING" signedIn={true} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /vote on type/i }));
+    await screen.findByRole('dialog');
+    await waitFor(() => expect(listMock).toHaveBeenCalled());
+    // Endorse the OTHER suggested value without re-typing it.
+    const endorse = await screen.findByRole('button', { name: /vote for "SKYBIRD"/i });
+    act(() => {
+      fireEvent.click(endorse);
+    });
+    await waitFor(() => {
+      expect(castMock).toHaveBeenCalledWith('m', 'TYPE', 'SKYBIRD');
+    });
+  });
+
   it('uses a TYPE select instead of free-text for the TYPE field', async () => {
     render(
       <FieldVoteAffordance messageId="m" field="TYPE" currentValue="SKYKING" signedIn={true} />,

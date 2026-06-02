@@ -34,7 +34,10 @@
   top: calc(100% + 0.4rem);
   left: 0;
   z-index: 10;
-  min-width: 16rem;
+  min-width: 20rem;
+  max-width: min(28rem, 92vw);
+  max-height: min(60vh, 28rem);
+  overflow-y: auto;
   display: grid;
   gap: 0.6rem;
   padding: 0.75rem 0.9rem;
@@ -85,23 +88,34 @@
 
 .tally {
   display: grid;
-  gap: 0.3rem;
+  gap: 0.4rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
 .tallyRow {
-  display: grid;
-  grid-template-columns: 1fr auto auto;
-  gap: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: 0.2rem 0.5rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--border-1);
   font-family: var(--font-jb-mono);
   font-size: 0.8rem;
 }
 
+/* Value takes the full first line (wraps long BODY); weight + voters +
+   the Vote button flow on the next line, button pushed to the right. */
 .tallyValue {
+  flex: 1 1 100%;
   color: var(--text-1);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tallyRow > :global(button) {
+  margin-left: auto;
 }
 
 .tallyValueLeader {
