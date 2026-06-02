@@ -42,6 +42,7 @@ import { listAuditLogPublic } from './functions/listAuditLogPublic/resource';
 import { legacyClaimWorker } from './functions/legacyClaimWorker/resource';
 import { linguisticConfigStream } from './functions/linguisticConfigStream/resource';
 import { revisionVoteScoreStream } from './functions/revisionVoteScoreStream/resource';
+import { reputationRecompute } from './functions/reputationRecompute/resource';
 import { legacyClaimReplaySweeper } from './functions/legacyClaimReplaySweeper/resource';
 import { fieldVoteOrphanJanitor } from './functions/fieldVoteOrphanJanitor/resource';
 import { deployBadge } from './functions/deployBadge/resource';
@@ -86,6 +87,7 @@ const backend = defineBackend({
   fieldVoteOrphanJanitor,
   linguisticConfigStream,
   revisionVoteScoreStream,
+  reputationRecompute,
   deployBadge,
   costSnapshotWorker,
   costSnapshotTrigger,
@@ -1285,6 +1287,85 @@ const revisionVoteStreamMapping = new EventSourceMapping(
   },
 );
 revisionVoteStreamMapping.node.addDependency(revisionVoteStreamReadPolicy);
+
+// Reputation recompute streams (#480).
+//
+// One Lambda (`reputationRecompute`) consumes the Recording + TranscriptRevision
+// table streams and recomputes `Reputation.computedWeight` from source when a
+// recording publishes or a revision is accepted. NEW_AND_OLD_IMAGES so the
+// handler can detect the transition (status→PUBLISHED, accepted→true) and skip
+// every other write on these busy tables. Reads/writes go through the Amplify
+// Data IAM client (`allow.resource(reputationRecompute)`); the only extra IAM
+// is stream-read on the two stream ARNs. Same in-stack pattern as the other
+// stream consumers (#317 cycle-safe).
+const reputationRecomputeLambda = backend.reputationRecompute.resources.lambda as LambdaFunction;
+const reputationRecordingTable = backend.data.resources.tables['Recording'];
+const reputationRevisionTable = backend.data.resources.tables['TranscriptRevision'];
+if (!reputationRecordingTable || !reputationRevisionTable) {
+  throw new Error(
+    'backend: Recording / TranscriptRevision table not found for reputationRecompute',
+  );
+}
+const reputationRecordingCfn =
+  backend.data.resources.cfnResources.amplifyDynamoDbTables['Recording'];
+const reputationRevisionCfn =
+  backend.data.resources.cfnResources.amplifyDynamoDbTables['TranscriptRevision'];
+if (!reputationRecordingCfn || !reputationRevisionCfn) {
+  throw new Error('backend: Recording / TranscriptRevision CFN table wrapper not found');
+}
+reputationRecordingCfn.streamSpecification = { streamViewType: StreamViewType.NEW_AND_OLD_IMAGES };
+reputationRevisionCfn.streamSpecification = { streamViewType: StreamViewType.NEW_AND_OLD_IMAGES };
+const reputationRecordingStreamArn = reputationRecordingTable.tableStreamArn;
+const reputationRevisionStreamArn = reputationRevisionTable.tableStreamArn;
+if (!reputationRecordingStreamArn || !reputationRevisionStreamArn) {
+  throw new Error(
+    'backend: Recording / TranscriptRevision stream ARN unavailable after enabling streams',
+  );
+}
+const reputationStreamReadPolicy = new Policy(
+  Stack.of(reputationRecordingTable),
+  'ReputationRecomputeStreamReadPolicy',
+  {
+    statements: [
+      new PolicyStatement({
+        actions: [
+          'dynamodb:DescribeStream',
+          'dynamodb:GetRecords',
+          'dynamodb:GetShardIterator',
+          'dynamodb:ListStreams',
+        ],
+        resources: [reputationRecordingStreamArn, reputationRevisionStreamArn],
+      }),
+    ],
+  },
+);
+reputationRecomputeLambda.role?.attachInlinePolicy(reputationStreamReadPolicy);
+const reputationRecordingMapping = new EventSourceMapping(
+  Stack.of(reputationRecordingTable),
+  'ReputationRecomputeRecordingMapping',
+  {
+    target: reputationRecomputeLambda,
+    eventSourceArn: reputationRecordingStreamArn,
+    startingPosition: StartingPosition.LATEST,
+    batchSize: 10,
+    maxBatchingWindow: Duration.seconds(5),
+    retryAttempts: 3,
+  },
+);
+reputationRecordingMapping.node.addDependency(reputationStreamReadPolicy);
+const reputationRevisionMapping = new EventSourceMapping(
+  Stack.of(reputationRevisionTable),
+  'ReputationRecomputeRevisionMapping',
+  {
+    target: reputationRecomputeLambda,
+    eventSourceArn: reputationRevisionStreamArn,
+    startingPosition: StartingPosition.LATEST,
+    batchSize: 10,
+    maxBatchingWindow: Duration.seconds(5),
+    retryAttempts: 3,
+  },
+);
+reputationRevisionMapping.node.addDependency(reputationStreamReadPolicy);
 
 // Amazon Transcribe backend (c) + async finalizer (#585, epic #582).
 //

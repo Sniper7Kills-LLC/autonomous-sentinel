@@ -9,6 +9,7 @@ import { preprocess } from '../functions/preprocess/resource';
 import { linguistic } from '../functions/linguistic/resource';
 import { linguisticConfigStream } from '../functions/linguisticConfigStream/resource';
 import { revisionVoteScoreStream } from '../functions/revisionVoteScoreStream/resource';
+import { reputationRecompute } from '../functions/reputationRecompute/resource';
 import { legacyClaimWorker } from '../functions/legacyClaimWorker/resource';
 import { getUserPublicLambda } from '../functions/getUserPublicLambda/resource';
 import { listAuditLogPublic } from '../functions/listAuditLogPublic/resource';
@@ -220,6 +221,10 @@ export const schema = a
     // (it Queries the votes via the raw DDB SDK). `mutate` covers the
     // update; `query` kept for parity / future read needs.
     allow.resource(revisionVoteScoreStream).to(['query', 'mutate']),
+    // reputationRecompute (#480) reads Recording/TranscriptRevision GSI
+    // lists + User role and writes Reputation.computedWeight via the
+    // Amplify Data IAM client after a publish/accept stream event.
+    allow.resource(reputationRecompute).to(['query', 'mutate']),
     // legacyClaimWorker already calls AppSync via the data client
     // (#318 SQS handoff); grant the resource scope so its
     // post-#438 `Amplify.configure(...)` path works.
