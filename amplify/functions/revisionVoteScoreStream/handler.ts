@@ -137,7 +137,9 @@ async function getDefaultDataClient(): Promise<RevisionScoreDataClient> {
   return cachedDataClient;
 }
 
-export const handler: DynamoDBStreamHandler = async (event) => {
+// `_context` / `_callback` declared (unused) so the 3-arg Handler call
+// sites in tests aren't flagged by CodeQL (js/superfluous-trailing-arguments).
+export const handler: DynamoDBStreamHandler = async (event, _context, _callback) => {
   const listVotes = injected.listVotes ?? defaultListVotes;
   const revisionIds = extractRevisionIds(event.Records);
   if (revisionIds.length === 0) return;
