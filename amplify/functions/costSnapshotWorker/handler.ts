@@ -1,4 +1,4 @@
-import type { Handler, ScheduledEvent } from 'aws-lambda';
+import type { Handler } from 'aws-lambda';
 import { CostExplorerClient, GetCostAndUsageCommand } from '@aws-sdk/client-cost-explorer';
 import { CloudWatchClient, GetMetricDataCommand } from '@aws-sdk/client-cloudwatch';
 import {
@@ -254,8 +254,19 @@ function resolveDeps(): WorkerDeps {
   };
 }
 
-export const handler: Handler<ScheduledEvent, void> = async () => {
-  const deps = resolveDeps();
+/** JSON result returned on the AppSync (on-demand) invocation path. */
+export interface SnapshotResult {
+  snapshotDate: string;
+  rowsWritten: number;
+  totalUsd: number;
+}
+
+/**
+ * Shared snapshot core — used by BOTH invocation paths (the 05:00 cron
+ * and the admin `runCostSnapshotNow` mutation). Pulls the three
+ * fault-tolerant sources, writes the rows, and returns a small summary.
+ */
+async function runSnapshot(deps: WorkerDeps): Promise<SnapshotResult> {
   const snapshotDate = previousUtcDate(deps.now());
 
   const rows: CostRow[] = [];
@@ -288,8 +299,50 @@ export const handler: Handler<ScheduledEvent, void> = async () => {
     throw err;
   }
 
+  const totalUsd = Math.round(rows.reduce((sum, r) => sum + (r.usdAmount ?? 0), 0) * 100) / 100;
+
   console.info('costSnapshotWorker: snapshot complete', {
     snapshotDate,
     rowCount: rows.length,
+    totalUsd,
   });
+
+  return { snapshotDate, rowsWritten: rows.length, totalUsd };
+}
+
+/**
+ * Distinguish the two invocation shapes the single Lambda serves:
+ *   - EventBridge scheduled event → has `source: 'aws.events'` and/or
+ *     `'detail-type': 'Scheduled Event'`.
+ *   - AppSync resolver event (the `runCostSnapshotNow` admin mutation)
+ *     → carries `fieldName` / `arguments` / `identity`.
+ * Anything that isn't recognizably a scheduled event is treated as an
+ * AppSync invocation so the mutation gets its JSON result back.
+ */
+export function isScheduledEvent(event: unknown): boolean {
+  if (typeof event !== 'object' || event === null) return false;
+  const e = event as Record<string, unknown>;
+  if (e.source === 'aws.events') return true;
+  if (e['detail-type'] === 'Scheduled Event') return true;
+  // AppSync resolver events expose these — if present, it's NOT a cron.
+  if ('fieldName' in e || 'arguments' in e || 'identity' in e) return false;
+  // Default: treat unknown shapes as scheduled (the safe no-return path).
+  return true;
+}
+
+/**
+ * Dual-shape handler. The 05:00 cron path returns `void` (its result is
+ * ignored by EventBridge); the AppSync `runCostSnapshotNow` path returns
+ * the `SnapshotResult` JSON so the admin UI can show the outcome. Both
+ * run the identical `runSnapshot` core.
+ */
+export const handler: Handler<unknown, SnapshotResult | void> = async (event) => {
+  const deps = resolveDeps();
+  const result = await runSnapshot(deps);
+  if (isScheduledEvent(event)) {
+    // Scheduled invocation — EventBridge discards the return value.
+    return;
+  }
+  // AppSync (admin on-demand) invocation — hand the summary back.
+  return result;
 };

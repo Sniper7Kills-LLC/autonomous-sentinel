@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { ScheduledEvent, Context } from 'aws-lambda';
-import { handler, __setDeps, __resetDeps, type WorkerDeps } from './handler';
+import { handler, isScheduledEvent, __setDeps, __resetDeps, type WorkerDeps } from './handler';
 import type { CostRow } from './cost-rows';
 
 const event = {} as ScheduledEvent;
@@ -92,5 +92,58 @@ describe('costSnapshotWorker handler (#303)', () => {
     });
 
     await expect(handler(event, context, cb)).rejects.toThrow('DDB down');
+  });
+
+  describe('event-shape detection', () => {
+    it('classifies EventBridge scheduled events as scheduled', () => {
+      expect(isScheduledEvent({ source: 'aws.events' })).toBe(true);
+      expect(isScheduledEvent({ 'detail-type': 'Scheduled Event' })).toBe(true);
+      // Bare {} (no AppSync markers) defaults to scheduled / no-return.
+      expect(isScheduledEvent({})).toBe(true);
+    });
+
+    it('classifies AppSync resolver events as NOT scheduled', () => {
+      expect(isScheduledEvent({ fieldName: 'runCostSnapshotNow', arguments: {} })).toBe(false);
+      expect(isScheduledEvent({ identity: { sub: 'x' } })).toBe(false);
+    });
+
+    it('rejects non-object events', () => {
+      expect(isScheduledEvent(null)).toBe(false);
+      expect(isScheduledEvent('cron')).toBe(false);
+    });
+  });
+
+  describe('dual invocation paths share the same core', () => {
+    function makeDeps(): WorkerDeps {
+      return {
+        fetchCostExplorer: vi.fn(() => Promise.resolve([row('AWS Lambda')])),
+        fetchLambdaMetrics: vi.fn(() => Promise.resolve([row('preprocess')])),
+        fetchS3Prefixes: vi.fn(() => Promise.resolve([row('recordings/originals/')])),
+        writeRows: vi.fn(() => Promise.resolve()),
+        now: () => new Date('2026-06-01T05:00:00.000Z'),
+      };
+    }
+
+    it('scheduled invocation returns void', async () => {
+      const deps = makeDeps();
+      __setDeps(deps);
+      const out = await handler({ source: 'aws.events' }, context, cb);
+      expect(out).toBeUndefined();
+      // Core still ran (rows written).
+      expect(deps.writeRows).toHaveBeenCalledTimes(1);
+    });
+
+    it('AppSync invocation returns the JSON summary', async () => {
+      const deps = makeDeps();
+      __setDeps(deps);
+      const out = await handler(
+        { fieldName: 'runCostSnapshotNow', arguments: {}, identity: { sub: 'admin' } },
+        context,
+        cb,
+      );
+      // row('X') has usdAmount 1; three rows → totalUsd 3.
+      expect(out).toEqual({ snapshotDate: '2026-05-31', rowsWritten: 3, totalUsd: 3 });
+      expect(deps.writeRows).toHaveBeenCalledTimes(1);
+    });
   });
 });

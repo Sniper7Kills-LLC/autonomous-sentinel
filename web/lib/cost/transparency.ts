@@ -262,6 +262,45 @@ export async function fetchCostSnapshots(fromDate: string): Promise<CostSnapshot
   return out;
 }
 
+export interface RunCostSnapshotResult {
+  snapshotDate: string;
+  rowsWritten: number;
+  totalUsd: number;
+}
+
+type RawMutationResult = {
+  data?: unknown;
+  errors?: { message: string }[] | null;
+};
+
+/**
+ * Admin-only on-demand trigger (#303). Invokes the `runCostSnapshotNow`
+ * mutation (backed by the existing costSnapshotWorker) so an admin can
+ * run the pull without waiting for the 05:00 cron. `userPool` auth —
+ * the server gates the mutation to the `admin` group. Returns the
+ * worker's `{ snapshotDate, rowsWritten, totalUsd }` summary.
+ */
+export async function runCostSnapshotNow(): Promise<RunCostSnapshotResult> {
+  const client = getDataClient();
+  const mutateFn = (client.mutations as Record<string, unknown>).runCostSnapshotNow as (
+    input: Record<string, unknown>,
+    opts: Record<string, unknown>,
+  ) => Promise<RawMutationResult>;
+  const raw = await mutateFn({}, { authMode: 'userPool' });
+  if (raw.errors?.length) {
+    throw new Error(raw.errors.map((e) => e.message).join('; '));
+  }
+  const result = (typeof raw.data === 'string' ? JSON.parse(raw.data) : raw.data) as
+    | Partial<RunCostSnapshotResult>
+    | null
+    | undefined;
+  return {
+    snapshotDate: typeof result?.snapshotDate === 'string' ? result.snapshotDate : '',
+    rowsWritten: typeof result?.rowsWritten === 'number' ? result.rowsWritten : 0,
+    totalUsd: typeof result?.totalUsd === 'number' ? result.totalUsd : 0,
+  };
+}
+
 /**
  * Page through RevenueSnapshot rows. Always uses `userPool` — these
  * rows are gated to admin/moderator. A guest / member call returns an
