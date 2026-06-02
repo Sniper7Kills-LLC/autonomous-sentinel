@@ -1,11 +1,16 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { ScheduledEvent, Context } from 'aws-lambda';
-import { handler, isScheduledEvent, __setDeps, __resetDeps, type WorkerDeps } from './handler';
+import type { ScheduledEvent, SQSEvent, Context } from 'aws-lambda';
+import { handler, isSqsEvent, __setDeps, __resetDeps, type WorkerDeps } from './handler';
 import type { CostRow } from './cost-rows';
 
 const event = {} as ScheduledEvent;
 const context = {} as Context;
 const cb = () => undefined;
+
+/** A minimal SQS event — the manual-sync path produced by costSnapshotTrigger. */
+const sqsEvent = {
+  Records: [{ body: JSON.stringify({ source: 'admin.runCostSnapshotNow' }) }],
+} as unknown as SQSEvent;
 
 function row(subject: string): CostRow {
   return {
@@ -95,25 +100,24 @@ describe('costSnapshotWorker handler (#303)', () => {
   });
 
   describe('event-shape detection', () => {
-    it('classifies EventBridge scheduled events as scheduled', () => {
-      expect(isScheduledEvent({ source: 'aws.events' })).toBe(true);
-      expect(isScheduledEvent({ 'detail-type': 'Scheduled Event' })).toBe(true);
-      // Bare {} (no AppSync markers) defaults to scheduled / no-return.
-      expect(isScheduledEvent({})).toBe(true);
+    it('classifies SQS batches (manual-sync path) as SQS events', () => {
+      expect(isSqsEvent({ Records: [] })).toBe(true);
+      expect(isSqsEvent({ Records: [{ body: '{}' }] })).toBe(true);
     });
 
-    it('classifies AppSync resolver events as NOT scheduled', () => {
-      expect(isScheduledEvent({ fieldName: 'runCostSnapshotNow', arguments: {} })).toBe(false);
-      expect(isScheduledEvent({ identity: { sub: 'x' } })).toBe(false);
+    it('classifies EventBridge scheduled events as NOT SQS', () => {
+      expect(isSqsEvent({ source: 'aws.events' })).toBe(false);
+      expect(isSqsEvent({ 'detail-type': 'Scheduled Event' })).toBe(false);
+      expect(isSqsEvent({})).toBe(false);
     });
 
     it('rejects non-object events', () => {
-      expect(isScheduledEvent(null)).toBe(false);
-      expect(isScheduledEvent('cron')).toBe(false);
+      expect(isSqsEvent(null)).toBe(false);
+      expect(isSqsEvent('cron')).toBe(false);
     });
   });
 
-  describe('dual invocation paths share the same core', () => {
+  describe('both event sources share the same core', () => {
     function makeDeps(): WorkerDeps {
       return {
         fetchCostExplorer: vi.fn(() => Promise.resolve([row('AWS Lambda')])),
@@ -124,25 +128,19 @@ describe('costSnapshotWorker handler (#303)', () => {
       };
     }
 
-    it('scheduled invocation returns void', async () => {
+    it('scheduled (cron) invocation runs the core and returns void', async () => {
       const deps = makeDeps();
       __setDeps(deps);
       const out = await handler({ source: 'aws.events' }, context, cb);
       expect(out).toBeUndefined();
-      // Core still ran (rows written).
       expect(deps.writeRows).toHaveBeenCalledTimes(1);
     });
 
-    it('AppSync invocation returns the JSON summary', async () => {
+    it('SQS (manual-sync) invocation runs the same core and returns void', async () => {
       const deps = makeDeps();
       __setDeps(deps);
-      const out = await handler(
-        { fieldName: 'runCostSnapshotNow', arguments: {}, identity: { sub: 'admin' } },
-        context,
-        cb,
-      );
-      // row('X') has usdAmount 1; three rows → totalUsd 3.
-      expect(out).toEqual({ snapshotDate: '2026-05-31', rowsWritten: 3, totalUsd: 3 });
+      const out = await handler(sqsEvent, context, cb);
+      expect(out).toBeUndefined();
       expect(deps.writeRows).toHaveBeenCalledTimes(1);
     });
   });

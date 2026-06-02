@@ -1,4 +1,4 @@
-import type { Handler } from 'aws-lambda';
+import type { Handler, SQSEvent } from 'aws-lambda';
 import { CostExplorerClient, GetCostAndUsageCommand } from '@aws-sdk/client-cost-explorer';
 import { CloudWatchClient, GetMetricDataCommand } from '@aws-sdk/client-cloudwatch';
 import {
@@ -254,7 +254,7 @@ function resolveDeps(): WorkerDeps {
   };
 }
 
-/** JSON result returned on the AppSync (on-demand) invocation path. */
+/** Small summary returned by the snapshot core (logged, not surfaced). */
 export interface SnapshotResult {
   snapshotDate: string;
   rowsWritten: number;
@@ -263,8 +263,9 @@ export interface SnapshotResult {
 
 /**
  * Shared snapshot core — used by BOTH invocation paths (the 05:00 cron
- * and the admin `runCostSnapshotNow` mutation). Pulls the three
- * fault-tolerant sources, writes the rows, and returns a small summary.
+ * and the SQS-driven admin `runCostSnapshotNow` manual sync). Pulls the
+ * three fault-tolerant sources, writes the rows, and returns a small
+ * summary.
  */
 async function runSnapshot(deps: WorkerDeps): Promise<SnapshotResult> {
   const snapshotDate = previousUtcDate(deps.now());
@@ -311,45 +312,36 @@ async function runSnapshot(deps: WorkerDeps): Promise<SnapshotResult> {
 }
 
 /**
- * Distinguish the two invocation shapes the single Lambda serves:
- *   - EventBridge scheduled event → has `source: 'aws.events'` and/or
- *     `'detail-type': 'Scheduled Event'`.
- *   - AppSync resolver event (the `runCostSnapshotNow` admin mutation)
- *     → carries `fieldName` / `arguments` / `identity`.
- * Anything that isn't recognizably a scheduled event is treated as an
- * AppSync invocation so the mutation gets its JSON result back.
+ * Detect the SQS-driven manual-sync invocation. The admin
+ * `runCostSnapshotNow` mutation routes through `costSnapshotTrigger`,
+ * which enqueues a message; this Lambda is wired as an SQS event source
+ * on that queue (#644). SQS batches carry an `event.Records` array.
+ *
+ * The worker is NO LONGER an AppSync resolver — binding it as one closed
+ * a FunctionDirectiveStack ↔ data CloudFormation cycle (#644). It only
+ * ever serves two event sources now: the EventBridge cron and this SQS
+ * queue. Both run the identical `runSnapshot` core and return void.
  */
-export function isScheduledEvent(event: unknown): boolean {
+export function isSqsEvent(event: unknown): event is SQSEvent {
   if (typeof event !== 'object' || event === null) return false;
-  const e = event as Record<string, unknown>;
-  if (e.source === 'aws.events') return true;
-  if (e['detail-type'] === 'Scheduled Event') return true;
-  // AppSync resolver events expose these — if present, it's NOT a cron.
-  if ('fieldName' in e || 'arguments' in e || 'identity' in e) return false;
-  // Default: treat unknown shapes as scheduled (the safe no-return path).
-  return true;
+  return Array.isArray((event as Record<string, unknown>).Records);
 }
 
 /**
- * Dual-shape handler. The 05:00 cron path returns `void` (its result is
- * ignored by EventBridge); the AppSync `runCostSnapshotNow` path returns
- * the `SnapshotResult` JSON so the admin UI can show the outcome. Both
- * run the identical `runSnapshot` core.
+ * Dual-source handler. Both invocation paths — the 05:00 EventBridge
+ * cron and the SQS manual-sync message produced by `costSnapshotTrigger`
+ * — run the identical `runSnapshot` core and return `void` (neither
+ * source consumes a return value; the admin UI refetches the rows). An
+ * SQS-path failure rethrows so the message redrives / lands on the DLQ.
  */
 // `_context`/`_callback` are declared (unused) so the 3-arg Lambda
 // `Handler` call sites in the tests are not flagged as superfluous by
 // CodeQL (js/superfluous-trailing-arguments) — same fix as #400.
-export const handler: Handler<unknown, SnapshotResult | void> = async (
-  event,
-  _context,
-  _callback,
-) => {
+export const handler: Handler<unknown, void> = async (event, _context, _callback) => {
   const deps = resolveDeps();
-  const result = await runSnapshot(deps);
-  if (isScheduledEvent(event)) {
-    // Scheduled invocation — EventBridge discards the return value.
-    return;
-  }
-  // AppSync (admin on-demand) invocation — hand the summary back.
-  return result;
+  // Both the cron and the SQS manual-sync run the same snapshot core.
+  // `isSqsEvent` is exported for explicit unit coverage of the
+  // manual-sync path; the core call is unconditional.
+  void isSqsEvent(event);
+  await runSnapshot(deps);
 };

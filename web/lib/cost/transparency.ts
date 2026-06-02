@@ -263,6 +263,43 @@ export async function fetchCostSnapshots(fromDate: string): Promise<CostSnapshot
 }
 
 /**
+ * Trigger an on-demand cost-snapshot sync (#644).
+ *
+ * Calls the admin-only `runCostSnapshotNow` AppSync mutation. The mutation
+ * is resolved by a tiny trigger Lambda that enqueues an SQS message; the
+ * cost-snapshot worker (cron + SQS consumer) runs the snapshot out-of-band.
+ * Returns immediately — the page refetches the rows ~1 min later to show the
+ * fresh data.
+ *
+ * Admin-gated server-side, so the call uses the Cognito `userPool` token; a
+ * guest / non-admin call returns Unauthorized.
+ */
+export async function runCostSnapshotNow(): Promise<{ status: string }> {
+  const client = getDataClient();
+  const mutateFn = (
+    client.mutations as unknown as {
+      runCostSnapshotNow: (
+        input: Record<string, never>,
+        opts: { authMode: 'userPool' },
+      ) => Promise<{ data?: unknown; errors?: { message: string }[] | null }>;
+    }
+  ).runCostSnapshotNow;
+  const res = await mutateFn({}, { authMode: 'userPool' });
+  if (res.errors?.length) {
+    throw new Error(res.errors.map((e) => e.message).join('; '));
+  }
+  const data = res.data;
+  // The resolver returns a JSON scalar — `{ status: 'queued' }`. Amplify may
+  // hand it back as an object or a JSON string depending on codegen.
+  const parsed =
+    typeof data === 'string'
+      ? (JSON.parse(data) as Record<string, unknown>)
+      : ((data as Record<string, unknown>) ?? {});
+  const status = typeof parsed.status === 'string' ? parsed.status : 'queued';
+  return { status };
+}
+
+/**
  * Page through RevenueSnapshot rows. Always uses `userPool` — these
  * rows are gated to admin/moderator. A guest / member call returns an
  * authz error, which the caller swallows into an empty list.

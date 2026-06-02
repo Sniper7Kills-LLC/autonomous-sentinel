@@ -1,4 +1,5 @@
 import { a } from '@aws-amplify/backend';
+import { costSnapshotTrigger } from '../../functions/costSnapshotTrigger/resource';
 
 /**
  * CostSnapshot — daily AWS spend rows for the public `/transparency`
@@ -47,7 +48,23 @@ export const CostSnapshot = a
     allow.groups(['admin']).to(['read', 'create', 'update', 'delete']),
   ]);
 
-// On-demand cost-snapshot sync is deferred to an SQS-based design (#644):
-// costSnapshotWorker cannot be both an AppSync resolver and a cron target in
-// this stack without inducing a FunctionDirectiveStack↔data CloudFormation
-// circular dependency. The worker is cron-only here.
+/**
+ * `runCostSnapshotNow` — admin on-demand cost-sync (#644).
+ *
+ * Bound to `costSnapshotTrigger`, NOT the worker. The worker cannot be an
+ * AppSync resolver in this stack without closing a FunctionDirectiveStack ↔
+ * data CloudFormation circular dependency (proven across 6 failed deploys).
+ * The trigger is the resolver and only does one `sqs:SendMessage` to the
+ * cost-snapshot queue; the worker consumes that queue as an SQS event source
+ * (an event source, not a resolver), so it never enters the
+ * FunctionDirectiveStack. Mirrors the proven
+ * `postConfirmation → legacyClaimQueue → legacyClaimWorker` SQS hand-off.
+ *
+ * Admin-only. Returns `{ status: 'queued' }` immediately; the admin refetches
+ * the CostSnapshot rows ~1 min later to see the fresh snapshot.
+ */
+export const runCostSnapshotNow = a
+  .mutation()
+  .returns(a.json())
+  .authorization((allow) => allow.group('admin'))
+  .handler(a.handler.function(costSnapshotTrigger));

@@ -45,6 +45,7 @@ import { legacyClaimReplaySweeper } from './functions/legacyClaimReplaySweeper/r
 import { fieldVoteOrphanJanitor } from './functions/fieldVoteOrphanJanitor/resource';
 import { deployBadge } from './functions/deployBadge/resource';
 import { costSnapshotWorker } from './functions/costSnapshotWorker/resource';
+import { costSnapshotTrigger } from './functions/costSnapshotTrigger/resource';
 import { stripeRevenueWorker } from './functions/stripeRevenueWorker/resource';
 import { attachBudgetAlarms, attachBudgetThrottleAction, readBudgetConfig } from './budgets';
 import { applyCognitoTokenValidity } from './cognito-token-validity';
@@ -84,6 +85,7 @@ const backend = defineBackend({
   linguisticConfigStream,
   deployBadge,
   costSnapshotWorker,
+  costSnapshotTrigger,
   stripeRevenueWorker,
 });
 
@@ -518,75 +520,45 @@ new Rule(fieldVoteOrphanJanitorLambda.stack, 'FieldVoteOrphanJanitorDailySweep',
 // previous fully-settled UTC day, so 05:00 leaves margin for that day
 // to settle.
 //
-// The worker pulls three sources (each fault-tolerant) and writes
-// CostSnapshot rows via the DDB SDK:
-//   - Cost Explorer GetCostAndUsage  → AWS_SERVICE rows
-//   - CloudWatch GetMetricData       → LAMBDA_FUNCTION rows
-//   - S3 ListBucket (media bucket)   → S3_PREFIX rows
+// The worker pulls Cost Explorer and writes CostSnapshot rows via the
+// DDB SDK:
+//   - Cost Explorer GetCostAndUsage (GroupBy=SERVICE) → AWS_SERVICE rows
 //
-// Env + scoped IAM:
-//   - COST_SNAPSHOT_TABLE_NAME    → the CostSnapshot table name.
-//   - MEDIA_BUCKET_NAME           → media bucket for the S3 prefix scan.
-//   - COST_LAMBDA_FUNCTION_NAMES  → comma-separated function names whose
-//                                   CloudWatch metrics we pull.
-//   - ce:GetCostAndUsage          → account-wide (Cost Explorer has no
-//                                   resource-level scoping).
-//   - cloudwatch:GetMetricData    → account-wide (same — GetMetricData
-//                                   does not support resource ARNs).
-//   - s3:ListBucket               → wildcard (`*`); the handler scopes
-//                                   the scan to MEDIA_BUCKET_NAME. Wildcard
-//                                   avoids a cross-stack bucket-ARN import
-//                                   (the CFN-cycle trigger — #644).
-//   - CostSnapshot writes         → grantWriteData (intra-data-stack grant).
+// CFN-cycle root cause (resolved here, #644): the worker MUST carry ZERO
+// cross-stack token references, exactly like the working
+// `fieldVoteOrphanJanitor` (table names only) and AVGN's `billingSnapshot`
+// (table name + `ce:*` wildcard). Earlier revisions added
+// `MEDIA_BUCKET_NAME = storage.bucket.bucketName` (storage→data) and
+// `COST_LAMBDA_FUNCTION_NAMES` containing `preprocess.functionName`
+// (function→data). The function stack already imports from the data stack,
+// so a data→function reference closed a CloudFormation cycle that surfaced
+// as `[costSnapshotWorker, CostSnapshotDaily, AllowEventRule]` in the data
+// stack — even cron-only, with no resolver binding. Switching to wildcard
+// IAM alone (job 181) did NOT fix it because the env tokens remained.
+//
+// Cost Explorer's per-SERVICE breakdown already surfaces S3, Lambda,
+// DynamoDB and every other service's spend, so the transparency page stays
+// meaningful. The handler's CloudWatch per-function and S3 per-prefix
+// sources self-guard on the (now absent) env vars and emit no rows —
+// they can return behind a runtime config (SSM, not a CFN token) later.
+//
+// Env + scoped IAM (cross-stack-token-free):
+//   - COST_SNAPSHOT_TABLE_NAME → the CostSnapshot table name (intra-data).
+//   - ce:GetCostAndUsage       → account-wide (Cost Explorer has no
+//                                resource-level scoping).
+//   - CostSnapshot writes      → grantWriteData (intra-data-stack grant).
 const costSnapshotTable = backend.data.resources.tables['CostSnapshot'];
 if (!costSnapshotTable) {
   throw new Error('backend: CostSnapshot table not found on data resources');
 }
 const costSnapshotWorkerLambda = backend.costSnapshotWorker.resources.lambda as LambdaFunction;
 costSnapshotWorkerLambda.addEnvironment('COST_SNAPSHOT_TABLE_NAME', costSnapshotTable.tableName);
-costSnapshotWorkerLambda.addEnvironment(
-  'MEDIA_BUCKET_NAME',
-  backend.storage.resources.bucket.bucketName,
-);
-// The set of Lambdas whose per-function compute metrics we surface on
-// the transparency page. Kept as an explicit list (not a wildcard) so
-// the CloudWatch query stays small + the page only shows functions we
-// intend to explain. Extend as new pipeline functions land.
-costSnapshotWorkerLambda.addEnvironment(
-  'COST_LAMBDA_FUNCTION_NAMES',
-  [
-    backend.preprocess.resources.lambda.functionName,
-    backend.linguistic.resources.lambda.functionName,
-    backend.transcribeDispatch.resources.lambda.functionName,
-    backend.messageMutations.resources.lambda.functionName,
-    backend.recordingMutations.resources.lambda.functionName,
-    backend.costSnapshotWorker.resources.lambda.functionName,
-  ].join(','),
-);
 costSnapshotWorkerLambda.addToRolePolicy(
   new PolicyStatement({
-    // Cost Explorer + CloudWatch GetMetricData are account-scoped APIs
-    // — neither supports resource-level ARNs, so `*` is the tightest
-    // grant available. S3 ListBucket is scoped to the media bucket.
+    // Cost Explorer GetCostAndUsage is an account-scoped API — it does
+    // not support resource-level ARNs, so `*` is the tightest grant
+    // available (matches AVGN's billingSnapshot worker).
     actions: ['ce:GetCostAndUsage'],
-    resources: ['*'],
-  }),
-);
-costSnapshotWorkerLambda.addToRolePolicy(
-  new PolicyStatement({
-    actions: ['cloudwatch:GetMetricData'],
-    resources: ['*'],
-  }),
-);
-// s3:ListBucket uses a WILDCARD resource (`*`) rather than the media
-// bucket ARN. Referencing the storage-stack bucket ARN here imports a
-// cross-stack value into the worker's role, which contributed to the
-// CloudFormation circular dependency (#644). The handler still scopes its
-// scan to the bucket via the `MEDIA_BUCKET_NAME` env var, so the effective
-// access is unchanged.
-costSnapshotWorkerLambda.addToRolePolicy(
-  new PolicyStatement({
-    actions: ['s3:ListBucket'],
     resources: ['*'],
   }),
 );
@@ -600,12 +572,43 @@ new Rule(costSnapshotWorkerLambda.stack, 'CostSnapshotDaily', {
   targets: [new LambdaTarget(costSnapshotWorkerLambda)],
 });
 
-// On-demand cost-sync (#644) is deferred to an SQS-based design: the worker
-// cannot be both an AppSync resolver and a cron target in this stack without
-// a FunctionDirectiveStack↔data CloudFormation circular dependency. The
-// worker is cron-only — exactly ONE rule: CostSnapshotDaily. Using wildcard
-// S3 IAM + grantWriteData (above) keeps the worker free of cross-stack ARN
-// imports, which is what previously caused the CFN cycle.
+// On-demand cost-sync via SQS decouple (#644).
+//
+// The admin "Sync now" button calls the `runCostSnapshotNow` mutation,
+// resolved by `costSnapshotTrigger` (the resolver). The trigger does ONE
+// `sqs:SendMessage` to this queue and returns `{ status: 'queued' }`. The
+// worker — already a cron target above — also subscribes to this queue as an
+// SQS event source. Both the cron and the SQS message run the identical
+// snapshot core.
+//
+// Why this avoids the CFN cycle: the worker stays a pure event-source
+// consumer (cron rule + SQS source), exactly like `legacyClaimWorker`. It is
+// NEVER an AppSync resolver, so it never enters the FunctionDirectiveStack —
+// no FunctionDirectiveStack↔data cross-reference. The trigger IS the resolver
+// but references only the queue URL (no worker ARN/name). Both edges flow
+// into the neutral queue sub-stack, which has no outgoing edges. Mirrors the
+// proven `postConfirmation → legacyClaimQueue → legacyClaimWorker` hand-off.
+//
+// Visibility timeout = 6× the worker's 60 s execution timeout (360 s) per AWS
+// best practice; DLQ caps redrive at 5 attempts.
+const costSnapshotQueueStack = backend.createStack('CostSnapshotQueueStack');
+const costSnapshotDlq = new Queue(costSnapshotQueueStack, 'CostSnapshotDeadLetterQueue', {
+  retentionPeriod: Duration.days(14),
+});
+const costSnapshotQueue = new Queue(costSnapshotQueueStack, 'CostSnapshotQueue', {
+  visibilityTimeout: Duration.seconds(360),
+  retentionPeriod: Duration.days(4),
+  deadLetterQueue: { queue: costSnapshotDlq, maxReceiveCount: 5 },
+});
+// Trigger (resolver) → queue: SendMessage env + IAM. No worker reference.
+const costSnapshotTriggerLambda = backend.costSnapshotTrigger.resources.lambda as LambdaFunction;
+costSnapshotTriggerLambda.addEnvironment('COST_SNAPSHOT_QUEUE_URL', costSnapshotQueue.queueUrl);
+costSnapshotQueue.grantSendMessages(costSnapshotTriggerLambda);
+// Worker (consumer) → queue: SQS event source. `batchSize: 1` — one snapshot
+// run per message, same shape as legacyClaimWorker. The worker keeps its
+// single CostSnapshotDaily cron rule above; this only adds the second event
+// source. The worker is NOT made a resolver.
+costSnapshotWorkerLambda.addEventSource(new SqsEventSource(costSnapshotQueue, { batchSize: 1 }));
 
 // Stripe revenue worker — STUB cron (#303; deferral #206 / #208).
 //

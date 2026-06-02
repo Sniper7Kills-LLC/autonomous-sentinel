@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { fetchCallerGroups, isModeratorOrAdmin } from '@/lib/auth/roles';
+import { fetchCallerGroups, isModeratorOrAdmin, isAdmin } from '@/lib/auth/roles';
 import {
   aggregateCost,
   aggregateRevenue,
@@ -11,6 +11,7 @@ import {
   formatBytes,
   fetchCostSnapshots,
   fetchRevenueSnapshots,
+  runCostSnapshotNow,
   type CostAggregate,
   type RevenueAggregate,
 } from '@/lib/cost/transparency';
@@ -21,8 +22,11 @@ export default function TransparencyPage() {
   const [cost, setCost] = useState<CostAggregate | null>(null);
   const [revenue, setRevenue] = useState<RevenueAggregate | null>(null);
   const [showRevenue, setShowRevenue] = useState(false);
+  const [admin, setAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,10 +42,12 @@ export default function TransparencyPage() {
         if (!cancelled) setLoading(false);
       }
 
-      // Revenue read is admin/moderator only. The server enforces this —
-      // this just avoids guaranteed authz errors for everyone else.
+      // Revenue read + the admin "Sync now" control are role-gated. The
+      // server enforces this — this just avoids guaranteed authz errors
+      // (revenue) / hides admin-only controls for everyone else.
       try {
         const groups = await fetchCallerGroups();
+        if (!cancelled && isAdmin(groups)) setAdmin(true);
         if (!isModeratorOrAdmin(groups)) return;
         if (!cancelled) setShowRevenue(true);
         const revRows = await fetchRevenueSnapshots(fromDate);
@@ -56,6 +62,27 @@ export default function TransparencyPage() {
     };
   }, []);
 
+  async function handleSyncNow(): Promise<void> {
+    setSyncing(true);
+    setSyncMessage(null);
+    try {
+      await runCostSnapshotNow();
+      setSyncMessage('Sync queued — refresh in ~1 min.');
+      // Deferred refetch so the admin sees the fresh rows without a manual
+      // reload. The worker runs out-of-band off the SQS message.
+      const fromDate = windowStartDate(new Date(), WINDOW_DAYS);
+      window.setTimeout(() => {
+        void fetchCostSnapshots(fromDate)
+          .then((rows) => setCost(aggregateCost(rows, fromDate)))
+          .catch(() => undefined);
+      }, 60_000);
+    } catch (e) {
+      setSyncMessage(e instanceof Error ? `Sync failed: ${e.message}` : 'Sync failed.');
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   return (
     <>
       <PageHeader
@@ -66,6 +93,15 @@ export default function TransparencyPage() {
 
       <section aria-labelledby="cost-panel-heading">
         <h2 id="cost-panel-heading">AWS spend (last {WINDOW_DAYS} days)</h2>
+
+        {admin && (
+          <p>
+            <button type="button" onClick={() => void handleSyncNow()} disabled={syncing}>
+              {syncing ? 'Queuing…' : 'Sync now'}
+            </button>{' '}
+            {syncMessage && <span role="status">{syncMessage}</span>}
+          </p>
+        )}
 
         {loading && <p>Loading cost data…</p>}
         {error && <p role="alert">Could not load cost data: {error}</p>}
