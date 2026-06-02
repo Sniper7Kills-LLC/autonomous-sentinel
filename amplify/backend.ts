@@ -44,6 +44,8 @@ import { linguisticConfigStream } from './functions/linguisticConfigStream/resou
 import { legacyClaimReplaySweeper } from './functions/legacyClaimReplaySweeper/resource';
 import { fieldVoteOrphanJanitor } from './functions/fieldVoteOrphanJanitor/resource';
 import { deployBadge } from './functions/deployBadge/resource';
+import { costSnapshotWorker } from './functions/costSnapshotWorker/resource';
+import { stripeRevenueWorker } from './functions/stripeRevenueWorker/resource';
 import { attachBudgetAlarms, attachBudgetThrottleAction, readBudgetConfig } from './budgets';
 import { applyCognitoTokenValidity } from './cognito-token-validity';
 import { attachStorageLifecycle, readStorageLifecycleConfig } from './storage-lifecycle';
@@ -81,6 +83,8 @@ const backend = defineBackend({
   fieldVoteOrphanJanitor,
   linguisticConfigStream,
   deployBadge,
+  costSnapshotWorker,
+  stripeRevenueWorker,
 });
 
 // Wire the legacy-claim worker into postConfirmation (sub-A of #16 / #272).
@@ -506,6 +510,103 @@ new Rule(fieldVoteOrphanJanitorLambda.stack, 'FieldVoteOrphanJanitorDailySweep',
   targets: [new LambdaTarget(fieldVoteOrphanJanitorLambda)],
 });
 
+// Cost-transparency snapshot worker wiring (#303).
+//
+// Daily 05:00 UTC EventBridge schedule — one hour after the FieldVote
+// janitor (04:00) and two after the legacy-claim sweeper (03:00) so the
+// three data-stack crons never overlap. Cost Explorer reports the
+// previous fully-settled UTC day, so 05:00 leaves margin for that day
+// to settle.
+//
+// The worker pulls three sources (each fault-tolerant) and writes
+// CostSnapshot rows via the DDB SDK:
+//   - Cost Explorer GetCostAndUsage  → AWS_SERVICE rows
+//   - CloudWatch GetMetricData       → LAMBDA_FUNCTION rows
+//   - S3 ListBucket (media bucket)   → S3_PREFIX rows
+//
+// Env + scoped IAM:
+//   - COST_SNAPSHOT_TABLE_NAME    → the CostSnapshot table name.
+//   - MEDIA_BUCKET_NAME           → media bucket for the S3 prefix scan.
+//   - COST_LAMBDA_FUNCTION_NAMES  → comma-separated function names whose
+//                                   CloudWatch metrics we pull.
+//   - ce:GetCostAndUsage          → account-wide (Cost Explorer has no
+//                                   resource-level scoping).
+//   - cloudwatch:GetMetricData    → account-wide (same — GetMetricData
+//                                   does not support resource ARNs).
+//   - s3:ListBucket               → media bucket only.
+//   - dynamodb:PutItem/BatchWriteItem → CostSnapshot table only.
+const costSnapshotTable = backend.data.resources.tables['CostSnapshot'];
+if (!costSnapshotTable) {
+  throw new Error('backend: CostSnapshot table not found on data resources');
+}
+const costSnapshotWorkerLambda = backend.costSnapshotWorker.resources.lambda as LambdaFunction;
+costSnapshotWorkerLambda.addEnvironment('COST_SNAPSHOT_TABLE_NAME', costSnapshotTable.tableName);
+costSnapshotWorkerLambda.addEnvironment(
+  'MEDIA_BUCKET_NAME',
+  backend.storage.resources.bucket.bucketName,
+);
+// The set of Lambdas whose per-function compute metrics we surface on
+// the transparency page. Kept as an explicit list (not a wildcard) so
+// the CloudWatch query stays small + the page only shows functions we
+// intend to explain. Extend as new pipeline functions land.
+costSnapshotWorkerLambda.addEnvironment(
+  'COST_LAMBDA_FUNCTION_NAMES',
+  [
+    backend.preprocess.resources.lambda.functionName,
+    backend.linguistic.resources.lambda.functionName,
+    backend.transcribeDispatch.resources.lambda.functionName,
+    backend.messageMutations.resources.lambda.functionName,
+    backend.recordingMutations.resources.lambda.functionName,
+    backend.costSnapshotWorker.resources.lambda.functionName,
+  ].join(','),
+);
+costSnapshotWorkerLambda.addToRolePolicy(
+  new PolicyStatement({
+    // Cost Explorer + CloudWatch GetMetricData are account-scoped APIs
+    // — neither supports resource-level ARNs, so `*` is the tightest
+    // grant available. S3 ListBucket is scoped to the media bucket.
+    actions: ['ce:GetCostAndUsage'],
+    resources: ['*'],
+  }),
+);
+costSnapshotWorkerLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['cloudwatch:GetMetricData'],
+    resources: ['*'],
+  }),
+);
+costSnapshotWorkerLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['s3:ListBucket'],
+    resources: [backend.storage.resources.bucket.bucketArn],
+  }),
+);
+costSnapshotWorkerLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:PutItem', 'dynamodb:BatchWriteItem'],
+    resources: [costSnapshotTable.tableArn],
+  }),
+);
+new Rule(costSnapshotWorkerLambda.stack, 'CostSnapshotDaily', {
+  description: 'Daily AWS-spend snapshot for the public /transparency page (#303).',
+  schedule: Schedule.cron({ minute: '0', hour: '5' }),
+  targets: [new LambdaTarget(costSnapshotWorkerLambda)],
+});
+
+// Stripe revenue worker — STUB cron (#303; deferral #206 / #208).
+//
+// Same daily cadence (05:00 UTC) but the handler writes nothing live
+// (no Stripe SDK call). The cron exists so the wiring is proven; the
+// RevenueSnapshot table stays empty until Stripe ships. No IAM grant +
+// no env var — the stub touches no AWS resource.
+const stripeRevenueWorkerLambda = backend.stripeRevenueWorker.resources.lambda as LambdaFunction;
+new Rule(stripeRevenueWorkerLambda.stack, 'StripeRevenueDaily', {
+  description:
+    'STUB daily Stripe revenue snapshot — deferred until donations ship (#303/#206/#208).',
+  schedule: Schedule.cron({ minute: '0', hour: '5' }),
+  targets: [new LambdaTarget(stripeRevenueWorkerLambda)],
+});
+
 // Cost-discipline budget alarms (#7). Lives in its own nested stack so it can
 // be removed or replaced without touching the data / function stacks. The
 // hard-threshold SNS topic returned here is wired to the Whisper concurrency
@@ -782,7 +883,7 @@ whisperFn.addToRolePolicy(
 whisperFn.addToRolePolicy(
   new PolicyStatement({
     actions: ['s3:ListBucket'],
-    resources: [mediaBucket.bucketArn],
+    resources: [backend.storage.resources.bucket.bucketArn],
     conditions: {
       // `recordings/originals/*` added for the consolidated transcode
       // path (#514): the container downloads the original before

@@ -48,6 +48,8 @@ import { LinguisticConfig } from './models/linguistic-config';
 import { ReputationConfig } from './models/reputation-config';
 import { PlaybackConfig } from './models/playback-config';
 import { BudgetConfig } from './models/budget-config';
+import { CostSnapshot } from './models/cost-snapshot';
+import { RevenueSnapshot } from './models/revenue-snapshot';
 import { LinguisticRule } from './models/linguistic-rule';
 import { LinguisticPromptTemplate } from './models/linguistic-prompt-template';
 import {
@@ -97,6 +99,11 @@ export const schema = a
     ReputationConfig,
     PlaybackConfig,
     BudgetConfig,
+
+    // Cost transparency (#303) — public AWS-spend rows + gated revenue
+    CostSnapshot,
+    RevenueSnapshot,
+
     LinguisticRule,
     LinguisticPromptTemplate,
     BannedRegionPage,
