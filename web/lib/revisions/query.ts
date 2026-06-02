@@ -94,6 +94,25 @@ export async function submitTranscriptRevision(
   return toDisplayRevision(raw.data);
 }
 
+/**
+ * Accept a proposed revision (moderator/admin only). The server flips
+ * `accepted=true`, cascades `superseded=true` to siblings, and rewrites
+ * `Recording.transcript`. Returns the updated revision row.
+ */
+export async function acceptTranscriptRevision(revisionId: string): Promise<DisplayRevision> {
+  const client = getDataClient();
+  const acceptFn = client.mutations.acceptTranscriptRevision as unknown as (
+    input: { revisionId: string },
+    opts: Record<string, unknown>,
+  ) => Promise<RawSubmitRevision>;
+  const raw = await acceptFn({ revisionId }, { authMode: 'userPool' });
+  if (raw.errors?.length) {
+    throw new Error(raw.errors.map((e) => e.message).join('; '));
+  }
+  if (!raw.data) throw new Error('acceptTranscriptRevision: empty response');
+  return toDisplayRevision(raw.data);
+}
+
 type RawCastVote = {
   data?: { revisionId?: string; value?: string } | null;
   errors?: { message: string }[] | null;

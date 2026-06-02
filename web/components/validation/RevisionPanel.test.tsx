@@ -5,6 +5,7 @@ import { RevisionPanel } from './RevisionPanel';
 const listMock = vi.fn<() => Promise<unknown>>();
 const submitMock = vi.fn<(recordingId: string, proposedText: string) => Promise<unknown>>();
 const castMock = vi.fn<(revisionId: string, value: string) => Promise<unknown>>();
+const acceptMock = vi.fn<(revisionId: string) => Promise<unknown>>();
 
 vi.mock('@/lib/revisions/query', () => ({
   listRevisionsForRecording: (): Promise<unknown> => listMock(),
@@ -12,7 +13,17 @@ vi.mock('@/lib/revisions/query', () => ({
     submitMock(recordingId, proposedText),
   castRevisionVote: (revisionId: string, value: string): Promise<unknown> =>
     castMock(revisionId, value),
+  acceptTranscriptRevision: (revisionId: string): Promise<unknown> => acceptMock(revisionId),
 }));
+
+const groupsMock = vi.fn<() => Promise<string[]>>();
+vi.mock('@/lib/auth/roles', async (importActual) => {
+  const actual = await importActual<Record<string, unknown>>();
+  return {
+    ...actual, // keep isModeratorOrAdmin / isAdmin real
+    fetchCallerGroups: (): Promise<string[]> => groupsMock(),
+  };
+});
 
 const baseRow = {
   id: 'rev-1',
@@ -32,6 +43,10 @@ describe('RevisionPanel', () => {
     listMock.mockReset();
     submitMock.mockReset();
     castMock.mockReset();
+    acceptMock.mockReset();
+    acceptMock.mockResolvedValue({ ...baseRow, accepted: true });
+    groupsMock.mockReset();
+    groupsMock.mockResolvedValue(['member']);
     listMock.mockResolvedValue([baseRow]);
     vi.stubGlobal(
       'matchMedia',
@@ -145,6 +160,44 @@ describe('RevisionPanel', () => {
       fireEvent.click(screen.getByRole('button', { name: /vote down/i }));
     });
     expect(await screen.findByRole('alert')).toHaveTextContent(/rate limited/i);
+  });
+
+  describe('accept revision (#654)', () => {
+    it('hides Accept for a member', async () => {
+      groupsMock.mockResolvedValue(['member']);
+      render(<RevisionPanel recordingId="rec-1" transcriptionFailed={false} signedIn={true} />);
+      await waitFor(() => expect(screen.getByText('SKYKING PT3 14 AB')).toBeInTheDocument());
+      expect(screen.queryByRole('button', { name: /accept/i })).toBeNull();
+    });
+
+    it('hides Accept for signed-out visitors', async () => {
+      render(<RevisionPanel recordingId="rec-1" transcriptionFailed={false} signedIn={false} />);
+      await waitFor(() => expect(screen.getByText('SKYKING PT3 14 AB')).toBeInTheDocument());
+      expect(screen.queryByRole('button', { name: /accept/i })).toBeNull();
+    });
+
+    it('shows Accept for a moderator on a live revision and accepts on click', async () => {
+      groupsMock.mockResolvedValue(['moderator']);
+      vi.stubGlobal('confirm', vi.fn().mockReturnValue(true));
+      acceptMock.mockResolvedValueOnce({ ...baseRow, accepted: true });
+      listMock.mockResolvedValueOnce([baseRow]); // initial
+      listMock.mockResolvedValueOnce([{ ...baseRow, accepted: true }]); // post-accept refresh
+      render(<RevisionPanel recordingId="rec-1" transcriptionFailed={false} signedIn={true} />);
+
+      const acceptBtn = await screen.findByRole('button', { name: /accept/i });
+      act(() => {
+        fireEvent.click(acceptBtn);
+      });
+      await waitFor(() => expect(acceptMock).toHaveBeenCalledWith('rev-1'));
+    });
+
+    it('does not show Accept on an already-accepted revision', async () => {
+      groupsMock.mockResolvedValue(['admin']);
+      listMock.mockResolvedValue([{ ...baseRow, accepted: true }]);
+      render(<RevisionPanel recordingId="rec-1" transcriptionFailed={false} signedIn={true} />);
+      await waitFor(() => expect(screen.getByText('ACCEPTED')).toBeInTheDocument());
+      expect(screen.queryByRole('button', { name: /^accept$/i })).toBeNull();
+    });
   });
 
   describe('inline correction form (#93)', () => {
