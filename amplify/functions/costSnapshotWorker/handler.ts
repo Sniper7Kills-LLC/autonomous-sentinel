@@ -336,7 +336,14 @@ export function isScheduledEvent(event: unknown): boolean {
  * the `SnapshotResult` JSON so the admin UI can show the outcome. Both
  * run the identical `runSnapshot` core.
  */
-export const handler: Handler<unknown, SnapshotResult | void> = async (event) => {
+// `_context`/`_callback` are declared (unused) so the 3-arg Lambda
+// `Handler` call sites in the tests are not flagged as superfluous by
+// CodeQL (js/superfluous-trailing-arguments) — same fix as #400.
+export const handler: Handler<unknown, SnapshotResult | void> = async (
+  event,
+  _context,
+  _callback,
+) => {
   const deps = resolveDeps();
   const result = await runSnapshot(deps);
   if (isScheduledEvent(event)) {
