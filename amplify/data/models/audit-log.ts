@@ -48,6 +48,12 @@ export const AuditLog = a
       'RECORDING_RESTORE',
       'RECORDING_REPROCESS',
       'RECORDING_REPARSE',
+      // Admin DLQ triage (#107). `DLQ_REQUEUE` — a stuck message was
+      // sent back onto its stage's primary queue for another attempt.
+      // `DLQ_DROP` — a stuck message was permanently removed from the
+      // DLQ and its Recording marked terminally FAILED.
+      'DLQ_REQUEUE',
+      'DLQ_DROP',
       'COMMENT_DELETE',
       'USER_BAN',
       'USER_UNBAN',

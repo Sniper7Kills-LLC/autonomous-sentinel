@@ -1,0 +1,375 @@
+import type { AppSyncResolverHandler } from 'aws-lambda';
+import {
+  SQSClient,
+  ReceiveMessageCommand,
+  SendMessageCommand,
+  DeleteMessageCommand,
+} from '@aws-sdk/client-sqs';
+import {
+  audit as defaultAudit,
+  type AuditContext,
+  type AuditOptions,
+} from '../../data/audit-log-helper';
+
+/**
+ * Lambda-backed AppSync resolver for the admin DLQ + manual-reprocess
+ * view (#107). Dispatches on `event.info.fieldName`:
+ *
+ *   - `listDlqMessages` — peek the requested stage's DLQ (visibility
+ *     timeout 0, no delete) and return stuck messages with friendly
+ *     metadata.
+ *   - `requeueDlqMessage` — SendMessage the body onto the stage's
+ *     PRIMARY queue, then DeleteMessage it from the DLQ. Audits
+ *     `DLQ_REQUEUE`.
+ *   - `dropDlqMessage` — DeleteMessage from the DLQ, mark the Recording
+ *     terminally `FAILED` when known, audit `DLQ_DROP`.
+ *
+ * Every operation is admin-only — defense-in-depth behind the
+ * schema-level `allow.group('admin')` authz.
+ *
+ * SQS receipt-handle caveat: handles returned by `listDlqMessages` come
+ * from a zero-visibility-timeout peek, so the same message stays
+ * immediately visible to a concurrent peek. A handle is still valid for
+ * a `DeleteMessage` until the message is redriven/expired; for the
+ * low-volume admin triage surface this best-effort model is acceptable.
+ * If a handle has gone stale the SQS delete is a no-op (the message was
+ * already actioned) — surfaced to the caller as a benign success.
+ */
+
+export type PipelineStage = 'preprocess' | 'transcribe' | 'linguistic';
+
+const STAGES: readonly PipelineStage[] = ['preprocess', 'transcribe', 'linguistic'];
+
+/** Env var holding the PRIMARY queue URL for a stage. */
+const MAIN_QUEUE_ENV: Record<PipelineStage, string> = {
+  preprocess: 'PREPROCESS_QUEUE_URL',
+  transcribe: 'TRANSCRIBE_QUEUE_URL',
+  linguistic: 'LINGUISTIC_QUEUE_URL',
+};
+
+/** Env var holding the DLQ URL for a stage. */
+const DLQ_QUEUE_ENV: Record<PipelineStage, string> = {
+  preprocess: 'PREPROCESS_DLQ_URL',
+  transcribe: 'TRANSCRIBE_DLQ_URL',
+  linguistic: 'LINGUISTIC_DLQ_URL',
+};
+
+/** One stuck DLQ message, shaped for the admin table. */
+export interface DlqMessageView {
+  stage: PipelineStage;
+  messageId: string;
+  receiptHandle: string;
+  body: string;
+  /** Best-effort recordingId parsed out of the message body, when present. */
+  recordingId: string | null;
+  /** SQS `ApproximateReceiveCount` — how many times delivery was attempted. */
+  approximateReceiveCount: number;
+  /** ISO 8601 of the SQS `SentTimestamp` (when the message landed on the DLQ). */
+  enqueuedAt: string | null;
+  /** Best-effort failure reason parsed out of the body, when present. */
+  errorReason: string | null;
+}
+
+export interface ListDlqMessagesResult {
+  stage: PipelineStage;
+  messages: DlqMessageView[];
+}
+
+export interface RequeueDlqMessageResult {
+  status: 'requeued';
+}
+
+export interface DropDlqMessageResult {
+  status: 'dropped';
+}
+
+// --- dependency injection seam (mirrors messageMutations) ---------------
+
+export interface DlqRecordingClient {
+  models: {
+    Recording: {
+      update: (
+        input: { id: string } & Record<string, unknown>,
+      ) => Promise<{ data: unknown; errors?: unknown }>;
+    };
+  };
+}
+
+export type AuditFn = (ctx: AuditContext, opts: AuditOptions) => Promise<string>;
+
+interface Deps {
+  sqs?: SQSClient;
+  dataClient?: DlqRecordingClient;
+  audit?: AuditFn;
+  now?: () => Date;
+}
+
+let injected: Deps = {};
+
+export function __setDeps(deps: Deps): void {
+  injected = deps;
+}
+
+export function __resetDeps(): void {
+  injected = {};
+}
+
+let cachedSqs: SQSClient | undefined;
+function sqsClient(): SQSClient {
+  if (!cachedSqs) cachedSqs = new SQSClient({});
+  return cachedSqs;
+}
+
+let cachedDataClient: DlqRecordingClient | undefined;
+async function getDefaultDataClient(): Promise<DlqRecordingClient> {
+  if (cachedDataClient) return cachedDataClient;
+  const { configureAmplifyOnce } = await import('../_shared/configure-amplify');
+  await configureAmplifyOnce();
+  const mod = await import('aws-amplify/data');
+  cachedDataClient = mod.generateClient({ authMode: 'iam' }) as unknown as DlqRecordingClient;
+  return cachedDataClient;
+}
+
+// --- helpers ------------------------------------------------------------
+
+function isAdmin(identity: unknown): boolean {
+  if (!identity || typeof identity !== 'object') return false;
+  const groups = (identity as { groups?: unknown }).groups;
+  if (!Array.isArray(groups)) return false;
+  return groups.indexOf('admin') >= 0;
+}
+
+function identitySub(identity: unknown): string | null {
+  if (!identity || typeof identity !== 'object') return null;
+  const sub = (identity as { sub?: unknown }).sub;
+  return typeof sub === 'string' && sub.length > 0 ? sub : null;
+}
+
+function auditContextFrom(event: {
+  identity?: unknown;
+  request?: { headers?: Record<string, string | undefined> };
+}): AuditContext {
+  const sub = identitySub(event.identity);
+  return {
+    identity: sub ? { sub } : null,
+    request: { headers: event.request?.headers ?? {} },
+  };
+}
+
+function parseStage(raw: unknown): PipelineStage {
+  if (typeof raw === 'string' && (STAGES as readonly string[]).indexOf(raw) >= 0) {
+    return raw as PipelineStage;
+  }
+  throw new Error(`dlqAdmin: stage must be one of ${STAGES.join(', ')}; got "${String(raw)}"`);
+}
+
+function envUrl(key: string): string {
+  const v = process.env[key];
+  if (!v) throw new Error(`dlqAdmin: ${key} env var is required`);
+  return v;
+}
+
+/**
+ * Best-effort extraction of a recordingId + error reason from a pipeline
+ * message body. Pipeline messages are JSON; we look for the common id
+ * field names without locking to one stage's exact shape.
+ */
+function parseBody(body: string): { recordingId: string | null; errorReason: string | null } {
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    const idCandidate =
+      parsed.recordingId ?? parsed.recordingID ?? parsed.id ?? parsed.recording_id;
+    const reasonCandidate =
+      parsed.errorReason ?? parsed.failedReason ?? parsed.error ?? parsed.reason;
+    return {
+      recordingId: typeof idCandidate === 'string' && idCandidate.length > 0 ? idCandidate : null,
+      errorReason:
+        typeof reasonCandidate === 'string' && reasonCandidate.length > 0 ? reasonCandidate : null,
+    };
+  } catch {
+    return { recordingId: null, errorReason: null };
+  }
+}
+
+// --- dispatch handlers --------------------------------------------------
+
+async function dispatchList(
+  event: { arguments: Record<string, unknown>; identity?: unknown },
+  deps: { sqs: SQSClient },
+): Promise<ListDlqMessagesResult> {
+  if (!isAdmin(event.identity)) {
+    throw new Error('listDlqMessages: caller is not in the admin group');
+  }
+  const stage = parseStage(event.arguments.stage);
+  const queueUrl = envUrl(DLQ_QUEUE_ENV[stage]);
+
+  // Peek loop: SQS ReceiveMessage returns a sample (≤10) per call. Poll
+  // a few rounds with VisibilityTimeout 0 (no hiding) and dedupe by
+  // MessageId to surface as many stuck items as a low-volume DLQ holds
+  // without claiming them. Bounded at 3 rounds so a large DLQ can't make
+  // this resolver run long — the count cap is logged below.
+  const byId = new Map<string, DlqMessageView>();
+  const MAX_ROUNDS = 3;
+  for (let round = 0; round < MAX_ROUNDS; round += 1) {
+    const res = await deps.sqs.send(
+      new ReceiveMessageCommand({
+        QueueUrl: queueUrl,
+        MaxNumberOfMessages: 10,
+        VisibilityTimeout: 0,
+        WaitTimeSeconds: 0,
+        AttributeNames: ['All'],
+        MessageAttributeNames: ['All'],
+      }),
+    );
+    const batch = res.Messages ?? [];
+    if (batch.length === 0) break;
+    for (const m of batch) {
+      if (!m.MessageId || !m.ReceiptHandle) continue;
+      if (byId.has(m.MessageId)) continue;
+      const body = m.Body ?? '';
+      const { recordingId, errorReason } = parseBody(body);
+      const sentTs = m.Attributes?.SentTimestamp;
+      const receiveCount = m.Attributes?.ApproximateReceiveCount;
+      byId.set(m.MessageId, {
+        stage,
+        messageId: m.MessageId,
+        receiptHandle: m.ReceiptHandle,
+        body,
+        recordingId,
+        approximateReceiveCount: receiveCount ? Number(receiveCount) : 0,
+        enqueuedAt: sentTs ? new Date(Number(sentTs)).toISOString() : null,
+        errorReason,
+      });
+    }
+  }
+  return { stage, messages: Array.from(byId.values()) };
+}
+
+async function dispatchRequeue(
+  event: {
+    arguments: Record<string, unknown>;
+    identity?: unknown;
+    request?: { headers?: Record<string, string | undefined> };
+  },
+  deps: { sqs: SQSClient; audit: AuditFn },
+): Promise<RequeueDlqMessageResult> {
+  if (!isAdmin(event.identity)) {
+    throw new Error('requeueDlqMessage: caller is not in the admin group');
+  }
+  const stage = parseStage(event.arguments.stage);
+  const receiptHandle = event.arguments.receiptHandle;
+  const body = event.arguments.body;
+  if (typeof receiptHandle !== 'string' || receiptHandle.length === 0) {
+    throw new Error('requeueDlqMessage: receiptHandle argument is required');
+  }
+  if (typeof body !== 'string' || body.length === 0) {
+    throw new Error('requeueDlqMessage: body argument is required');
+  }
+  const recordingId =
+    typeof event.arguments.recordingId === 'string' ? event.arguments.recordingId : null;
+
+  const mainUrl = envUrl(MAIN_QUEUE_ENV[stage]);
+  const dlqUrl = envUrl(DLQ_QUEUE_ENV[stage]);
+
+  // Send back onto the primary queue FIRST, then remove from the DLQ.
+  // If the delete fails the message is still on the DLQ (will redrive
+  // again) — at-least-once, never a silent loss.
+  await deps.sqs.send(new SendMessageCommand({ QueueUrl: mainUrl, MessageBody: body }));
+  await deps.sqs.send(new DeleteMessageCommand({ QueueUrl: dlqUrl, ReceiptHandle: receiptHandle }));
+
+  await deps.audit(auditContextFrom(event), {
+    action: 'DLQ_REQUEUE',
+    targetType: 'Recording',
+    targetId: recordingId ?? `dlq:${stage}`,
+    reason: `Requeued stuck ${stage} message to primary queue`,
+  });
+
+  return { status: 'requeued' };
+}
+
+async function dispatchDrop(
+  event: {
+    arguments: Record<string, unknown>;
+    identity?: unknown;
+    request?: { headers?: Record<string, string | undefined> };
+  },
+  deps: {
+    sqs: SQSClient;
+    getClient: () => Promise<DlqRecordingClient>;
+    audit: AuditFn;
+    now: () => Date;
+  },
+): Promise<DropDlqMessageResult> {
+  if (!isAdmin(event.identity)) {
+    throw new Error('dropDlqMessage: caller is not in the admin group');
+  }
+  const stage = parseStage(event.arguments.stage);
+  const receiptHandle = event.arguments.receiptHandle;
+  if (typeof receiptHandle !== 'string' || receiptHandle.length === 0) {
+    throw new Error('dropDlqMessage: receiptHandle argument is required');
+  }
+  const recordingId =
+    typeof event.arguments.recordingId === 'string' ? event.arguments.recordingId : null;
+  const reason = typeof event.arguments.reason === 'string' ? event.arguments.reason : null;
+
+  // Mark the Recording terminally FAILED FIRST, then delete from the DLQ.
+  // Ordering matters for failure safety: if the Recording.update throws,
+  // the message stays on the DLQ (nothing lost — the admin can re-drop).
+  // Deleting first would risk losing the message while leaving the
+  // recording un-FAILED on an update error.
+  if (recordingId) {
+    const client = await deps.getClient();
+    const now = deps.now().toISOString();
+    const updated = await client.models.Recording.update({
+      id: recordingId,
+      transcriptionStatus: 'FAILED',
+      transcriptionFailed: true,
+      transcriptionStatusUpdatedAt: now,
+      failedReason: reason ?? `Dropped from ${stage} DLQ by admin`,
+    });
+    if (updated.errors) {
+      throw new Error(
+        `dropDlqMessage: Recording.update returned errors: ${JSON.stringify(updated.errors)}`,
+      );
+    }
+  }
+
+  const dlqUrl = envUrl(DLQ_QUEUE_ENV[stage]);
+  await deps.sqs.send(new DeleteMessageCommand({ QueueUrl: dlqUrl, ReceiptHandle: receiptHandle }));
+
+  await deps.audit(auditContextFrom(event), {
+    action: 'DLQ_DROP',
+    targetType: 'Recording',
+    targetId: recordingId ?? `dlq:${stage}`,
+    reason: reason ?? `Dropped stuck ${stage} message from DLQ`,
+  });
+
+  return { status: 'dropped' };
+}
+
+// --- entry point --------------------------------------------------------
+
+// `_context` / `_callback` declared (unused) so the 3-arg Lambda Handler
+// call sites in tests aren't flagged by CodeQL (js/superfluous-trailing-arguments).
+export const handler: AppSyncResolverHandler<
+  Record<string, unknown>,
+  ListDlqMessagesResult | RequeueDlqMessageResult | DropDlqMessageResult
+> = async (event, _context, _callback) => {
+  const sqs = injected.sqs ?? sqsClient();
+  const audit: AuditFn = injected.audit ?? defaultAudit;
+  const now = injected.now ?? (() => new Date());
+  const fieldName = event.info?.fieldName;
+
+  switch (fieldName) {
+    case 'listDlqMessages':
+      return dispatchList(event, { sqs });
+    case 'requeueDlqMessage':
+      return dispatchRequeue(event, { sqs, audit });
+    case 'dropDlqMessage': {
+      const getClient = async () => injected.dataClient ?? (await getDefaultDataClient());
+      return dispatchDrop(event, { sqs, getClient, audit, now });
+    }
+    default:
+      throw new Error(`dlqAdmin: unsupported fieldName "${String(fieldName)}"`);
+  }
+};
