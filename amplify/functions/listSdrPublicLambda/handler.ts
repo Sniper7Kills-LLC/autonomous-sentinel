@@ -155,7 +155,11 @@ export function blurForPublic(row: SdrRow): SdrRow {
   return out;
 }
 
-export const handler: AppSyncResolverHandler<Record<string, never>, SdrRow[]> = async (event) => {
+export const handler: AppSyncResolverHandler<Record<string, never>, SdrRow[]> = async (
+  event,
+  _context,
+  _callback,
+) => {
   const deps = resolveDeps();
   const rows = await deps.listSdrRows();
   const live = rows.filter((r) => !r.deletedAt);

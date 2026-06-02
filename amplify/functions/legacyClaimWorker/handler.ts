@@ -265,7 +265,7 @@ export async function processClaim(event: LegacyClaimWorkerEvent): Promise<void>
  * if claim volume grows; v1 traffic is bounded by sign-up rate, so
  * serial is fine.
  */
-export const handler: SQSHandler = async (event: SQSEvent) => {
+export const handler: SQSHandler = async (event: SQSEvent, _context, _callback) => {
   for (const record of event.Records) {
     const payload = JSON.parse(record.body) as LegacyClaimWorkerEvent;
     await processClaim(payload);

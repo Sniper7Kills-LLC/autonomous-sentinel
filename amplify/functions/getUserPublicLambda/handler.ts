@@ -86,6 +86,8 @@ function isAdmin(identity: unknown): boolean {
 
 export const handler: AppSyncResolverHandler<{ cognitoSub: string }, UserRow | null> = async (
   event,
+  _context,
+  _callback,
 ) => {
   const { cognitoSub } = event.arguments;
   if (!cognitoSub || cognitoSub.trim() === '') {

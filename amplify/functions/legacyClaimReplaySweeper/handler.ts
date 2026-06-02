@@ -281,7 +281,7 @@ function resolveDeps(): SweeperDeps {
   };
 }
 
-export const handler: Handler<ScheduledEvent, void> = async () => {
+export const handler: Handler<ScheduledEvent, void> = async (_event, _context, _callback) => {
   const deps = resolveDeps();
 
   let nextToken: string | undefined;
