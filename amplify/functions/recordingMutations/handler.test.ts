@@ -106,6 +106,21 @@ function makeStubs(opts: { existing?: RecordingRow | null; byHash?: RecordingRow
   };
 }
 
+type S3Spy = ReturnType<typeof vi.fn<(key: string) => Promise<void>>>;
+
+function makeS3(opts: { failKeys?: string[] } = {}): {
+  s3: { deleteObject: S3Spy; restoreObject: S3Spy };
+  deleteSpy: S3Spy;
+  restoreSpy: S3Spy;
+} {
+  const fail = new Set(opts.failKeys ?? []);
+  const impl = (key: string): Promise<void> =>
+    fail.has(key) ? Promise.reject(new Error(`s3 fail ${key}`)) : Promise.resolve();
+  const deleteSpy = vi.fn<(key: string) => Promise<void>>(impl);
+  const restoreSpy = vi.fn<(key: string) => Promise<void>>(impl);
+  return { s3: { deleteObject: deleteSpy, restoreObject: restoreSpy }, deleteSpy, restoreSpy };
+}
+
 describe('recordingMutations — dispatch', () => {
   beforeEach(() => {
     __resetDeps();
@@ -282,7 +297,9 @@ describe('recordingMutations — reprocessRecording (#505)', () => {
     expect(enqueueSpy.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({ backendOverride: 'amazon-transcribe' }),
     );
-    const auditOpts = (auditSpy.mock.calls[0] as unknown as unknown[] | undefined)?.[1] as { after: Record<string, unknown> };
+    const auditOpts = (auditSpy.mock.calls[0] as unknown as unknown[] | undefined)?.[1] as {
+      after: Record<string, unknown>;
+    };
     expect(auditOpts.after.backendOverride).toBe('amazon-transcribe');
   });
 
@@ -802,5 +819,148 @@ describe('recordingMutations — submitRecording (#284)', () => {
     const result = (await handler(event, {} as Context, () => undefined)) as RecordingRow;
     expect(result.id).toMatch(/^gen-rec-/);
     expect(result.contentHash).toBe('h-r');
+  });
+});
+
+describe('recordingMutations — S3 hard-delete on softDeleteRecording (#478)', () => {
+  beforeEach(() => {
+    __resetDeps();
+  });
+
+  const recWithKeys: RecordingRow = {
+    id: 'rec-s3',
+    deletedAt: null,
+    contentHash: 'h',
+    originalKey: 'recordings/originals/h.wav',
+    webCanonicalKey: 'recordings/web/rec-s3.opus',
+    wordTimestampsKey: 'recordings/sidecars/rec-s3.words.json',
+    peaksJsonKey: 'recordings/sidecars/rec-s3.peaks.json',
+  };
+
+  it('deletes every referenced S3 key and records them on the audit after', async () => {
+    const { client, auditSpy } = makeStubs({ existing: { ...recWithKeys } });
+    const { s3, deleteSpy } = makeS3();
+    __setDeps({ dataClient: client, audit: auditSpy, s3 });
+    await handler(
+      makeEvent({ arguments: { recordingId: 'rec-s3', reason: 'x' } }),
+      {} as Context,
+      () => undefined,
+    );
+    expect(deleteSpy.mock.calls.map((c) => c[0])).toEqual([
+      'recordings/originals/h.wav',
+      'recordings/web/rec-s3.opus',
+      'recordings/sidecars/rec-s3.words.json',
+      'recordings/sidecars/rec-s3.peaks.json',
+    ]);
+    const [, opts] = auditSpy.mock.calls[0] as unknown as [unknown, Record<string, unknown>];
+    expect((opts.after as { s3Deleted: string[] }).s3Deleted).toHaveLength(4);
+  });
+
+  it('is best-effort: a failed object delete does not block the row soft-delete', async () => {
+    const { client, auditSpy, updateSpy } = makeStubs({ existing: { ...recWithKeys } });
+    const { s3 } = makeS3({ failKeys: ['recordings/web/rec-s3.opus'] });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    __setDeps({ dataClient: client, audit: auditSpy, s3 });
+    await handler(
+      makeEvent({ arguments: { recordingId: 'rec-s3' } }),
+      {} as Context,
+      () => undefined,
+    );
+    // Row still soft-deleted.
+    expect((updateSpy.mock.calls[0]?.[0] as RecordingRow).deletedAt).toBeTruthy();
+    // The failed key is omitted from the audit's s3Deleted list.
+    const [, opts] = auditSpy.mock.calls[0] as unknown as [unknown, Record<string, unknown>];
+    expect((opts.after as { s3Deleted: string[] }).s3Deleted).toEqual([
+      'recordings/originals/h.wav',
+      'recordings/sidecars/rec-s3.words.json',
+      'recordings/sidecars/rec-s3.peaks.json',
+    ]);
+    errSpy.mockRestore();
+  });
+
+  it('makes no S3 call for a recording-less row with no keys', async () => {
+    const { client, auditSpy } = makeStubs({ existing: { id: 'rec-none', deletedAt: null } });
+    const { s3, deleteSpy } = makeS3();
+    __setDeps({ dataClient: client, audit: auditSpy, s3 });
+    await handler(
+      makeEvent({ arguments: { recordingId: 'rec-none' } }),
+      {} as Context,
+      () => undefined,
+    );
+    expect(deleteSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('recordingMutations — restoreRecording (#478)', () => {
+  beforeEach(() => {
+    __resetDeps();
+  });
+
+  const deletedRec: RecordingRow = {
+    id: 'rec-del',
+    deletedAt: '2026-05-20T10:00:00.000Z',
+    deletedBy: 'cog-admin-001',
+    contentHash: 'h',
+    originalKey: 'recordings/originals/h.wav',
+    webCanonicalKey: 'recordings/web/rec-del.opus',
+  };
+
+  function restoreEvent(args: Record<string, unknown> = {}, group = 'admin') {
+    const e = makeEvent({
+      fieldName: 'restoreRecording',
+      arguments: { recordingId: 'rec-del', ...args },
+    });
+    if (e.identity && 'groups' in e.identity) e.identity.groups = [group];
+    return e;
+  }
+
+  it('admin-only: rejects a non-admin caller', async () => {
+    const { client, auditSpy, updateSpy } = makeStubs({ existing: { ...deletedRec } });
+    const { s3 } = makeS3();
+    __setDeps({ dataClient: client, audit: auditSpy, s3 });
+    await expect(
+      handler(restoreEvent({}, 'moderator'), {} as Context, () => undefined),
+    ).rejects.toThrow(/admin/i);
+    expect(updateSpy).not.toHaveBeenCalled();
+  });
+
+  it('clears deletedAt/deletedBy and restores every S3 key', async () => {
+    const { client, auditSpy, updateSpy } = makeStubs({ existing: { ...deletedRec } });
+    const { s3, restoreSpy } = makeS3();
+    __setDeps({ dataClient: client, audit: auditSpy, s3 });
+    await handler(restoreEvent(), {} as Context, () => undefined);
+
+    const patch = updateSpy.mock.calls[0]?.[0] as RecordingRow;
+    expect(patch.deletedAt).toBeNull();
+    expect(patch.deletedBy).toBeNull();
+    expect(restoreSpy.mock.calls.map((c) => c[0])).toEqual([
+      'recordings/originals/h.wav',
+      'recordings/web/rec-del.opus',
+    ]);
+    const [, opts] = auditSpy.mock.calls[0] as unknown as [unknown, Record<string, unknown>];
+    expect(opts.action).toBe('RECORDING_RESTORE');
+    expect((opts.after as { s3Restored: string[] }).s3Restored).toHaveLength(2);
+  });
+
+  it('is idempotent on a row that is not deleted (no update, no restore)', async () => {
+    const { client, auditSpy, updateSpy } = makeStubs({
+      existing: { id: 'rec-del', deletedAt: null, contentHash: 'h' },
+    });
+    const { s3, restoreSpy } = makeS3();
+    __setDeps({ dataClient: client, audit: auditSpy, s3 });
+    const res = await handler(restoreEvent(), {} as Context, () => undefined);
+    expect(res).toMatchObject({ id: 'rec-del' });
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(restoreSpy).not.toHaveBeenCalled();
+    expect(auditSpy).not.toHaveBeenCalled();
+  });
+
+  it('throws when the target Recording does not exist', async () => {
+    const { client, auditSpy } = makeStubs({});
+    const { s3 } = makeS3();
+    __setDeps({ dataClient: client, audit: auditSpy, s3 });
+    await expect(
+      handler(restoreEvent({ recordingId: 'nope' }), {} as Context, () => undefined),
+    ).rejects.toThrow(/not found/i);
   });
 });
