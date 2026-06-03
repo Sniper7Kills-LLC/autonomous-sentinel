@@ -85,7 +85,7 @@ function visibility(metricName: string) {
 
 /**
  * Write-scope geo block: country matches AND the request targets a write
- * surface. Plain 403 — write blocks don't render the banned-region page.
+ * surface. Block response per `cfg.writeAction` (the self-contained banned page).
  */
 export function buildGeoWriteRule(codes: string[], cfg: GeoRuleConfig): WafRule {
   return {
