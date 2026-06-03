@@ -40,27 +40,26 @@ DELETE/PATCH` on `/api/*` or `/stripe/*`) so blocked-country visitors keep
   dependency. (In the shared generic `function` stack it would close a
   `[TranscribeAwsStack, data, function]` cycle — caught at deploy, not synth.)
 
-### Operational step — associate the Web ACL with CloudFront
+### Web ACL association — code-managed (#681)
 
-Amplify Hosting owns its CloudFront distribution, so the backend stack can't
-attach the Web ACL itself. After a deploy, associate the exported ARN
-(`wafWebAclArn` in `amplify_outputs.json` → `custom`) with the Amplify app's
-distribution via the Amplify console **Hosting → Firewall** (or
-`aws wafv2 associate-web-acl`). This is the only manual step; everything else
-(rules, lists, logging) is code-managed.
+The Web ACL is attached to the Amplify Hosting app **in code**: `backend.ts`
+creates a `wafv2.CfnWebACLAssociation` keyed on the Amplify app ARN (Amplify's
+native WAF integration — a CLOUDFRONT-scope Web ACL, same account, us-east-1).
+`ampx pipeline-deploy` applies it on every build, so there is **no manual
+console step**. The association is guarded on `AWS_APP_ID` so it is created only
+in a real Amplify pipeline build, never in `ampx sandbox`. Verify after deploy
+with `aws amplify get-app --app-id <id> --query app.wafConfiguration` (non-null
+once associated). Rules, lists, and logging are likewise code-managed.
 
-### Operational step — associate the geo-rewrite CF function (#679)
+### Geo-rewrite CF function (#679) — dormant
 
-The CloudFront **viewer-request** function `eam-blocked-geo-rewrite`
-(`waf.ts` → `blockedGeoRewriteFunctionArn` in `amplify_outputs.json` → `custom`;
-source in `cloudfront/blocked-geo-rewrite.js`) rewrites a bare `/blocked`
-request to `/blocked?country=<CloudFront-Viewer-Country>` so blocked-country
-visitors auto-land on their per-country banned-region page (otherwise `/blocked`
-shows the generic default). Since Amplify Hosting owns the distribution, attach
-it as the **viewer-request** function association on the default cache behavior
-(Amplify console or `aws cloudfront`). Ensure the distribution forwards /
-populates the `CloudFront-Viewer-Country` header; if it's absent the function
-passes through unchanged (generic default page — no breakage).
+The `/blocked` auto-country-routing CloudFront function
+(`cloudfront/blocked-geo-rewrite.js`) **cannot be attached to the Amplify-managed
+distribution** — Amplify's native integration covers WAF only, not custom
+CloudFront Functions. The function ships built + tested but **dormant**; it would
+activate only under a self-managed CloudFront (a future option, e.g. at the
+SSR/hosting migration #330). Until then `/blocked` shows the generic default
+page, with per-country pages reachable via `?country=<ISO2>`.
 
 ## Sandbox
 
