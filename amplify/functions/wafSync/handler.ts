@@ -53,13 +53,27 @@ interface IpSetRef {
   name: string;
 }
 
+/**
+ * The Web ACL fields a reconcile needs. Captured in a single `GetWebACL` so the
+ * subsequent `UpdateWebACL` reuses the SAME `LockToken` + metadata — no second
+ * Get (which would burn a WAF API call and reuse a token fetched at a different
+ * moment than the metadata it pairs with).
+ */
+export interface WebAclState {
+  rules: WafRule[];
+  lockToken: string;
+  defaultAction: unknown;
+  visibilityConfig: unknown;
+  customResponseBodies: unknown;
+}
+
 export interface WafSyncDeps {
   scanBannedIps: () => Promise<BannedIpRow[]>;
   scanBannedCountries: () => Promise<BannedCountryRow[]>;
   getIpSet: (ref: IpSetRef) => Promise<{ addresses: string[]; lockToken: string }>;
   updateIpSet: (ref: IpSetRef, addresses: string[], lockToken: string) => Promise<void>;
-  getWebAcl: () => Promise<{ rules: WafRule[]; lockToken: string }>;
-  updateWebAcl: (rules: WafRule[], lockToken: string) => Promise<void>;
+  getWebAcl: () => Promise<WebAclState>;
+  updateWebAcl: (state: WebAclState, rules: WafRule[]) => Promise<void>;
   now: () => number;
 }
 
@@ -170,26 +184,22 @@ function defaultDeps(): WafSyncDeps {
       return {
         rules: (res.WebACL?.Rules ?? []) as unknown as WafRule[],
         lockToken: res.LockToken ?? '',
+        defaultAction: res.WebACL?.DefaultAction ?? { Allow: {} },
+        visibilityConfig: res.WebACL?.VisibilityConfig,
+        customResponseBodies: res.WebACL?.CustomResponseBodies,
       };
     },
-    updateWebAcl: async (rules, lockToken) => {
-      const acl = await waf.send(
-        new GetWebACLCommand({
-          Id: requireEnv('WEB_ACL_ID'),
-          Name: requireEnv('WEB_ACL_NAME'),
-          Scope: scope as never,
-        }),
-      );
+    updateWebAcl: async (state, rules) => {
       await waf.send(
         new UpdateWebACLCommand({
           Id: requireEnv('WEB_ACL_ID'),
           Name: requireEnv('WEB_ACL_NAME'),
           Scope: scope as never,
-          DefaultAction: acl.WebACL?.DefaultAction ?? { Allow: {} },
-          VisibilityConfig: acl.WebACL?.VisibilityConfig,
-          CustomResponseBodies: acl.WebACL?.CustomResponseBodies,
+          DefaultAction: state.defaultAction as never,
+          VisibilityConfig: state.visibilityConfig as never,
+          CustomResponseBodies: state.customResponseBodies as never,
           Rules: rules as never,
-          LockToken: lockToken,
+          LockToken: state.lockToken,
         }),
       );
     },
@@ -248,7 +258,7 @@ export async function reconcileWebAcl(
   if (unchanged) return { changed: false };
 
   const rules = reconcileRules(acl.rules, desired.write, desired.read, cfg);
-  await deps.updateWebAcl(rules, acl.lockToken);
+  await deps.updateWebAcl(acl, rules);
   return { changed: true };
 }
 

@@ -1452,23 +1452,25 @@ transcribeDispatchFn.addEventSource(
 // `BannedCountry` / `BannedIp` rows onto those resources, woken by the two ban
 // tables' DynamoDB streams.
 //
-// Circular-dependency avoidance (the reason this is not in the data stack):
-// `wafSync` reads the ban tables via the RAW DynamoDB SDK (Scan), never the
-// Amplify Data client, so the data stack never imports the function (no
-// `allow.resource` edge). Every edge is one-directional OUT of the wafSync
-// function stack:
-//   - wafSync fn stack → data stack: ban-table stream ARNs (EventSourceMapping
-//     target lives in the FUNCTION stack, not the data stack — see below),
-//     table ARNs (Scan IAM), stream-read IAM.
-//   - wafSync fn stack → WafStack: WAF resource ARNs/Ids (IAM + env).
-// Nothing flows back into the function stack, so there is no cycle. (Contrast
-// `linguisticConfigStream`, which uses the Amplify Data client and therefore
-// had to sit INSIDE the data stack via `resourceGroupName:'data'`.)
+// Circular-dependency avoidance: `wafSync` is declared with
+// `resourceGroupName:'data'` (see its resource.ts), so its Lambda lives INSIDE
+// the data stack — the same fix as `linguisticConfigStream` / `costSnapshotWorker`
+// (#317). Consequences that keep the graph acyclic:
+//   - The ban tables + their streams are in the data stack, so the
+//     EventSourceMappings + Scan/stream IAM created below (in `Stack.of(
+//     wafSyncLambda)` === the data stack) are INTRA-stack — no cross-stack edge.
+//   - `wafSync` reads via the RAW DynamoDB SDK (Scan), never the Amplify Data
+//     client, so there is no `allow.resource` data→function edge either.
+//   - The ONLY cross-stack edge is data → WafStack (WAF ARNs/Ids for IAM + env).
+//     `WafStack` references nothing, so it's a one-directional leaf — no cycle.
+// Putting the Lambda in the shared generic `function` stack instead closes a
+// [TranscribeAwsStack, data, function] cycle (synth passes, deploy fails).
 const wafStack = backend.createStack('WafStack');
 const waf = attachWaf(wafStack);
 
 const wafSyncLambda = backend.wafSync.resources.lambda as LambdaFunction;
-const wafSyncFnStack = Stack.of(wafSyncLambda);
+// `Stack.of(wafSyncLambda)` resolves to the data stack (resourceGroupName:'data').
+const wafSyncStack = Stack.of(wafSyncLambda);
 
 // Web ACL + IPSet identifiers → env (wafSync addresses them via Get*/Update*).
 wafSyncLambda.addEnvironment('WEB_ACL_ID', waf.webAcl.attrId);
@@ -1503,9 +1505,10 @@ wafSyncLambda.addToRolePolicy(
 );
 
 // Ban tables: enable streams + grant Scan + subscribe wafSync. All resources
-// created in the wafSync FUNCTION stack so the only cross-stack edge is
-// function → data (stream/table ARNs), never data → function.
-const wafSyncDlq = new Queue(wafSyncFnStack, 'WafSyncStreamDlq', {
+// created in `wafSyncStack` (=== the data stack, since wafSync is
+// resourceGroupName:'data'), so the stream/table references are INTRA-stack —
+// no cross-stack edge at all.
+const wafSyncDlq = new Queue(wafSyncStack, 'WafSyncStreamDlq', {
   retentionPeriod: Duration.days(14),
 });
 const banStreamArns: string[] = [];
@@ -1533,7 +1536,7 @@ for (const modelName of ['BannedCountry', 'BannedIp'] as const) {
   // Scan. A short batching window + reserved concurrency 1 (below) coalesces
   // admin bursts and serialises the optimistic WAF LockToken. onFailure →
   // dedicated DLQ.
-  const mapping = new EventSourceMapping(wafSyncFnStack, `WafSync${modelName}StreamMapping`, {
+  const mapping = new EventSourceMapping(wafSyncStack, `WafSync${modelName}StreamMapping`, {
     target: wafSyncLambda,
     eventSourceArn: streamArn,
     startingPosition: StartingPosition.LATEST,
@@ -1546,8 +1549,8 @@ for (const modelName of ['BannedCountry', 'BannedIp'] as const) {
   mapping.node.addDependency(wafSyncLambda);
 }
 
-// Stream-read + Scan IAM (function stack → data stack table/stream ARNs).
-const wafSyncDataPolicy = new Policy(wafSyncFnStack, 'WafSyncBanTableReadPolicy', {
+// Stream-read + Scan IAM — intra-stack (wafSync + tables both in the data stack).
+const wafSyncDataPolicy = new Policy(wafSyncStack, 'WafSyncBanTableReadPolicy', {
   statements: [
     new PolicyStatement({
       actions: [

@@ -33,6 +33,17 @@ const event = {} as DynamoDBStreamEvent;
 const context = {} as Context;
 const cb = () => undefined;
 
+/** A complete WebAclState double — getWebAcl captures everything in one call. */
+function aclState(rules: WafRule[] = []) {
+  return {
+    rules,
+    lockToken: 'acl-lock',
+    defaultAction: { Allow: {} },
+    visibilityConfig: {},
+    customResponseBodies: {},
+  };
+}
+
 /** A deps double with in-memory IPSet + Web ACL state and call spies. */
 function makeDeps(over: Partial<WafSyncDeps> = {}): {
   deps: WafSyncDeps;
@@ -51,10 +62,8 @@ function makeDeps(over: Partial<WafSyncDeps> = {}): {
       ipUpdates[ref.key] = addresses;
       return Promise.resolve();
     }),
-    getWebAcl: vi.fn<WafSyncDeps['getWebAcl']>(() =>
-      Promise.resolve({ rules: [], lockToken: 'acl-lock' }),
-    ),
-    updateWebAcl: vi.fn<WafSyncDeps['updateWebAcl']>((rules) => {
+    getWebAcl: vi.fn<WafSyncDeps['getWebAcl']>(() => Promise.resolve(aclState())),
+    updateWebAcl: vi.fn<WafSyncDeps['updateWebAcl']>((_state, rules) => {
       aclUpdates.push(rules);
       return Promise.resolve();
     }),
@@ -103,13 +112,13 @@ describe('wafSync handler (#199/#200/#201)', () => {
     it('skips UpdateWebACL when the live country codes already match', async () => {
       const existing = [buildGeoWriteRule(['RU'], geoCfg)];
       const { deps, aclUpdates } = makeDeps({
-        getWebAcl: vi.fn<WafSyncDeps['getWebAcl']>(() =>
-          Promise.resolve({ rules: existing, lockToken: 'lk' }),
-        ),
+        getWebAcl: vi.fn<WafSyncDeps['getWebAcl']>(() => Promise.resolve(aclState(existing))),
       });
       const res = await reconcileWebAcl(deps, { write: ['RU'], read: [] });
       expect(res.changed).toBe(false);
       expect(aclUpdates).toHaveLength(0);
+      // single Get — no redundant second fetch inside updateWebAcl
+      expect(deps.getWebAcl).toHaveBeenCalledTimes(1);
     });
 
     it('updates when the desired country codes differ', async () => {
@@ -152,7 +161,7 @@ describe('wafSync handler (#199/#200/#201)', () => {
     it('clears everything when both tables are empty (no rules, empty sets)', async () => {
       const { deps, ipUpdates, aclUpdates } = makeDeps({
         getWebAcl: vi.fn<WafSyncDeps['getWebAcl']>(() =>
-          Promise.resolve({ rules: [buildGeoWriteRule(['RU'], geoCfg)], lockToken: 'lk' }),
+          Promise.resolve(aclState([buildGeoWriteRule(['RU'], geoCfg)])),
         ),
       });
       __setDeps(deps);

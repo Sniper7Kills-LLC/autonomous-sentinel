@@ -32,10 +32,13 @@ DELETE/PATCH` on `/api/*` or `/stripe/*`) so blocked-country visitors keep
   GraphQL query-vs-mutation can't be told apart at the edge, so anonymous
   GraphQL mutations are **not** edge-blocked — banned _users_ stay covered by
   the per-user `User.bannedAt` checks. (Follow-up: GraphQL-body inspection.)
-- **Cycle-safety.** `wafSync` reads the tables via the **raw DynamoDB SDK**
-  (never the Amplify Data client) and its stream mappings/IAM live in the
-  function stack, so every cross-stack edge points _out_ of the function — no
-  CloudFormation circular dependency.
+- **Cycle-safety.** `wafSync` is `resourceGroupName:'data'`, so it lives in the
+  data stack alongside the ban tables — its stream mappings + Scan/stream IAM are
+  intra-stack, and it reads via the **raw DynamoDB SDK** (never the Amplify Data
+  client, so no `allow.resource` edge). The only cross-stack edge is
+  data → `WafStack` (one-directional), so there's no CloudFormation circular
+  dependency. (In the shared generic `function` stack it would close a
+  `[TranscribeAwsStack, data, function]` cycle — caught at deploy, not synth.)
 
 ### Operational step — associate the Web ACL with CloudFront
 
