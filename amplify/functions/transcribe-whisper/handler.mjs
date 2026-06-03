@@ -215,6 +215,11 @@ async function preprocessAudio({ origPath, tmpDir, recordingId, cleanupPaths }) 
   const silenceCfg = readSilenceConfig(process.env);
   const denoiseCfg = readDenoiseConfig(process.env);
 
+  // Register the DSP intermediates for cleanup up front — a silence-trim /
+  // denoise failure can leave a partial file behind, and unlink of a
+  // never-created path is a harmless no-op (the cleanup swallows ENOENT).
+  cleanupPaths.push(trimmedPath, cleanPath);
+
   // silence-trim → denoise. On any failure, fall back to the raw original
   // as the transcode source (still produces a valid Opus + transcript).
   let transcodeSource = origPath;
@@ -227,7 +232,6 @@ async function preprocessAudio({ origPath, tmpDir, recordingId, cleanupPaths }) 
       minSilenceSec: silenceCfg.minSilenceSec,
       ffmpegPath: FFMPEG_PATH,
     });
-    cleanupPaths.push(trimmedPath);
     await denoise({
       inputPath: trimmedPath,
       outputPath: cleanPath,
@@ -236,7 +240,6 @@ async function preprocessAudio({ origPath, tmpDir, recordingId, cleanupPaths }) 
       nfDb: denoiseCfg.nfDb,
       ffmpegPath: FFMPEG_PATH,
     });
-    cleanupPaths.push(cleanPath);
     transcodeSource = cleanPath;
     dspApplied = true;
   } catch (dspErr) {
