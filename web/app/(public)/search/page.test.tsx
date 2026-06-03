@@ -22,8 +22,6 @@ vi.mock('@/lib/messages/search', () => ({
         confidence: 0.9,
         flaggedForReview: false,
         publishedAt: '2026-05-27T12:30:00Z',
-        characterCount: 30,
-        codewordCount: 0,
       },
     ],
     nextToken: null,

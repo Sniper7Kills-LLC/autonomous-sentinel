@@ -46,8 +46,6 @@ type RawRow = {
   confidence: number | null | undefined;
   flaggedForReview: boolean | null | undefined;
   publishedAt: string | null | undefined;
-  characterCount: number | null | undefined;
-  codewordCount: number | null | undefined;
 };
 
 function isMessageType(v: unknown): v is MessageType {
@@ -65,8 +63,6 @@ export function toDisplayMessage(r: RawRow): DisplayMessage {
     confidence: typeof r.confidence === 'number' ? r.confidence : null,
     flaggedForReview: Boolean(r.flaggedForReview),
     publishedAt: r.publishedAt ?? null,
-    characterCount: typeof r.characterCount === 'number' ? r.characterCount : null,
-    codewordCount: typeof r.codewordCount === 'number' ? r.codewordCount : null,
   };
 }
 

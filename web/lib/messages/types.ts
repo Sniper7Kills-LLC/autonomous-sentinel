@@ -17,8 +17,6 @@ export type DisplayMessage = {
   confidence: number | null;
   flaggedForReview: boolean;
   publishedAt: string | null;
-  characterCount: number | null;
-  codewordCount: number | null;
 };
 
 export type ListResult = {

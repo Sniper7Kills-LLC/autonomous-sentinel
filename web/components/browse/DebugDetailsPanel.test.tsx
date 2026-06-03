@@ -28,8 +28,6 @@ const message: DisplayMessage = {
   confidence: 0.91,
   flaggedForReview: false,
   publishedAt: '2026-05-30T00:01:00Z',
-  characterCount: 30,
-  codewordCount: 4,
 };
 
 const attempt: LinguisticAttempt = {

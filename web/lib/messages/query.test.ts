@@ -14,8 +14,6 @@ describe('toDisplayMessage', () => {
         confidence: 0.92,
         flaggedForReview: false,
         publishedAt: '2026-05-27T12:30:00Z',
-        characterCount: 30,
-        codewordCount: 0,
       }),
     ).toEqual({
       id: 'm1',
@@ -27,8 +25,6 @@ describe('toDisplayMessage', () => {
       confidence: 0.92,
       flaggedForReview: false,
       publishedAt: '2026-05-27T12:30:00Z',
-      characterCount: 30,
-      codewordCount: 0,
     });
   });
 
@@ -43,8 +39,6 @@ describe('toDisplayMessage', () => {
       confidence: null,
       flaggedForReview: null,
       publishedAt: null,
-      characterCount: null,
-      codewordCount: null,
     });
     expect(row.type).toBe('OTHER');
     expect(row.flaggedForReview).toBe(false);
@@ -61,11 +55,7 @@ describe('toDisplayMessage', () => {
       confidence: undefined,
       flaggedForReview: undefined,
       publishedAt: undefined,
-      characterCount: undefined,
-      codewordCount: undefined,
     });
     expect(row.confidence).toBeNull();
-    expect(row.characterCount).toBeNull();
-    expect(row.codewordCount).toBeNull();
   });
 });

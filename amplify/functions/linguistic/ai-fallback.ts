@@ -85,8 +85,6 @@ export const PARSED_EAM_SCHEMA = {
       type: 'string',
       description: 'The decoded codeword groups (typically 6 letters in pairs)',
     },
-    characterCount: { type: 'integer' },
-    codewordCount: { type: 'integer' },
     confidence: {
       type: 'number',
       minimum: 0,
@@ -205,8 +203,6 @@ export interface ParsedEam {
   receiver?: string;
   type: string;
   body?: string;
-  characterCount?: number;
-  codewordCount?: number;
   confidence: number;
 }
 
