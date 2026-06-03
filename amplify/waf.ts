@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { type Stack } from 'aws-cdk-lib';
 import { CfnWebACL, CfnIPSet, CfnLoggingConfiguration } from 'aws-cdk-lib/aws-wafv2';
+import { CfnFunction as CfnCloudFrontFunction } from 'aws-cdk-lib/aws-cloudfront';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { writePathStatementsCdk } from './functions/wafSync/write-path-matcher';
 
@@ -75,6 +77,8 @@ export interface WafResources {
   webAcl: CfnWebACL;
   ipSets: Record<keyof typeof WAF_RESOURCE_NAMES.ipSets, CfnIPSet>;
   logGroup: LogGroup;
+  /** Viewer-request CF function that auto-routes /blocked to the per-country page (#679). */
+  blockedGeoRewrite: CfnCloudFrontFunction;
 }
 
 export function attachWaf(stack: Stack): WafResources {
@@ -204,5 +208,23 @@ export function attachWaf(stack: Stack): WafResources {
     resourceArn: webAcl.attrArn,
   });
 
-  return { webAcl, ipSets, logGroup };
+  // Viewer-request CloudFront function (#679): auto-route /blocked to the
+  // per-country banned-region page using the CloudFront-Viewer-Country header.
+  // The function code is the source-of-truth in cloudfront/blocked-geo-rewrite.js
+  // (unit-tested). Like the Web ACL, association to the Amplify-Hosting
+  // distribution is a documented operational step — see amplify/README.md.
+  const blockedGeoRewrite = new CfnCloudFrontFunction(stack, 'BlockedGeoRewrite', {
+    name: 'eam-blocked-geo-rewrite',
+    autoPublish: true,
+    functionCode: readFileSync(
+      new URL('./cloudfront/blocked-geo-rewrite.js', import.meta.url),
+      'utf8',
+    ),
+    functionConfig: {
+      comment: 'Auto-route /blocked to per-country banned-region page (#679)',
+      runtime: 'cloudfront-js-2.0',
+    },
+  });
+
+  return { webAcl, ipSets, logGroup, blockedGeoRewrite };
 }
