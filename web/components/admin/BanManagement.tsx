@@ -532,7 +532,9 @@ function IpBansTab() {
     setError(null);
     setNotice(null);
     try {
-      // datetime-local yields no zone; treat as UTC ISO for the row.
+      // datetime-local is the admin's LOCAL wall-clock time; new Date() parses
+      // it as local and toISOString() stores the equivalent UTC instant. The
+      // table renders it back via toLocaleString(), so input + display match.
       const iso = expiresAt ? new Date(expiresAt).toISOString() : null;
       await addIpBan({ cidr: range, scope, reason, expiresAt: iso });
       setNotice(`Blocked ${range} (${SCOPE_LABEL[scope].toLowerCase()}).`);

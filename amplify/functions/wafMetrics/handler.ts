@@ -64,8 +64,10 @@ function defaultDeps(): WafMetricsDeps {
           ],
           StartTime: new Date(startMs),
           EndTime: new Date(endMs),
-          // One bucket spanning the whole window; we only need the total.
-          Period: Math.max(60, Math.ceil((endMs - startMs) / 1000)),
+          // CloudWatch caps Period at 86400s (1 day); windows longer than a
+          // day return multiple daily buckets, which the caller sums. Floor at
+          // 60s, the minimum granularity.
+          Period: Math.min(86400, Math.max(60, Math.ceil((endMs - startMs) / 1000))),
           Statistics: ['Sum'],
         }),
       );
