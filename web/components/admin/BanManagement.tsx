@@ -528,14 +528,24 @@ function IpBansTab() {
       setError('Enter a valid IPv4 or IPv6 CIDR (e.g. 203.0.113.0/24 or 2001:db8::/32).');
       return;
     }
+    // datetime-local is the admin's LOCAL wall-clock time; new Date() parses it
+    // as local and toISOString() stores the equivalent UTC instant. The table
+    // renders it back via toLocaleString(), so input + display match. Reject a
+    // past expiry: wafSync drops already-expired rows, so it would be a silent
+    // no-op ban (the WAF IPSet never gets the CIDR). Blank = permanent.
+    let iso: string | null = null;
+    if (expiresAt) {
+      const ts = new Date(expiresAt).getTime();
+      if (Number.isNaN(ts) || ts <= Date.now()) {
+        setError('Expiry must be in the future. Leave it blank for a permanent ban.');
+        return;
+      }
+      iso = new Date(ts).toISOString();
+    }
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      // datetime-local is the admin's LOCAL wall-clock time; new Date() parses
-      // it as local and toISOString() stores the equivalent UTC instant. The
-      // table renders it back via toLocaleString(), so input + display match.
-      const iso = expiresAt ? new Date(expiresAt).toISOString() : null;
       await addIpBan({ cidr: range, scope, reason, expiresAt: iso });
       setNotice(`Blocked ${range} (${SCOPE_LABEL[scope].toLowerCase()}).`);
       setCidr('');
@@ -600,7 +610,7 @@ function IpBansTab() {
           value={expiresAt}
           onChange={(e) => setExpiresAt(e.target.value)}
           aria-label="Expiry (optional)"
-          title="Optional expiry — wafSync drops the entry after this time"
+          title="Optional expiry (local time, must be in the future) — the ban auto-lifts after this. Leave blank for a permanent ban."
         />
         <ScopeRadio name="ip-scope" value={scope} onChange={setScope} disabled={busy} />
         <Button type="submit" variant="danger" size="sm" disabled={busy || !cidrValid}>

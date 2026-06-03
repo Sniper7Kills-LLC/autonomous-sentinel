@@ -167,6 +167,38 @@ describe('BanManagement (#112)', () => {
     );
   });
 
+  it('rejects an expiry in the past (would be a silent no-op ban)', async () => {
+    render(<BanManagement />);
+    fireEvent.click(screen.getByRole('tab', { name: 'IP CIDR' }));
+    await waitFor(() => expect(listIpMock).toHaveBeenCalled());
+    fireEvent.change(screen.getByLabelText('IP CIDR range to block'), {
+      target: { value: '203.0.113.0/24' },
+    });
+    fireEvent.change(screen.getByLabelText('Expiry (optional)'), {
+      target: { value: '2020-01-01T00:00' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^block$/i }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/expiry must be in the future/i);
+    expect(addIpMock).not.toHaveBeenCalled();
+  });
+
+  it('accepts a future expiry', async () => {
+    render(<BanManagement />);
+    fireEvent.click(screen.getByRole('tab', { name: 'IP CIDR' }));
+    await waitFor(() => expect(listIpMock).toHaveBeenCalled());
+    fireEvent.change(screen.getByLabelText('IP CIDR range to block'), {
+      target: { value: '203.0.113.0/24' },
+    });
+    fireEvent.change(screen.getByLabelText('Expiry (optional)'), {
+      target: { value: '2099-01-01T00:00' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^block$/i }));
+    await waitFor(() => expect(addIpMock).toHaveBeenCalled());
+    const arg = addIpMock.mock.calls[0]?.[0] as { cidr: string; expiresAt: string | null };
+    expect(arg.cidr).toBe('203.0.113.0/24');
+    expect(arg.expiresAt).toMatch(/^209[89]/); // future ISO (TZ may shift the date by ±1)
+  });
+
   it('renders the banned-region editor on the Region pages tab', () => {
     render(<BanManagement />);
     fireEvent.click(screen.getByRole('tab', { name: 'Region pages' }));
