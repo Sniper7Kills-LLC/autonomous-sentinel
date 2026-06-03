@@ -24,8 +24,6 @@ vi.mock('@/lib/messages/query', () => ({
     confidence: 0.9,
     flaggedForReview: false,
     publishedAt: '2026-05-27T12:30:00Z',
-    characterCount: 30,
-    codewordCount: 0,
   }),
 }));
 vi.mock('@/lib/messages/recordings', () => ({

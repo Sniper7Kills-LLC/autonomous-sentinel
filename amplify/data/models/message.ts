@@ -35,8 +35,11 @@ export const Message = a
       'OTHER',
     ]),
     body: a.string(),
-    characterCount: a.integer(),
-    codewordCount: a.integer(),
+    // `characterCount` / `codewordCount` were dropped (#501): per the owner
+    // (2026-05-28) these are corpus-wide chart aggregates (per-character
+    // frequency across ALLSTATIONS; per-codeword frequency across the DB),
+    // not per-message data. The normalizer stopped emitting them (#497) and
+    // the charts aggregate directly, leaving the columns dead.
     // Linguistic Logic output: 0.0 – 1.0. Default threshold 0.8 — below that
     // the Message auto-publishes flagged for community review.
     confidence: a.float(),
