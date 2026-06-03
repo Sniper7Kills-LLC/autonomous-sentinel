@@ -71,7 +71,7 @@ jobs:
       # web/.eslintcache (outside node_modules, so `npm ci` cannot wipe it).
       # A stale cache is safe: --cache-strategy content re-lints only files
       # whose content changed, so an older restore just warms the rest.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: web/.eslintcache
           key: ${{ runner.os }}-eslint-web-${{ hashFiles('package-lock.json', 'web/eslint.config.mjs') }}
@@ -100,7 +100,7 @@ jobs:
           node-version-file: '.nvmrc'
           cache: 'npm'
       # Persist the type-aware eslint content-cache across runs (see web-checks).
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: amplify/.eslintcache
           key: ${{ runner.os }}-eslint-amplify-${{ hashFiles('package-lock.json', 'amplify/eslint.config.mjs') }}
@@ -124,7 +124,7 @@ jobs:
           node-version-file: '.nvmrc'
           cache: 'npm'
       # Persist the type-aware eslint content-cache across runs (see web-checks).
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: upload-client/.eslintcache
           key: ${{ runner.os }}-eslint-client-${{ hashFiles('package-lock.json', 'upload-client/eslint.config.mjs') }}
