@@ -6,21 +6,28 @@
  * `CMD ["handler.handler"]` points the runtime here.
  *
  * Per SQS message (one Recording per invoke per `batchSize: 1`):
- *   1. Read the SQS body: `{ recordingId, audioKey, enqueuedAt }`
- *      (audioKey is set by the preprocess Lambda — usually
- *      `recordings/web/<id><ext>`).
- *   2. Download the audio from S3 to /tmp.
- *   3. Run `/opt/whisper` against the medium English model.
- *   4. Read the `<id>.json` whisper.cpp output.
- *   5. Stage the raw whisper JSON in `pipeline-temp/<id>/whisper.json`
- *      for future word-timestamp use.
- *   6. Publish onto the linguistic queue with the transcript so the
- *      linguistic Lambda picks the recording up + persists the
+ *   1. Read the SQS body: `{ recordingId, originalKey, enqueuedAt }`
+ *      (originalKey is the raw upload; a legacy `audioKey` web-Opus path
+ *      is still accepted for back-compat).
+ *   2. Download the original from S3 to /tmp.
+ *   3. Pre-process DSP (#671): silence-trim → denoise → VAD. Produces the
+ *      cleaned audio + the speech/silence `vadSegments` (the more-to-follow
+ *      split seam). DSP is best-effort — a failure falls back to the raw
+ *      original so transcription never sinks over a denoise hiccup.
+ *   4. Transcode the cleaned audio to the web-canonical Opus (uploaded +
+ *      its key/size ride the transcript message) and the 16 kHz mono WAV
+ *      whisper.cpp requires.
+ *   5. Run `/opt/whisper` against the medium English model on the WAV.
+ *   6. Read the `<id>.json` whisper.cpp output.
+ *   7. Stage the raw whisper JSON in `pipeline-temp/<id>/whisper.json` +
+ *      the VAD map in `pipeline-temp/<id>/vad.json`.
+ *   8. Publish onto the linguistic queue with the transcript + VAD seam so
+ *      the linguistic Lambda picks the recording up + persists the
  *      transcript + status via Amplify Data (#452 — Recording state
  *      changes MUST route through AppSync so the portal's
  *      `observeQuery` subscription fires; direct DDB writes from
  *      the container bypass the subscription publisher).
- *   7. Clean up /tmp.
+ *   9. Clean up /tmp.
  *
  * Failure path: publish a `failure` message to the linguistic queue
  * carrying `recordingId` + `reason` (#452). Linguistic owns the
@@ -38,7 +45,7 @@
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { createWriteStream } from 'node:fs';
-import { mkdir, readFile, unlink } from 'node:fs/promises';
+import { mkdir, readFile, stat, unlink } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -47,6 +54,13 @@ import { readWhisperConfig, runWhisper, WhisperError } from './run-whisper.mjs';
 import { transcodeToOpus, transcodeToWav } from './opus-transcode.mjs';
 import { extractWordTimestamps } from './word-timestamps.mjs';
 import { extractTranscriptionConfidence } from './transcription-confidence.mjs';
+// Pre-process DSP (#671) — folded into this image so the one container that
+// already bundles ffmpeg does silence-trim → denoise → VAD → transcode →
+// transcribe. VAD output is the more-to-follow split seam (see processOne).
+import { silenceTrim, readSilenceConfig } from './silence-trim.mjs';
+import { denoise, readDenoiseConfig } from './denoise.mjs';
+import { runVad, readVadConfig } from './vad.mjs';
+import { pcmDurationMs } from './wav-duration.mjs';
 
 const RECORDINGS_BUCKET = process.env.RECORDINGS_BUCKET ?? '';
 const PIPELINE_TEMP_PREFIX = process.env.PIPELINE_TEMP_PREFIX ?? 'pipeline-temp';
@@ -146,6 +160,146 @@ function extensionOf(key) {
   return dot >= 0 ? key.slice(dot) : '';
 }
 
+/**
+ * Exact duration of the canonical 16 kHz mono s16le WAV without an extra
+ * ffprobe pass (#671). `transcodeToWav` always emits that fixed format, so
+ * `stat` + the byte-rate math is exact — no need to open + parse the header
+ * (which also keeps CodeQL's `js/insecure-temporary-file` happy: no `fs.open`
+ * on a tmpdir-derived path). Returns 0 if the file is unreadable/empty.
+ */
+async function wavDurationMsForFile(wavPath) {
+  try {
+    const { size } = await stat(wavPath);
+    return pcmDurationMs(size);
+  } catch (err) {
+    console.warn('whisper-handler: could not measure WAV duration', { wavPath, err: String(err) });
+    return 0;
+  }
+}
+
+/**
+ * Runs the pre-process DSP chain on the downloaded original and produces
+ * the two transcode derivatives (#671):
+ *   silence-trim → denoise → { 16 kHz WAV (whisper input), Opus (web canonical) }
+ * then VAD over the cleaned WAV.
+ *
+ * Resilience: silence-trim / denoise are an enhancement, not the core
+ * deliverable. If either fails we fall back to transcoding the RAW original
+ * (the pre-#671 behaviour) so a denoise hiccup never sinks an otherwise-fine
+ * recording. VAD is likewise best-effort — its only consumer is the future
+ * splitter; a VAD failure yields empty segments, never a failed transcript.
+ *
+ * ==== SPLITTER SEAM (more-to-follow, future issue) ====
+ * `vadSegments` (+ speech/silence ms) is the raw material a later "split one
+ * Recording into N" task consumes — a long inter-message silence is exactly
+ * the "… more to follow, stand by" gap between two back-to-back EAMs. The cut
+ * DECISION lives in that future task. Here we only emit the speech/silence
+ * map + stage a durable sidecar so the splitter has it without re-running
+ * ffmpeg. To wire the splitter later: branch right after VAD and loop the
+ * transcode+whisper section over each decided child span instead of running
+ * it once over the whole file.
+ *
+ * @returns {Promise<{whisperInputPath:string, opusPath:string, durationMs:number,
+ *   vadSegments:Array, speechMs:number, silenceMs:number, denoiseMode:string, dspApplied:boolean}>}
+ */
+async function preprocessAudio({ origPath, tmpDir, recordingId, cleanupPaths }) {
+  const trimmedPath = join(tmpDir, `${recordingId}.trim.wav`);
+  const cleanPath = join(tmpDir, `${recordingId}.clean.wav`);
+  const opusPath = join(tmpDir, `${recordingId}.opus`);
+  const wavPath = join(tmpDir, `${recordingId}.16k.wav`);
+
+  const silenceCfg = readSilenceConfig(process.env);
+  const denoiseCfg = readDenoiseConfig(process.env);
+
+  // Register the DSP intermediates for cleanup up front — a silence-trim /
+  // denoise failure can leave a partial file behind, and unlink of a
+  // never-created path is a harmless no-op (the cleanup swallows ENOENT).
+  cleanupPaths.push(trimmedPath, cleanPath);
+
+  // silence-trim → denoise. On any failure, fall back to the raw original
+  // as the transcode source (still produces a valid Opus + transcript).
+  let transcodeSource = origPath;
+  let dspApplied = false;
+  try {
+    await silenceTrim({
+      inputPath: origPath,
+      outputPath: trimmedPath,
+      thresholdDb: silenceCfg.thresholdDb,
+      minSilenceSec: silenceCfg.minSilenceSec,
+      ffmpegPath: FFMPEG_PATH,
+    });
+    await denoise({
+      inputPath: trimmedPath,
+      outputPath: cleanPath,
+      mode: denoiseCfg.mode,
+      nrDb: denoiseCfg.nrDb,
+      nfDb: denoiseCfg.nfDb,
+      ffmpegPath: FFMPEG_PATH,
+    });
+    transcodeSource = cleanPath;
+    dspApplied = true;
+  } catch (dspErr) {
+    // transcodeSource stays at its `origPath` init — fall back to the raw
+    // original so a denoise hiccup never sinks an otherwise-fine recording.
+    console.warn('whisper-handler: DSP (silence-trim/denoise) failed; transcoding raw original', {
+      recordingId,
+      err: dspErr instanceof Error ? dspErr.message : String(dspErr),
+    });
+  }
+
+  // Two derivatives from the cleaned (or raw, on fallback) audio:
+  //   - 16 kHz mono PCM WAV → whisper.cpp's required input.
+  //   - Opus 32k mono → the browser-playback canonical.
+  await transcodeToWav({
+    inputPath: transcodeSource,
+    outputPath: wavPath,
+    ffmpegPath: FFMPEG_PATH,
+  });
+  await transcodeToOpus({
+    inputPath: transcodeSource,
+    outputPath: opusPath,
+    ffmpegPath: FFMPEG_PATH,
+  });
+  cleanupPaths.push(wavPath, opusPath);
+
+  // Duration + VAD off the known-format 16 kHz WAV. Best-effort.
+  const durationMs = await wavDurationMsForFile(wavPath);
+  let vadSegments = [];
+  let speechMs = 0;
+  let silenceMs = 0;
+  if (durationMs > 0) {
+    try {
+      const vadCfg = readVadConfig(process.env);
+      const vad = await runVad({
+        inputPath: wavPath,
+        totalDurationMs: durationMs,
+        noiseDb: vadCfg.noiseDb,
+        minSilenceSec: vadCfg.minSilenceSec,
+        ffmpegPath: FFMPEG_PATH,
+      });
+      vadSegments = vad.segments;
+      speechMs = vad.speechMs;
+      silenceMs = vad.silenceMs;
+    } catch (vadErr) {
+      console.warn('whisper-handler: VAD failed; emitting empty split seam', {
+        recordingId,
+        err: vadErr instanceof Error ? vadErr.message : String(vadErr),
+      });
+    }
+  }
+
+  return {
+    whisperInputPath: wavPath,
+    opusPath,
+    durationMs,
+    vadSegments,
+    speechMs,
+    silenceMs,
+    denoiseMode: denoiseCfg.mode,
+    dspApplied,
+  };
+}
+
 async function publishFailure(recordingId, reason) {
   // Caller wraps in its own try/catch so the original Whisper error
   // is preserved as the throw value even if this publish itself
@@ -177,11 +331,13 @@ async function processOne(body) {
   const outputPrefix = join(tmpDir, recordingId);
   const cleanupPaths = [`${outputPrefix}.json`];
 
-  // Consolidated path (#514): the message carries the ORIGINAL upload
-  // key. Download it, transcode to the web-canonical Opus (the
-  // browser-playback file), upload it, then run whisper on it — one
-  // image does transcode + transcribe. webCanonicalKey/size ride the
-  // transcript message so the linguistic Lambda persists them.
+  // Consolidated path (#514 + #671): the message carries the ORIGINAL
+  // upload key. Download it, run the DSP pre-process (silence-trim →
+  // denoise → VAD), transcode to the web-canonical Opus + the 16 kHz WAV,
+  // upload the Opus, then run whisper on the WAV — one image does
+  // pre-process + transcode + transcribe. webCanonicalKey/size + the VAD
+  // split seam ride the transcript message so the linguistic Lambda
+  // persists them.
   //
   // Legacy path: the message carries `audioKey` (web Opus already
   // produced by an older preprocess build still in flight). Download +
@@ -189,24 +345,29 @@ async function processOne(body) {
   let whisperInputPath;
   let webCanonicalKey;
   let canonicalSizeBytes;
+  // VAD split seam (#671) — populated on the consolidated path only; the
+  // legacy path has no original to analyse. Empty/null defaults are safe
+  // to omit from the transcript message.
+  let durationMs = null;
+  let vadSegments = [];
+  let speechMs = 0;
+  let silenceMs = 0;
 
   try {
     if (typeof body.originalKey === 'string' && body.originalKey.length > 0) {
       const origExt = extensionOf(body.originalKey);
       const origPath = join(tmpDir, `original${origExt}`);
-      const opusPath = join(tmpDir, `${recordingId}.opus`);
-      const wavPath = join(tmpDir, `${recordingId}.16k.wav`);
       await downloadFromS3(RECORDINGS_BUCKET, body.originalKey, origPath);
+      cleanupPaths.push(origPath);
 
-      // Two derivatives from the original:
-      //   - Opus 32k mono → the browser-playback canonical (uploaded).
-      //   - 16 kHz mono PCM WAV → whisper.cpp's required input (the
-      //     static build can't decode Opus; feeding it Opus produces no
-      //     transcript — the bug this fixes).
-      await transcodeToOpus({ inputPath: origPath, outputPath: opusPath, ffmpegPath: FFMPEG_PATH });
-      await transcodeToWav({ inputPath: origPath, outputPath: wavPath, ffmpegPath: FFMPEG_PATH });
+      const pre = await preprocessAudio({ origPath, tmpDir, recordingId, cleanupPaths });
+      whisperInputPath = pre.whisperInputPath;
+      durationMs = pre.durationMs;
+      vadSegments = pre.vadSegments;
+      speechMs = pre.speechMs;
+      silenceMs = pre.silenceMs;
 
-      const opusBuf = await readFile(opusPath);
+      const opusBuf = await readFile(pre.opusPath);
       webCanonicalKey = `${RECORDINGS_WEB_PREFIX}/${recordingId}.opus`;
       canonicalSizeBytes = opusBuf.length;
       await s3.send(
@@ -219,8 +380,34 @@ async function processOne(body) {
           Metadata: { 'recording-id': recordingId },
         }),
       );
-      whisperInputPath = wavPath;
-      cleanupPaths.push(origPath, opusPath, wavPath);
+
+      // Durable VAD sidecar (#671) — the more-to-follow splitter consumes
+      // this without re-running ffmpeg. Lands under pipeline-temp/ (7-day
+      // lifecycle) since the splitter runs as part of this pipeline, not
+      // days later; promote to a persisted Recording field in a follow-up.
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: RECORDINGS_BUCKET,
+          Key: `${PIPELINE_TEMP_PREFIX}/${recordingId}/vad.json`,
+          Body: JSON.stringify({
+            recordingId,
+            durationMs,
+            speechMs,
+            silenceMs,
+            segments: vadSegments,
+          }),
+          ContentType: 'application/json',
+        }),
+      );
+      console.info('whisper-handler: pre-process complete', {
+        recordingId,
+        dspApplied: pre.dspApplied,
+        denoiseMode: pre.denoiseMode,
+        durationMs,
+        vadSegmentCount: vadSegments.length,
+        speechMs,
+        silenceMs,
+      });
     } else {
       const audioKey = audioKeyFor(body);
       const inputExt = extensionOf(audioKey) || '.opus';
@@ -313,6 +500,19 @@ async function processOne(body) {
           // Overall whisper confidence (#581) — omitted when null so
           // older output without per-token `p` doesn't write a bogus 0.
           ...(transcriptionConfidence !== null ? { transcriptionConfidence } : {}),
+          // VAD split seam (#671) — measured duration + the speech/silence
+          // map. Omitted on the legacy audioKey path (no original to
+          // analyse → durationMs null). `vadSegmentsKey` points at the
+          // durable sidecar the future more-to-follow splitter reads.
+          ...(durationMs !== null
+            ? {
+                durationMs,
+                speechMs,
+                silenceMs,
+                vadSegments,
+                vadSegmentsKey: `${PIPELINE_TEMP_PREFIX}/${recordingId}/vad.json`,
+              }
+            : {}),
           enqueuedAt: ts,
         }),
       }),
