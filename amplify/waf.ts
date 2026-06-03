@@ -43,7 +43,10 @@ export const WAF_RESOURCE_NAMES = {
   geoReadRule: 'CountryBlockRead',
   geoWritePriority: 10,
   geoReadPriority: 11,
-  bannedRegionBodyKey: 'banned-region',
+  /** Custom-response body key for the self-contained banned page (write blocks). */
+  bannedBodyKey: 'banned',
+  /** Where read-blocks 302-redirect — the rich per-country page (#202/#689). */
+  blockedRedirectPath: '/blocked',
 } as const;
 
 /**
@@ -58,16 +61,50 @@ export const APPSYNC_WAF_NAMES = {
   ipSets: { v4Read: 'EamAppSyncBanV4Read', v6Read: 'EamAppSyncBanV6Read' },
   ipBlockRule: 'IpBlockRegionalRead',
   ipBlockPriority: 0,
+  /** Custom-response body key for the API banned response (JSON). */
+  bannedBodyKey: 'banned',
 } as const;
 
-/** Tiny meta-refresh stub returned on read-blocked traffic → the #202 page. */
-const BANNED_REGION_BODY = [
+/** Self-contained branded banned page (≤4 KB) for website write-blocks (#689). */
+const BANNED_PAGE_HTML = [
   '<!doctype html><html lang="en"><head><meta charset="utf-8">',
-  '<meta name="robots" content="noindex">',
-  '<meta http-equiv="refresh" content="0; url=/blocked">',
-  '<title>Access restricted</title></head>',
-  '<body>Access from your region is restricted. <a href="/blocked">Details</a>.</body></html>',
+  '<meta name="robots" content="noindex"><meta name="viewport" content="width=device-width,initial-scale=1">',
+  '<title>Access restricted</title>',
+  '<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;',
+  'background:#0b0f14;color:#d4d4d4;font-family:system-ui,sans-serif;text-align:center}',
+  'main{max-width:32rem;padding:2rem}h1{color:#dc2626;font-size:1.25rem;letter-spacing:.04em}',
+  'code{color:#9a9a9a}</style></head><body><main>',
+  '<h1>ACCESS RESTRICTED</h1>',
+  '<p>Your access to this service has been blocked. If you believe this is an error, contact the operators.</p>',
+  '<p><code>EAM Watch · WAF</code></p>',
+  '</main></body></html>',
 ].join('');
+
+/** API banned response body (JSON) for AppSync blocks (#689). */
+const BANNED_API_JSON = JSON.stringify({
+  error: 'FORBIDDEN',
+  reason: 'banned',
+  message: 'Access to this API has been blocked.',
+});
+
+/** wafv2 CDK (camelCase) Block action: redirect (302) or custom 403 body. */
+function blockActionCdk(
+  spec: { kind: 'redirect'; location: string } | { kind: 'customBody'; bodyKey: string },
+) {
+  if (spec.kind === 'redirect') {
+    return {
+      block: {
+        customResponse: {
+          responseCode: 302,
+          responseHeaders: [{ name: 'Location', value: spec.location }],
+        },
+      },
+    };
+  }
+  return {
+    block: { customResponse: { responseCode: 403, customResponseBodyKey: spec.bodyKey } },
+  };
+}
 
 function ruleVisibility(metricName: string) {
   return {
@@ -141,11 +178,11 @@ export function attachWaf(stack: Stack): WafResources {
   };
 
   // IP block — write scope: listed IPs (v4 OR v6 write set) hitting a write
-  // surface get a plain 403.
+  // surface get the self-contained banned 403 page (#689).
   const ipBlockWriteRule: CfnWebACL.RuleProperty = {
     name: 'IpBlockWrite',
     priority: 20,
-    action: { block: {} },
+    action: blockActionCdk({ kind: 'customBody', bodyKey: WAF_RESOURCE_NAMES.bannedBodyKey }),
     statement: {
       // Flat AND: (v4 OR v6 write IP set) + the two write-path conditions.
       // Spread, not nested — WAF rejects an AndStatement inside an AndStatement.
@@ -166,19 +203,13 @@ export function attachWaf(stack: Stack): WafResources {
     visibilityConfig: ruleVisibility('IpBlockWrite'),
   };
 
-  // IP block — read scope: listed IPs (v4 OR v6 read set) on ANY request get a
-  // 403 with the banned-region body.
+  // IP block — read scope: listed IPs (v4 OR v6 read set) on ANY request are
+  // 302-redirected to the rich /blocked page (#689). The AllowBlockedRegionPage
+  // rule (priority 5, above this) keeps /blocked itself reachable — no loop.
   const ipBlockReadRule: CfnWebACL.RuleProperty = {
     name: 'IpBlockRead',
     priority: 21,
-    action: {
-      block: {
-        customResponse: {
-          responseCode: 403,
-          customResponseBodyKey: WAF_RESOURCE_NAMES.bannedRegionBodyKey,
-        },
-      },
-    },
+    action: blockActionCdk({ kind: 'redirect', location: WAF_RESOURCE_NAMES.blockedRedirectPath }),
     statement: {
       orStatement: {
         statements: [
@@ -196,9 +227,9 @@ export function attachWaf(stack: Stack): WafResources {
     defaultAction: { allow: {} },
     visibilityConfig: ruleVisibility('EamWaf'),
     customResponseBodies: {
-      [WAF_RESOURCE_NAMES.bannedRegionBodyKey]: {
+      [WAF_RESOURCE_NAMES.bannedBodyKey]: {
         contentType: 'TEXT_HTML',
-        content: BANNED_REGION_BODY,
+        content: BANNED_PAGE_HTML,
       },
     },
     rules: [
@@ -274,7 +305,8 @@ export function attachAppSyncWaf(stack: Stack): AppSyncWafResources {
   const ipBlockRule: CfnWebACL.RuleProperty = {
     name: APPSYNC_WAF_NAMES.ipBlockRule,
     priority: APPSYNC_WAF_NAMES.ipBlockPriority,
-    action: { block: {} }, // plain 403 — GraphQL clients don't render HTML
+    // Banned 403 JSON body (#689) — a 302 redirect would break GraphQL clients.
+    action: blockActionCdk({ kind: 'customBody', bodyKey: APPSYNC_WAF_NAMES.bannedBodyKey }),
     statement: {
       orStatement: {
         statements: [
@@ -291,6 +323,12 @@ export function attachAppSyncWaf(stack: Stack): AppSyncWafResources {
     scope: 'REGIONAL',
     defaultAction: { allow: {} },
     visibilityConfig: ruleVisibility('EamAppSyncWaf'),
+    customResponseBodies: {
+      [APPSYNC_WAF_NAMES.bannedBodyKey]: {
+        contentType: 'APPLICATION_JSON',
+        content: BANNED_API_JSON,
+      },
+    },
     rules: [ipBlockRule],
   });
 

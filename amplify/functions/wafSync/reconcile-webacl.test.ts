@@ -13,18 +13,21 @@ const cfg: GeoRuleConfig = {
   geoReadName: 'CountryBlockRead',
   geoWritePriority: 10,
   geoReadPriority: 11,
-  bannedRegionBodyKey: 'banned-region',
+  readAction: { kind: 'redirect', location: '/blocked' },
+  writeAction: { kind: 'customBody', bodyKey: 'banned' },
 };
 
 const managed: WafRule = { Name: 'AWSCommon', Priority: 0, Statement: {} };
 const ipWrite: WafRule = { Name: 'IpBlockWrite', Priority: 20, Statement: {} };
 
 describe('wafSync reconcile-webacl (#199/#201)', () => {
-  it('write geo rule is a FLAT AND: country + method-OR + path-OR, plain 403', () => {
+  it('write geo rule is a FLAT AND: country + method-OR + path-OR, banned 403 body', () => {
     const rule = buildGeoWriteRule(['RU', 'CN'], cfg);
     expect(rule.Name).toBe('CountryBlockWrite');
     expect(rule.Priority).toBe(10);
-    expect(rule.Action).toEqual({ Block: {} });
+    expect(rule.Action).toEqual({
+      Block: { CustomResponse: { ResponseCode: 403, CustomResponseBodyKey: 'banned' } },
+    });
     interface Geo {
       GeoMatchStatement: { CountryCodes: string[] };
     }
@@ -39,18 +42,27 @@ describe('wafSync reconcile-webacl (#199/#201)', () => {
     expect(methodOr).not.toHaveProperty('AndStatement');
   });
 
-  it('read geo rule matches any request and returns the banned-region body', () => {
+  it('read geo rule (website) 302-redirects to the /blocked page', () => {
     const rule = buildGeoReadRule(['KP'], cfg);
     expect(rule.Statement).toEqual({ GeoMatchStatement: { CountryCodes: ['KP'] } });
     expect(rule.Action).toEqual({
-      Block: { CustomResponse: { ResponseCode: 403, CustomResponseBodyKey: 'banned-region' } },
+      Block: {
+        CustomResponse: {
+          ResponseCode: 302,
+          ResponseHeaders: [{ Name: 'Location', Value: '/blocked' }],
+        },
+      },
     });
   });
 
-  it('read geo rule uses a plain 403 when bannedRegionBodyKey is null (AppSync ACL)', () => {
-    const rule = buildGeoReadRule(['KP'], { ...cfg, bannedRegionBodyKey: null });
-    expect(rule.Action).toEqual({ Block: {} });
-    expect(rule.Statement).toEqual({ GeoMatchStatement: { CountryCodes: ['KP'] } });
+  it('read geo rule (API) returns a banned 403 body when readAction is customBody', () => {
+    const rule = buildGeoReadRule(['KP'], {
+      ...cfg,
+      readAction: { kind: 'customBody', bodyKey: 'banned' },
+    });
+    expect(rule.Action).toEqual({
+      Block: { CustomResponse: { ResponseCode: 403, CustomResponseBodyKey: 'banned' } },
+    });
   });
 
   it('extractGeoCodes reads codes back out, null when the rule is absent', () => {

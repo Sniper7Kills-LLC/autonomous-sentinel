@@ -28,10 +28,18 @@ and the runtime-injected geo rules (`UpdateWebACL`).
 - **Scope (#201).** Each ban row carries `scope` ∈ {`write`, `read_write`}.
   `write` (default) blocks only the unambiguous write surfaces (`POST/PUT/
 DELETE/PATCH` on `/api/*` or `/stripe/*`) so blocked-country visitors keep
-  browsing. `read_write` blocks everything and serves the banned-region page.
-  GraphQL query-vs-mutation can't be told apart at the edge, so anonymous
-  GraphQL mutations are **not** edge-blocked — banned _users_ stay covered by
-  the per-user `User.bannedAt` checks. (Follow-up: GraphQL-body inspection.)
+  browsing. `read_write` blocks everything. GraphQL query-vs-mutation can't be
+  told apart at the edge, so anonymous GraphQL mutations are **not** edge-blocked
+  — banned _users_ stay covered by the per-user `User.bannedAt` checks.
+- **Banned page on every ban-hit (#689).** Block actions display a ban page, not
+  a bare 403, via the native WAF mechanisms: website **read**-blocks **302-redirect
+  to `/blocked`** (the rich per-country page #202/#113); website **write**-blocks
+  return a self-contained `banned` 403 HTML body; the **AppSync** (API) ACL returns
+  a `banned` 403 **JSON** body (a 302 would break GraphQL clients). The
+  `AllowBlockedRegionPage` rule (priority 5, above the block rules) keeps `/blocked`
+  reachable so the redirect can't loop. AWS-managed rule-group (attack) blocks keep
+  the default 403 — different semantics, and per-rule custom responses across a
+  managed group are impractical.
 - **Cycle-safety.** `wafSync` is `resourceGroupName:'data'`, so it lives in the
   data stack alongside the ban tables — its stream mappings + Scan/stream IAM are
   intra-stack, and it reads via the **raw DynamoDB SDK** (never the Amplify Data

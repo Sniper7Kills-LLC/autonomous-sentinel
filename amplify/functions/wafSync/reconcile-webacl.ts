@@ -27,6 +27,39 @@ export interface WafRule {
   [key: string]: unknown;
 }
 
+/**
+ * How a Block rule responds — the AWS-native ban-page mechanisms (#689):
+ *   - `redirect`: 302 with a `Location` header → the rich `/blocked` page
+ *     (website reads).
+ *   - `customBody`: 403 referencing a custom-response body defined on the ACL
+ *     (a self-contained banned page — website writes + the AppSync API).
+ *   - `plain`: bare 403 (no longer used for our ban rules; kept for safety).
+ */
+export type BlockActionSpec =
+  | { kind: 'redirect'; location: string }
+  | { kind: 'customBody'; bodyKey: string }
+  | { kind: 'plain' };
+
+/** wafv2 SDK (PascalCase) Block action for a {@link BlockActionSpec}. */
+export function blockAction(spec: BlockActionSpec): Record<string, unknown> {
+  if (spec.kind === 'redirect') {
+    return {
+      Block: {
+        CustomResponse: {
+          ResponseCode: 302,
+          ResponseHeaders: [{ Name: 'Location', Value: spec.location }],
+        },
+      },
+    };
+  }
+  if (spec.kind === 'customBody') {
+    return {
+      Block: { CustomResponse: { ResponseCode: 403, CustomResponseBodyKey: spec.bodyKey } },
+    };
+  }
+  return { Block: {} };
+}
+
 export interface GeoRuleConfig {
   /** Rule name for the write-scope geo block. */
   geoWriteName: string;
@@ -36,13 +69,10 @@ export interface GeoRuleConfig {
   geoWritePriority: number;
   /** WAF rule priority for the read geo rule (must be unique in the ACL). */
   geoReadPriority: number;
-  /**
-   * Custom-response body key for read-blocked traffic (the banned-region stub on
-   * the CLOUDFRONT website ACL). `null` → a plain 403 block with no custom
-   * response (the REGIONAL AppSync ACL, whose clients don't render HTML and
-   * which doesn't define that response body).
-   */
-  bannedRegionBodyKey: string | null;
+  /** Block response for the read geo rule (website → redirect; API → custom body). */
+  readAction: BlockActionSpec;
+  /** Block response for the write geo rule (self-contained banned page). */
+  writeAction: BlockActionSpec;
 }
 
 function visibility(metricName: string) {
@@ -55,13 +85,13 @@ function visibility(metricName: string) {
 
 /**
  * Write-scope geo block: country matches AND the request targets a write
- * surface. Plain 403 — write blocks don't render the banned-region page.
+ * surface. Block response per `cfg.writeAction` (the self-contained banned page).
  */
 export function buildGeoWriteRule(codes: string[], cfg: GeoRuleConfig): WafRule {
   return {
     Name: cfg.geoWriteName,
     Priority: cfg.geoWritePriority,
-    Action: { Block: {} },
+    Action: blockAction(cfg.writeAction),
     Statement: {
       // Flat AND: country match + the two write-path conditions. The write-path
       // conditions are spread (not nested) — WAF forbids AND-inside-AND.
@@ -74,23 +104,15 @@ export function buildGeoWriteRule(codes: string[], cfg: GeoRuleConfig): WafRule 
 }
 
 /**
- * Read-scope geo block: country matches on any request → 403. On the website
- * ACL (`bannedRegionBodyKey` set) it returns the banned-region custom response
- * (the #202 landing page); on the AppSync ACL (`bannedRegionBodyKey: null`) a
- * plain 403.
+ * Read-scope geo block: country matches on any request. The website ACL
+ * redirects (302) to the rich `/blocked` page; the AppSync ACL returns a
+ * self-contained banned 403 body — per `cfg.readAction` (#689).
  */
 export function buildGeoReadRule(codes: string[], cfg: GeoRuleConfig): WafRule {
-  const action = cfg.bannedRegionBodyKey
-    ? {
-        Block: {
-          CustomResponse: { ResponseCode: 403, CustomResponseBodyKey: cfg.bannedRegionBodyKey },
-        },
-      }
-    : { Block: {} };
   return {
     Name: cfg.geoReadName,
     Priority: cfg.geoReadPriority,
-    Action: action,
+    Action: blockAction(cfg.readAction),
     Statement: { GeoMatchStatement: { CountryCodes: codes } },
     VisibilityConfig: visibility(cfg.geoReadName),
   };

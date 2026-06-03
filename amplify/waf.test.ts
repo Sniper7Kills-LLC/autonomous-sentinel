@@ -50,20 +50,37 @@ describe('attachWaf (#198/#199/#200/#201/#202)', () => {
     template.resourcePropertiesCountIs('AWS::WAFv2::IPSet', { IPAddressVersion: 'IPV6' }, 2);
   });
 
-  it('serves the banned-region custom response body on read blocks', () => {
+  it('defines the banned page body; read-block 302-redirects, write-block serves it (#689)', () => {
     const { template } = synth();
     template.hasResourceProperties('AWS::WAFv2::WebACL', {
       CustomResponseBodies: {
-        [WAF_RESOURCE_NAMES.bannedRegionBodyKey]: Match.objectLike({ ContentType: 'TEXT_HTML' }),
+        [WAF_RESOURCE_NAMES.bannedBodyKey]: Match.objectLike({ ContentType: 'TEXT_HTML' }),
       },
+      // arrayWith matches in array order: IpBlockWrite (priority 20) precedes
+      // IpBlockRead (21).
       Rules: Match.arrayWith([
+        // write-block: self-contained banned 403 page
+        Match.objectLike({
+          Name: 'IpBlockWrite',
+          Action: {
+            Block: {
+              CustomResponse: {
+                ResponseCode: 403,
+                CustomResponseBodyKey: WAF_RESOURCE_NAMES.bannedBodyKey,
+              },
+            },
+          },
+        }),
+        // read-block: 302 → /blocked
         Match.objectLike({
           Name: 'IpBlockRead',
           Action: {
             Block: {
               CustomResponse: {
-                ResponseCode: 403,
-                CustomResponseBodyKey: WAF_RESOURCE_NAMES.bannedRegionBodyKey,
+                ResponseCode: 302,
+                ResponseHeaders: [
+                  { Name: 'Location', Value: WAF_RESOURCE_NAMES.blockedRedirectPath },
+                ],
               },
             },
           },
@@ -136,11 +153,19 @@ describe('attachAppSyncWaf (#687)', () => {
     );
   });
 
-  it('has a plain-block IP rule and NO managed rule groups (cost)', () => {
+  it('IP rule returns a banned JSON 403 body and has NO managed rule groups (cost)', () => {
     const t = synthAppSync();
     t.hasResourceProperties('AWS::WAFv2::WebACL', {
+      CustomResponseBodies: {
+        banned: Match.objectLike({ ContentType: 'APPLICATION_JSON' }),
+      },
       Rules: Match.arrayWith([
-        Match.objectLike({ Name: 'IpBlockRegionalRead', Action: { Block: {} } }),
+        Match.objectLike({
+          Name: 'IpBlockRegionalRead',
+          Action: {
+            Block: { CustomResponse: { ResponseCode: 403, CustomResponseBodyKey: 'banned' } },
+          },
+        }),
       ]),
     });
     // no managed rule groups on the AppSync ACL

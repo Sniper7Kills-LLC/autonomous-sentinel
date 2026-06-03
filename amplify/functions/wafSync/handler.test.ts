@@ -38,7 +38,8 @@ const geoCfg: GeoRuleConfig = {
   geoReadName: 'CountryBlockRead',
   geoWritePriority: 10,
   geoReadPriority: 11,
-  bannedRegionBodyKey: 'banned-region',
+  readAction: { kind: 'redirect', location: '/blocked' },
+  writeAction: { kind: 'customBody', bodyKey: 'banned' },
 };
 
 const cfTarget: WebAclTarget = {
@@ -168,7 +169,7 @@ describe('wafSync handler (#199/#200/#201/#687)', () => {
         name: 'EamAppSyncWebAcl',
         scope: 'REGIONAL',
         readOnly: true,
-        cfg: { ...geoCfg, bannedRegionBodyKey: null },
+        cfg: { ...geoCfg, readAction: { kind: 'customBody', bodyKey: 'banned' } },
       };
       const { deps, aclUpdates } = makeDeps();
       const res = await reconcileWebAcl(deps, regionalTarget, {
