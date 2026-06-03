@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 type Mock = ReturnType<typeof vi.fn<(...a: unknown[]) => Promise<unknown>>>;
 const listTemplateMock: Mock = vi.fn();
-const createTemplateMock: Mock = vi.fn();
-const updateTemplateMock: Mock = vi.fn();
+const saveVersionMock: Mock = vi.fn();
+const activateMock: Mock = vi.fn();
 const listRuleMock: Mock = vi.fn();
 const updateRuleMock: Mock = vi.fn();
 const deleteRuleMock: Mock = vi.fn();
@@ -16,8 +16,6 @@ vi.mock('@/lib/amplifyClient', () => ({
     models: {
       LinguisticPromptTemplate: {
         list: (...a: unknown[]): Promise<unknown> => listTemplateMock(...a),
-        create: (...a: unknown[]): Promise<unknown> => createTemplateMock(...a),
-        update: (...a: unknown[]): Promise<unknown> => updateTemplateMock(...a),
       },
       LinguisticRule: {
         list: (...a: unknown[]): Promise<unknown> => listRuleMock(...a),
@@ -29,6 +27,10 @@ vi.mock('@/lib/amplifyClient', () => ({
         create: (...a: unknown[]): Promise<unknown> => createConfigMock(...a),
         update: (...a: unknown[]): Promise<unknown> => updateConfigMock(...a),
       },
+    },
+    mutations: {
+      savePromptTemplateVersion: (...a: unknown[]): Promise<unknown> => saveVersionMock(...a),
+      activatePromptTemplate: (...a: unknown[]): Promise<unknown> => activateMock(...a),
     },
   }),
 }));
@@ -45,14 +47,13 @@ import {
   ACTIVE_PROMPT_ID,
   RULE_AUTO_ACTIVATE_THRESHOLD,
   FALLBACK_SYSTEM_PROMPT,
-  type DisplayTemplate,
 } from './linguistic';
 
 beforeEach(() => {
   [
     listTemplateMock,
-    createTemplateMock,
-    updateTemplateMock,
+    saveVersionMock,
+    activateMock,
     listRuleMock,
     updateRuleMock,
     deleteRuleMock,
@@ -92,135 +93,61 @@ describe('listPromptTemplates', () => {
 });
 
 describe('saveNewTemplateVersion', () => {
-  const existing: DisplayTemplate[] = [
-    {
-      id: 'a',
-      promptId: ACTIVE_PROMPT_ID,
-      version: 2,
-      body: 'x',
-      isActive: true,
-      notes: null,
-      createdBy: null,
-      createdAt: null,
-    },
-    {
-      id: 'b',
-      promptId: ACTIVE_PROMPT_ID,
-      version: 5,
-      body: 'y',
-      isActive: false,
-      notes: null,
-      createdBy: null,
-      createdAt: null,
-    },
-  ];
-
-  it('bumps to max(version)+1 and creates an inactive row', async () => {
-    createTemplateMock.mockResolvedValue({
+  it('calls the savePromptTemplateVersion mutation with userPool auth and returns the row', async () => {
+    saveVersionMock.mockResolvedValue({
       data: {
-        id: 'n',
+        id: `${ACTIVE_PROMPT_ID}#v6`,
         promptId: ACTIVE_PROMPT_ID,
         version: 6,
         body: 'new {{TRANSCRIPT}}',
         isActive: false,
       },
     });
-    const out = await saveNewTemplateVersion({ body: 'new {{TRANSCRIPT}}', existing });
+    const out = await saveNewTemplateVersion({ body: 'new {{TRANSCRIPT}}', notes: 'why' });
     expect(out.version).toBe(6);
-    const [payload, opts] = createTemplateMock.mock.calls[0]! as [
+    const [payload, opts] = saveVersionMock.mock.calls[0]! as [
       Record<string, unknown>,
       Record<string, unknown>,
     ];
-    expect(payload.version).toBe(6);
-    expect(payload.isActive).toBe(false);
+    expect(payload).toEqual({
+      promptId: ACTIVE_PROMPT_ID,
+      body: 'new {{TRANSCRIPT}}',
+      notes: 'why',
+    });
     expect(opts.authMode).toBe('userPool');
   });
 
-  it('rejects a body missing the placeholder before any create', async () => {
-    await expect(saveNewTemplateVersion({ body: 'no placeholder', existing })).rejects.toThrow(
+  it('rejects a body missing the placeholder before calling the mutation', async () => {
+    await expect(saveNewTemplateVersion({ body: 'no placeholder' })).rejects.toThrow(
       /\{\{TRANSCRIPT\}\}/,
     );
-    expect(createTemplateMock).not.toHaveBeenCalled();
+    expect(saveVersionMock).not.toHaveBeenCalled();
   });
 
-  it('starts at version 1 when no templates exist', async () => {
-    createTemplateMock.mockResolvedValue({
-      data: { id: 'n', version: 1, body: '{{TRANSCRIPT}}', isActive: false },
-    });
-    await saveNewTemplateVersion({ body: '{{TRANSCRIPT}}', existing: [] });
-    const [payload] = createTemplateMock.mock.calls[0]! as [Record<string, unknown>];
-    expect(payload.version).toBe(1);
+  it('propagates a server error (no silent success)', async () => {
+    saveVersionMock.mockResolvedValue({ errors: [{ message: 'boom' }] });
+    await expect(saveNewTemplateVersion({ body: '{{TRANSCRIPT}}' })).rejects.toThrow(/boom/);
   });
 });
 
 describe('activateTemplate', () => {
-  const templates: DisplayTemplate[] = [
-    {
-      id: 'a',
-      promptId: ACTIVE_PROMPT_ID,
-      version: 1,
-      body: 'x',
-      isActive: true,
-      notes: null,
-      createdBy: null,
-      createdAt: null,
-    },
-    {
-      id: 'b',
-      promptId: ACTIVE_PROMPT_ID,
-      version: 2,
-      body: 'y',
-      isActive: false,
-      notes: null,
-      createdBy: null,
-      createdAt: null,
-    },
-  ];
-
-  it('deactivates the prior active row then activates the target and verifies one active', async () => {
-    updateTemplateMock.mockResolvedValue({ data: { id: 'x' } });
-    // post-flip re-list: exactly one active (the invariant holds)
-    listTemplateMock.mockResolvedValue({
-      data: [
-        { id: 'a', promptId: ACTIVE_PROMPT_ID, version: 1, body: 'x', isActive: false },
-        { id: 'b', promptId: ACTIVE_PROMPT_ID, version: 2, body: 'y', isActive: true },
-      ],
+  it('calls the activatePromptTemplate mutation with userPool auth and returns the row', async () => {
+    activateMock.mockResolvedValue({
+      data: { id: 'b', promptId: ACTIVE_PROMPT_ID, version: 2, body: 'y', isActive: true },
     });
-    const result = await activateTemplate('b', templates);
-    expect(result).toEqual({ activeCount: 1 });
-    const calls = updateTemplateMock.mock.calls.map((c) => c[0] as Record<string, unknown>);
-    expect(calls).toEqual([
-      { id: 'a', isActive: false },
-      { id: 'b', isActive: true },
-    ]);
+    const out = await activateTemplate('b');
+    expect(out.isActive).toBe(true);
+    const [payload, opts] = activateMock.mock.calls[0]! as [
+      Record<string, unknown>,
+      Record<string, unknown>,
+    ];
+    expect(payload).toEqual({ id: 'b' });
+    expect(opts.authMode).toBe('userPool');
   });
 
-  it('does not deactivate the target even if it was already active', async () => {
-    updateTemplateMock.mockResolvedValue({ data: { id: 'x' } });
-    listTemplateMock.mockResolvedValue({
-      data: [{ id: 'a', promptId: ACTIVE_PROMPT_ID, version: 1, body: 'x', isActive: true }],
-    });
-    await activateTemplate('a', templates);
-    const calls = updateTemplateMock.mock.calls.map((c) => c[0] as Record<string, unknown>);
-    expect(calls).toEqual([{ id: 'a', isActive: true }]);
-  });
-
-  it('reports activeCount when the post-flip invariant is violated (partial failure)', async () => {
-    updateTemplateMock.mockResolvedValue({ data: { id: 'x' } });
-    // re-list shows two active rows — a stale row was left active
-    listTemplateMock.mockResolvedValue({
-      data: [
-        { id: 'a', promptId: ACTIVE_PROMPT_ID, version: 1, body: 'x', isActive: true },
-        { id: 'b', promptId: ACTIVE_PROMPT_ID, version: 2, body: 'y', isActive: true },
-      ],
-    });
-    const result = await activateTemplate('b', templates);
-    expect(result).toEqual({ activeCount: 2 });
-  });
-
-  it('throws (not a silent success) when the activate write errors', async () => {
-    updateTemplateMock.mockResolvedValue({ errors: [{ message: 'conditional check failed' }] });
-    await expect(activateTemplate('b', templates)).rejects.toThrow(/conditional check failed/);
+  it('throws (not a silent success) when the mutation errors', async () => {
+    activateMock.mockResolvedValue({ errors: [{ message: 'conditional check failed' }] });
+    await expect(activateTemplate('b')).rejects.toThrow(/conditional check failed/);
   });
 });
 
