@@ -1,12 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { LinguisticPromptTemplates } from './LinguisticPromptTemplates';
-import type { ActivationResult, DisplayTemplate } from '@/lib/admin/linguistic';
+import type { DisplayTemplate } from '@/lib/admin/linguistic';
 
 const listMock = vi.fn<() => Promise<DisplayTemplate[]>>();
 const saveMock = vi.fn<(input: unknown) => Promise<DisplayTemplate>>();
-const activateMock =
-  vi.fn<(id: string, t: readonly DisplayTemplate[]) => Promise<ActivationResult>>();
+const activateMock = vi.fn<(id: string) => Promise<DisplayTemplate>>();
 
 vi.mock('@/lib/admin/linguistic', async (importActual) => {
   const actual = await importActual<Record<string, unknown>>();
@@ -14,8 +13,7 @@ vi.mock('@/lib/admin/linguistic', async (importActual) => {
     ...actual,
     listPromptTemplates: (): Promise<DisplayTemplate[]> => listMock(),
     saveNewTemplateVersion: (input: unknown): Promise<DisplayTemplate> => saveMock(input),
-    activateTemplate: (id: string, t: readonly DisplayTemplate[]): Promise<ActivationResult> =>
-      activateMock(id, t),
+    activateTemplate: (id: string): Promise<DisplayTemplate> => activateMock(id),
   };
 });
 
@@ -38,7 +36,7 @@ beforeEach(() => {
   saveMock.mockReset();
   activateMock.mockReset();
   saveMock.mockResolvedValue(tpl({ id: 'new', version: 3 }));
-  activateMock.mockResolvedValue({ activeCount: 1 });
+  activateMock.mockResolvedValue(tpl({ id: 'b', version: 1, isActive: true }));
 });
 
 describe('LinguisticPromptTemplates', () => {
@@ -85,42 +83,29 @@ describe('LinguisticPromptTemplates', () => {
     expect(saveMock).not.toHaveBeenCalled();
   });
 
-  it('activates an inactive version and reports success when exactly one is active', async () => {
+  it('activates an inactive version via the atomic mutation and reports success', async () => {
     listMock.mockResolvedValue([
       tpl({ id: 'a', version: 2, isActive: true }),
       tpl({ id: 'b', version: 1, isActive: false }),
     ]);
-    activateMock.mockResolvedValue({ activeCount: 1 });
     render(<LinguisticPromptTemplates />);
     await waitFor(() => expect(screen.getByTestId('template-list')).toBeInTheDocument());
     fireEvent.click(screen.getByText('Activate'));
-    await waitFor(() => expect(activateMock).toHaveBeenCalledWith('b', expect.any(Array)));
+    await waitFor(() => expect(activateMock).toHaveBeenCalledWith('b'));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/Activated/));
   });
 
-  it('warns the admin when activation leaves the wrong number of active versions', async () => {
+  it('surfaces an activation error', async () => {
     listMock.mockResolvedValue([
       tpl({ id: 'a', version: 2, isActive: true }),
       tpl({ id: 'b', version: 1, isActive: false }),
     ]);
-    activateMock.mockResolvedValue({ activeCount: 2 });
-    render(<LinguisticPromptTemplates />);
-    await waitFor(() => expect(screen.getByTestId('template-list')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('Activate'));
-    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/2 versions active/));
-  });
-
-  it('warns when activation leaves zero active versions', async () => {
-    listMock.mockResolvedValue([
-      tpl({ id: 'a', version: 2, isActive: true }),
-      tpl({ id: 'b', version: 1, isActive: false }),
-    ]);
-    activateMock.mockResolvedValue({ activeCount: 0 });
+    activateMock.mockRejectedValue(new Error('conditional check failed'));
     render(<LinguisticPromptTemplates />);
     await waitFor(() => expect(screen.getByTestId('template-list')).toBeInTheDocument());
     fireEvent.click(screen.getByText('Activate'));
     await waitFor(() =>
-      expect(screen.getByRole('alert')).toHaveTextContent(/no version is currently active/),
+      expect(screen.getByRole('alert')).toHaveTextContent(/conditional check failed/),
     );
   });
 

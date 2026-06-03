@@ -34,6 +34,7 @@ import { discordOidcBridge } from './functions/discordOidcBridge/resource';
 import { userMutations } from './functions/userMutations/resource';
 import { messageMutations } from './functions/messageMutations/resource';
 import { recordingMutations } from './functions/recordingMutations/resource';
+import { promptTemplateMutations } from './functions/promptTemplateMutations/resource';
 import { commentMutations } from './functions/commentMutations/resource';
 import { transcriptRevisionMutations } from './functions/transcriptRevisionMutations/resource';
 import { getUserPublicLambda } from './functions/getUserPublicLambda/resource';
@@ -79,6 +80,7 @@ const backend = defineBackend({
   userMutations,
   messageMutations,
   recordingMutations,
+  promptTemplateMutations,
   commentMutations,
   transcriptRevisionMutations,
   listAuditLogPublic,
@@ -290,6 +292,33 @@ notificationPrefLambda.addToRolePolicy(
   }),
 );
 notificationPrefKey.grantEncryptDecrypt(notificationPrefLambda);
+
+// promptTemplateMutations Lambda wiring (#572).
+//
+// The Lambda resolves `activatePromptTemplate` + `savePromptTemplateVersion`
+// directly against the LinguisticPromptTemplate table (Scan/GetItem to
+// resolve the active row + version max, PutItem for the conditional
+// version create, TransactWriteItems for the atomic activation flip).
+// Same direct-DDB shape as notificationPreferenceMutations above; grouped
+// with `data` (resourceGroupName) so no FunctionDirectiveStack ↔ data cycle.
+const linguisticPromptTemplateTable = backend.data.resources.tables['LinguisticPromptTemplate'];
+if (!linguisticPromptTemplateTable) {
+  throw new Error('backend: LinguisticPromptTemplate table not found on data resources');
+}
+const promptTemplateLambda = backend.promptTemplateMutations.resources.lambda as LambdaFunction;
+promptTemplateLambda.addEnvironment(
+  'LINGUISTIC_PROMPT_TEMPLATE_TABLE_NAME',
+  linguisticPromptTemplateTable.tableName,
+);
+promptTemplateLambda.addToRolePolicy(
+  new PolicyStatement({
+    // TransactWriteItems requires the underlying PutItem/UpdateItem
+    // permissions; Scan + GetItem cover the active-row + version-max
+    // resolution.
+    actions: ['dynamodb:Scan', 'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'],
+    resources: [linguisticPromptTemplateTable.tableArn],
+  }),
+);
 
 // FK fan-out wiring (sub-B of #16 / #273).
 //

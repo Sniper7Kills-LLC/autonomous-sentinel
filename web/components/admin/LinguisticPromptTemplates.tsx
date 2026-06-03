@@ -21,9 +21,11 @@ import styles from './AdminLinguistic.module.css';
  * into the editor ("copy the system default"), save a new version
  * (bumps `version`), and activate a version (flips `isActive`).
  *
- * Activation + version assignment are approximated client-side until
- * the deferred atomic mutations ship (see `lib/admin/linguistic.ts`);
- * the UI states this in the helper copy.
+ * Activation + version assignment route through the server-side atomic
+ * mutations (#572): activation is a single TransactWriteItems flip and
+ * version numbers are allocated under a conditional write, so concurrent
+ * admins can no longer race into a zero/two-active or duplicate-version
+ * state.
  */
 export function LinguisticPromptTemplates() {
   const [templates, setTemplates] = useState<DisplayTemplate[]>([]);
@@ -75,7 +77,6 @@ export function LinguisticPromptTemplates() {
       const created = await saveNewTemplateVersion({
         body: draft,
         notes: notes || null,
-        existing: templates,
       });
       setStatus(`Saved version ${created.version} (inactive — activate it below to make it live).`);
       setNotes('');
@@ -85,7 +86,7 @@ export function LinguisticPromptTemplates() {
     } finally {
       setBusy(false);
     }
-  }, [draft, notes, templates, reload]);
+  }, [draft, notes, reload]);
 
   const activate = useCallback(
     async (id: string) => {
@@ -93,31 +94,16 @@ export function LinguisticPromptTemplates() {
       setError(null);
       setStatus(null);
       try {
-        const { activeCount } = await activateTemplate(id, templates);
+        await activateTemplate(id);
         await reload();
-        // The flip is non-atomic (#572). Surface a partial-failure state
-        // — zero or multiple active rows — to the admin instead of
-        // reporting a clean activation.
-        if (activeCount === 1) {
-          setStatus(
-            'Activated. The Linguistic Logic Lambda picks it up on its next cache refresh.',
-          );
-        } else if (activeCount === 0) {
-          setError(
-            'Activation did not complete: no version is currently active. Re-run activation (the activate step may have failed after deactivating the old version — see #572).',
-          );
-        } else {
-          setError(
-            `Activation left ${activeCount} versions active (expected 1). A concurrent edit or partial failure occurred; re-run activation to converge (#572). The Lambda will use the highest version until then.`,
-          );
-        }
+        setStatus('Activated. The Linguistic Logic Lambda picks it up on its next cache refresh.');
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to activate the version.');
       } finally {
         setBusy(false);
       }
     },
-    [templates, reload],
+    [reload],
   );
 
   const placeholderOk = draft.includes('{{TRANSCRIPT}}');
@@ -132,10 +118,10 @@ export function LinguisticPromptTemplates() {
       </header>
       <p className={styles.muted}>
         Versioned Bedrock fallback prompts. Exactly one version is active; the Lambda renders it
-        against each transcript. Activation and version numbering are applied client-side and are{' '}
-        <strong>not atomic</strong> until the backend mutations ship (#572): two admins activating
-        or saving at the same time can race. Activation re-checks the active count and warns here if
-        it does not settle on exactly one.
+        against each transcript. Activation and version numbering are applied{' '}
+        <strong>atomically server-side</strong> (#572): activation flips the active row in a single
+        transaction and version numbers are allocated under a conditional write, so concurrent
+        admins cannot race into a duplicate-version or zero/two-active state.
       </p>
 
       {loading ? (

@@ -1,4 +1,5 @@
 import { a } from '@aws-amplify/backend';
+import { promptTemplateMutations } from '../../functions/promptTemplateMutations/resource';
 
 /**
  * LinguisticPromptTemplate — admin-managed prompt templates for the
@@ -93,3 +94,43 @@ export const LinguisticPromptTemplate = a
   // + filters in-memory. Cheaper than maintaining a sparse GSI on
   // `(promptId, isActive)` for a table this small.
   .authorization((allow) => [allow.groups(['admin']).to(['read', 'create', 'update', 'delete'])]);
+
+/**
+ * `activatePromptTemplate(id)` — admin-only atomic activation (#572).
+ *
+ * Flips exactly one version of the target's `promptId` to
+ * `isActive=true` and every other to `false` inside a single
+ * DynamoDB `TransactWriteItems`, closing the non-atomic two-phase
+ * flip the admin UI used before (which could leave zero or two
+ * active rows under concurrent admins). Resolved by the
+ * `promptTemplateMutations` Lambda (raw DDB — the Amplify Data
+ * client exposes no transaction primitive).
+ */
+export const activatePromptTemplate = a
+  .mutation()
+  .arguments({ id: a.id().required() })
+  .returns(a.ref('LinguisticPromptTemplate'))
+  .authorization((allow) => allow.group('admin'))
+  .handler(a.handler.function(promptTemplateMutations));
+
+/**
+ * `savePromptTemplateVersion(promptId, body, notes)` — admin-only
+ * atomic version create (#572).
+ *
+ * Allocates the next `version` for the `promptId` and creates an
+ * inactive row under a conditional `attribute_not_exists(id)` guard
+ * on the synthesised `promptId#v{version}` key, so concurrent saves
+ * can never collide on a version number (the loser retries with the
+ * freshly-observed max). Rejects a body missing `{{TRANSCRIPT}}`
+ * before any write. Resolved by the `promptTemplateMutations` Lambda.
+ */
+export const savePromptTemplateVersion = a
+  .mutation()
+  .arguments({
+    promptId: a.string().required(),
+    body: a.string().required(),
+    notes: a.string(),
+  })
+  .returns(a.ref('LinguisticPromptTemplate'))
+  .authorization((allow) => allow.group('admin'))
+  .handler(a.handler.function(promptTemplateMutations));

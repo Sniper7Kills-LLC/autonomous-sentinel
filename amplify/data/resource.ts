@@ -56,7 +56,11 @@ import { listDlqMessages, requeueDlqMessage, dropDlqMessage } from './models/dlq
 import { wafMetricsQuery } from './models/waf-metrics';
 import { RevenueSnapshot } from './models/revenue-snapshot';
 import { LinguisticRule } from './models/linguistic-rule';
-import { LinguisticPromptTemplate } from './models/linguistic-prompt-template';
+import {
+  LinguisticPromptTemplate,
+  activatePromptTemplate,
+  savePromptTemplateVersion,
+} from './models/linguistic-prompt-template';
 import {
   EmailSuppression,
   SuppressionReason,
@@ -111,6 +115,10 @@ export const schema = a
 
     LinguisticRule,
     LinguisticPromptTemplate,
+
+    // Atomic LinguisticPromptTemplate admin mutations — issue #572
+    activatePromptTemplate,
+    savePromptTemplateVersion,
     BannedRegionPage,
     BannedCountry,
     BannedIp,
