@@ -45,7 +45,7 @@
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { createWriteStream } from 'node:fs';
-import { mkdir, open, readFile, stat, unlink } from 'node:fs/promises';
+import { mkdir, readFile, stat, unlink } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -60,7 +60,7 @@ import { extractTranscriptionConfidence } from './transcription-confidence.mjs';
 import { silenceTrim, readSilenceConfig } from './silence-trim.mjs';
 import { denoise, readDenoiseConfig } from './denoise.mjs';
 import { runVad, readVadConfig } from './vad.mjs';
-import { wavDurationMs, WAV_HEADER_BYTES } from './wav-duration.mjs';
+import { pcmDurationMs } from './wav-duration.mjs';
 
 const RECORDINGS_BUCKET = process.env.RECORDINGS_BUCKET ?? '';
 const PIPELINE_TEMP_PREFIX = process.env.PIPELINE_TEMP_PREFIX ?? 'pipeline-temp';
@@ -161,23 +161,19 @@ function extensionOf(key) {
 }
 
 /**
- * Exact duration of the canonical 16 kHz mono WAV without an extra ffprobe
- * pass: read the 44-byte header + stat the size, derive ms from the byte
- * rate (#671). Returns 0 if the file is unreadable/empty.
+ * Exact duration of the canonical 16 kHz mono s16le WAV without an extra
+ * ffprobe pass (#671). `transcodeToWav` always emits that fixed format, so
+ * `stat` + the byte-rate math is exact — no need to open + parse the header
+ * (which also keeps CodeQL's `js/insecure-temporary-file` happy: no `fs.open`
+ * on a tmpdir-derived path). Returns 0 if the file is unreadable/empty.
  */
 async function wavDurationMsForFile(wavPath) {
-  let fh;
   try {
-    fh = await open(wavPath, 'r');
-    const headerBuf = Buffer.alloc(WAV_HEADER_BYTES);
-    await fh.read(headerBuf, 0, WAV_HEADER_BYTES, 0);
     const { size } = await stat(wavPath);
-    return wavDurationMs(headerBuf, size);
+    return pcmDurationMs(size);
   } catch (err) {
     console.warn('whisper-handler: could not measure WAV duration', { wavPath, err: String(err) });
     return 0;
-  } finally {
-    await fh?.close().catch(() => undefined);
   }
 }
 
@@ -243,11 +239,12 @@ async function preprocessAudio({ origPath, tmpDir, recordingId, cleanupPaths }) 
     transcodeSource = cleanPath;
     dspApplied = true;
   } catch (dspErr) {
+    // transcodeSource stays at its `origPath` init — fall back to the raw
+    // original so a denoise hiccup never sinks an otherwise-fine recording.
     console.warn('whisper-handler: DSP (silence-trim/denoise) failed; transcoding raw original', {
       recordingId,
       err: dspErr instanceof Error ? dspErr.message : String(dspErr),
     });
-    transcodeSource = origPath;
   }
 
   // Two derivatives from the cleaned (or raw, on fallback) audio:
