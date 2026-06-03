@@ -50,6 +50,7 @@ import { costSnapshotTrigger } from './functions/costSnapshotTrigger/resource';
 import { dlqAdmin } from './functions/dlqAdmin/resource';
 import { stripeRevenueWorker } from './functions/stripeRevenueWorker/resource';
 import { wafSync } from './functions/wafSync/resource';
+import { wafMetrics } from './functions/wafMetrics/resource';
 import { attachWaf, WAF_RESOURCE_NAMES } from './waf';
 import { attachBudgetAlarms, attachBudgetThrottleAction, readBudgetConfig } from './budgets';
 import { applyCognitoTokenValidity } from './cognito-token-validity';
@@ -94,6 +95,7 @@ const backend = defineBackend({
   dlqAdmin,
   stripeRevenueWorker,
   wafSync,
+  wafMetrics,
 });
 
 // Wire the legacy-claim worker into postConfirmation (sub-A of #16 / #272).
@@ -1586,3 +1588,17 @@ backend.addOutput({
     wafWebAclName: WAF_RESOURCE_NAMES.webAcl,
   },
 });
+
+// wafMetrics admin query (#673) — reads CloudWatch only (no DDB), so no
+// function→data edge; resourceGroupName:'data' keeps it in the data stack.
+// `cloudwatch:GetMetricStatistics` has no resource-level scoping, so it must
+// be granted on `*` (read-only metric reads). WEB_ACL_NAME is a constant
+// string, not a cross-stack token — no new stack edge.
+const wafMetricsLambda = backend.wafMetrics.resources.lambda as LambdaFunction;
+wafMetricsLambda.addEnvironment('WEB_ACL_NAME', WAF_RESOURCE_NAMES.webAcl);
+wafMetricsLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['cloudwatch:GetMetricStatistics'],
+    resources: ['*'],
+  }),
+);

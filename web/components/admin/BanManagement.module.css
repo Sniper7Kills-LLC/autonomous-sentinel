@@ -114,3 +114,68 @@
   color: var(--color-success, #16a34a);
   font-size: 0.85rem;
 }
+
+/* Scope radio group (IP + country add forms) */
+.scopeGroup {
+  display: inline-flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.scopeOption {
+  display: inline-flex;
+  gap: 0.3rem;
+  align-items: center;
+  font-size: 0.85rem;
+  color: var(--text-1, #d4d4d4);
+  white-space: nowrap;
+}
+
+/* Scope pill in the ban tables */
+.scopeBadge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--border-1, #3a3a3a);
+  color: var(--text-2, #9a9a9a);
+}
+
+.scopeBadge[data-scope='read_write'] {
+  color: var(--danger, #dc2626);
+  border-color: var(--danger, #dc2626);
+}
+
+/* WAF metrics banner (#673) */
+.metrics {
+  display: flex;
+  gap: 1.25rem;
+  align-items: baseline;
+  padding: 0.6rem 0.9rem;
+  margin-bottom: 1rem;
+  border: 1px solid var(--border-1, #3a3a3a);
+  border-radius: 6px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.02));
+  font-size: 0.9rem;
+}
+
+.metric {
+  color: var(--text-1, #d4d4d4);
+}
+
+.metric strong {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 1.05rem;
+}
+
+.metricNote {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--text-2, #9a9a9a);
+  letter-spacing: 0.02em;
+}

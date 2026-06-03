@@ -53,6 +53,7 @@ import { BudgetConfig } from './models/budget-config';
 import { CostSnapshot, runCostSnapshotNow } from './models/cost-snapshot';
 import { dlqAdmin } from '../functions/dlqAdmin/resource';
 import { listDlqMessages, requeueDlqMessage, dropDlqMessage } from './models/dlq-admin';
+import { wafMetricsQuery } from './models/waf-metrics';
 import { RevenueSnapshot } from './models/revenue-snapshot';
 import { LinguisticRule } from './models/linguistic-rule';
 import { LinguisticPromptTemplate } from './models/linguistic-prompt-template';
@@ -193,6 +194,10 @@ export const schema = a
     listDlqMessages,
     requeueDlqMessage,
     dropDlqMessage,
+
+    // Admin WAF metrics (#673) — blocked/allowed request counts from
+    // CloudWatch; admin-only, resolved by the wafMetrics Lambda.
+    wafMetrics: wafMetricsQuery,
   })
   .authorization((allow) => [
     // Schema-level Lambda access grants.
