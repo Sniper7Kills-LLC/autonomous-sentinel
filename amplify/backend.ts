@@ -8,7 +8,7 @@ import {
   StartingPosition,
 } from 'aws-cdk-lib/aws-lambda';
 import { StreamViewType } from 'aws-cdk-lib/aws-dynamodb';
-import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
+import { SqsEventSource, SqsDlq } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { Policy, PolicyStatement, Role } from 'aws-cdk-lib/aws-iam';
 import { Rule, Schedule } from 'aws-cdk-lib/aws-events';
 import { LambdaFunction as LambdaTarget } from 'aws-cdk-lib/aws-events-targets';
@@ -49,6 +49,8 @@ import { costSnapshotWorker } from './functions/costSnapshotWorker/resource';
 import { costSnapshotTrigger } from './functions/costSnapshotTrigger/resource';
 import { dlqAdmin } from './functions/dlqAdmin/resource';
 import { stripeRevenueWorker } from './functions/stripeRevenueWorker/resource';
+import { wafSync } from './functions/wafSync/resource';
+import { attachWaf, WAF_RESOURCE_NAMES } from './waf';
 import { attachBudgetAlarms, attachBudgetThrottleAction, readBudgetConfig } from './budgets';
 import { applyCognitoTokenValidity } from './cognito-token-validity';
 import { attachStorageLifecycle, readStorageLifecycleConfig } from './storage-lifecycle';
@@ -91,6 +93,7 @@ const backend = defineBackend({
   costSnapshotTrigger,
   dlqAdmin,
   stripeRevenueWorker,
+  wafSync,
 });
 
 // Wire the legacy-claim worker into postConfirmation (sub-A of #16 / #272).
@@ -1439,3 +1442,144 @@ transcribeDispatchFn.addEventSource(
 // invoke, so a modest cap bounds fan-out without starving throughput.
 (transcribeDispatchFn.node.defaultChild as CfnFunction).reservedConcurrentExecutions =
   getConcurrencyCap('TRANSCRIBE_DISPATCH');
+
+// ---------------------------------------------------------------------------
+// AWS WAF + admin-managed country / IP CIDR blocking (#198/#199/#200/#201/#202)
+// ---------------------------------------------------------------------------
+//
+// Static WAF resources (Web ACL, four IPSets, CloudWatch log group) live in
+// their own `WafStack`. The `wafSync` Lambda reconciles the admin-managed
+// `BannedCountry` / `BannedIp` rows onto those resources, woken by the two ban
+// tables' DynamoDB streams.
+//
+// Circular-dependency avoidance (the reason this is not in the data stack):
+// `wafSync` reads the ban tables via the RAW DynamoDB SDK (Scan), never the
+// Amplify Data client, so the data stack never imports the function (no
+// `allow.resource` edge). Every edge is one-directional OUT of the wafSync
+// function stack:
+//   - wafSync fn stack → data stack: ban-table stream ARNs (EventSourceMapping
+//     target lives in the FUNCTION stack, not the data stack — see below),
+//     table ARNs (Scan IAM), stream-read IAM.
+//   - wafSync fn stack → WafStack: WAF resource ARNs/Ids (IAM + env).
+// Nothing flows back into the function stack, so there is no cycle. (Contrast
+// `linguisticConfigStream`, which uses the Amplify Data client and therefore
+// had to sit INSIDE the data stack via `resourceGroupName:'data'`.)
+const wafStack = backend.createStack('WafStack');
+const waf = attachWaf(wafStack);
+
+const wafSyncLambda = backend.wafSync.resources.lambda as LambdaFunction;
+const wafSyncFnStack = Stack.of(wafSyncLambda);
+
+// Web ACL + IPSet identifiers → env (wafSync addresses them via Get*/Update*).
+wafSyncLambda.addEnvironment('WEB_ACL_ID', waf.webAcl.attrId);
+wafSyncLambda.addEnvironment('WEB_ACL_NAME', WAF_RESOURCE_NAMES.webAcl);
+wafSyncLambda.addEnvironment('WEB_ACL_SCOPE', 'CLOUDFRONT');
+wafSyncLambda.addEnvironment('IPSET_V4_WRITE_ID', waf.ipSets.v4Write.attrId);
+wafSyncLambda.addEnvironment('IPSET_V4_WRITE_NAME', WAF_RESOURCE_NAMES.ipSets.v4Write);
+wafSyncLambda.addEnvironment('IPSET_V4_READ_ID', waf.ipSets.v4Read.attrId);
+wafSyncLambda.addEnvironment('IPSET_V4_READ_NAME', WAF_RESOURCE_NAMES.ipSets.v4Read);
+wafSyncLambda.addEnvironment('IPSET_V6_WRITE_ID', waf.ipSets.v6Write.attrId);
+wafSyncLambda.addEnvironment('IPSET_V6_WRITE_NAME', WAF_RESOURCE_NAMES.ipSets.v6Write);
+wafSyncLambda.addEnvironment('IPSET_V6_READ_ID', waf.ipSets.v6Read.attrId);
+wafSyncLambda.addEnvironment('IPSET_V6_READ_NAME', WAF_RESOURCE_NAMES.ipSets.v6Read);
+wafSyncLambda.addEnvironment('GEO_WRITE_RULE_NAME', WAF_RESOURCE_NAMES.geoWriteRule);
+wafSyncLambda.addEnvironment('GEO_READ_RULE_NAME', WAF_RESOURCE_NAMES.geoReadRule);
+wafSyncLambda.addEnvironment('GEO_WRITE_PRIORITY', String(WAF_RESOURCE_NAMES.geoWritePriority));
+wafSyncLambda.addEnvironment('GEO_READ_PRIORITY', String(WAF_RESOURCE_NAMES.geoReadPriority));
+wafSyncLambda.addEnvironment('BANNED_REGION_BODY_KEY', WAF_RESOURCE_NAMES.bannedRegionBodyKey);
+
+// wafv2 Get*/Update* on exactly the ACL + four IPSets (resource-scoped).
+wafSyncLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['wafv2:GetWebACL', 'wafv2:UpdateWebACL', 'wafv2:GetIPSet', 'wafv2:UpdateIPSet'],
+    resources: [
+      waf.webAcl.attrArn,
+      waf.ipSets.v4Write.attrArn,
+      waf.ipSets.v4Read.attrArn,
+      waf.ipSets.v6Write.attrArn,
+      waf.ipSets.v6Read.attrArn,
+    ],
+  }),
+);
+
+// Ban tables: enable streams + grant Scan + subscribe wafSync. All resources
+// created in the wafSync FUNCTION stack so the only cross-stack edge is
+// function → data (stream/table ARNs), never data → function.
+const wafSyncDlq = new Queue(wafSyncFnStack, 'WafSyncStreamDlq', {
+  retentionPeriod: Duration.days(14),
+});
+const banStreamArns: string[] = [];
+const banTableArns: string[] = [];
+for (const modelName of ['BannedCountry', 'BannedIp'] as const) {
+  const table = backend.data.resources.tables[modelName];
+  if (!table) {
+    throw new Error(`backend: ${modelName} table not found on data resources`);
+  }
+  const cfnTable = backend.data.resources.cfnResources.amplifyDynamoDbTables[modelName];
+  if (!cfnTable) {
+    throw new Error(`backend: ${modelName} CFN table wrapper not found on data resources`);
+  }
+  cfnTable.streamSpecification = { streamViewType: StreamViewType.NEW_AND_OLD_IMAGES };
+  const streamArn = table.tableStreamArn;
+  if (!streamArn) {
+    throw new Error(
+      `backend: ${modelName} table stream ARN unavailable after enabling streamSpecification`,
+    );
+  }
+  banStreamArns.push(streamArn);
+  banTableArns.push(table.tableArn);
+
+  // Wake-up only — the handler ignores the records and full-reconciles by
+  // Scan. A short batching window + reserved concurrency 1 (below) coalesces
+  // admin bursts and serialises the optimistic WAF LockToken. onFailure →
+  // dedicated DLQ.
+  const mapping = new EventSourceMapping(wafSyncFnStack, `WafSync${modelName}StreamMapping`, {
+    target: wafSyncLambda,
+    eventSourceArn: streamArn,
+    startingPosition: StartingPosition.LATEST,
+    batchSize: 100,
+    maxBatchingWindow: Duration.seconds(5),
+    retryAttempts: 5,
+    bisectBatchOnError: true,
+    onFailure: new SqsDlq(wafSyncDlq),
+  });
+  mapping.node.addDependency(wafSyncLambda);
+}
+
+// Stream-read + Scan IAM (function stack → data stack table/stream ARNs).
+const wafSyncDataPolicy = new Policy(wafSyncFnStack, 'WafSyncBanTableReadPolicy', {
+  statements: [
+    new PolicyStatement({
+      actions: [
+        'dynamodb:DescribeStream',
+        'dynamodb:GetRecords',
+        'dynamodb:GetShardIterator',
+        'dynamodb:ListStreams',
+      ],
+      resources: banStreamArns,
+    }),
+    new PolicyStatement({
+      actions: ['dynamodb:Scan'],
+      resources: banTableArns,
+    }),
+  ],
+});
+wafSyncLambda.role?.attachInlinePolicy(wafSyncDataPolicy);
+
+// Table names → env (raw Scan addresses tables by name).
+const bannedCountryTable = backend.data.resources.tables['BannedCountry'];
+const bannedIpTable = backend.data.resources.tables['BannedIp'];
+wafSyncLambda.addEnvironment('BANNED_COUNTRY_TABLE', bannedCountryTable!.tableName);
+wafSyncLambda.addEnvironment('BANNED_IP_TABLE', bannedIpTable!.tableName);
+
+// Serialise reconciles so the WAF LockToken doesn't thrash under bursts.
+(wafSyncLambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 1;
+
+// Web ACL ARN surfaced for the operational CloudFront association step
+// (Amplify Hosting owns that distribution — see amplify/README.md).
+backend.addOutput({
+  custom: {
+    wafWebAclArn: waf.webAcl.attrArn,
+    wafWebAclName: WAF_RESOURCE_NAMES.webAcl,
+  },
+});
