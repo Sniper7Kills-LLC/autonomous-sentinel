@@ -18,8 +18,13 @@ const WEB_ROOT = path.resolve(__dirname, '..', '..');
 // Custom properties injected at runtime by next/font (layout.tsx), never in CSS.
 const RUNTIME_INJECTED = new Set(['--font-atkinson', '--font-jb-mono']);
 
+/** Drop CSS block comments so commented-out token defs/refs don't skew the scan. */
+function stripComments(css: string): string {
+  return css.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
 function readGlobals(): string {
-  return readFileSync(path.join(WEB_ROOT, 'app', 'globals.css'), 'utf8');
+  return stripComments(readFileSync(path.join(WEB_ROOT, 'app', 'globals.css'), 'utf8'));
 }
 
 /** Collect every `--name:` declaration (a definition, not a `var()` use). */
@@ -36,10 +41,11 @@ function definedTokens(css: string): Set<string> {
 
 /**
  * Collect every `var(--name, fallback?)` reference along with whether its
- * fallback is itself a `var(...)`. A var-fallback (e.g. `var(--card-stripe,
- * var(--color-accent))`) is an intentional, theme-aware override hook and is
- * allowed even when the primary token is undefined. A literal fallback — or no
- * fallback at all — pins the value to one theme (or drops it), which is the bug.
+ * fallback contains another `var(...)`. A var-fallback (e.g. `var(--card-stripe,
+ * var(--color-accent))` or `var(--x, color-mix(in srgb, var(--y), transparent))`)
+ * is an intentional, theme-aware override hook and is allowed even when the
+ * primary token is undefined. A purely literal fallback — or no fallback at all —
+ * pins the value to one theme (or drops it), which is the bug.
  */
 function referencedTokens(css: string): { token: string; varFallback: boolean }[] {
   const refs: { token: string; varFallback: boolean }[] = [];
@@ -49,7 +55,7 @@ function referencedTokens(css: string): { token: string; varFallback: boolean }[
     const [, token, rawFallback] = m;
     if (!token) continue;
     const fallback = (rawFallback ?? '').trim();
-    refs.push({ token, varFallback: fallback.startsWith('var(') });
+    refs.push({ token, varFallback: fallback.includes('var(') });
   }
   return refs;
 }
