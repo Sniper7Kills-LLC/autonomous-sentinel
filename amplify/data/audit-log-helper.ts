@@ -169,6 +169,17 @@ let cachedDefaultClient: AuditDataClient | undefined;
 
 async function getDefaultClient(): Promise<AuditDataClient> {
   if (cachedDefaultClient) return cachedDefaultClient;
+  // Configure Amplify BEFORE generateClient. The Lambda runtime has no
+  // auto-config; `generateClient()` throws "Client could not be generated …
+  // Amplify.configure() not called … missing GraphQL provider configuration"
+  // otherwise. The audit helper must self-configure rather than assume the
+  // caller already built a data client: an audit-only code path (one that
+  // never builds its own client first — e.g. dlqAdmin's `requeueDlqMessage`,
+  // which only touches SQS + audit) would otherwise hit that error. The
+  // helper is idempotent + module-cached, so this is cheap on every other
+  // path that already configured.
+  const { configureAmplifyOnce } = await import('../functions/_shared/configure-amplify');
+  await configureAmplifyOnce();
   // Dynamic import so test runs that inject a `client` never need to load the
   // Amplify runtime. `generateClient<Schema>()` returns the strongly-typed
   // model client; our structural `AuditDataClient` is a subset of that

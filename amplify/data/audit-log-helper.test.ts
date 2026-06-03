@@ -282,6 +282,41 @@ describe('audit helper', () => {
   });
 });
 
+describe('audit helper — default client configures Amplify first (#478/dlq requeue regression)', () => {
+  it('calls configureAmplifyOnce before generateClient on the no-injected-client path', async () => {
+    const order: string[] = [];
+    const configureSpy = vi.fn(() => {
+      order.push('configure');
+      return Promise.resolve();
+    });
+    const createSpy = vi.fn(() => Promise.resolve({ data: { id: 'a1' }, errors: undefined }));
+    const generateSpy = vi.fn(() => {
+      order.push('generate');
+      return { models: { AuditLog: { create: createSpy } } };
+    });
+
+    vi.resetModules();
+    vi.doMock('../functions/_shared/configure-amplify', () => ({
+      configureAmplifyOnce: configureSpy,
+    }));
+    vi.doMock('aws-amplify/data', () => ({ generateClient: generateSpy }));
+
+    // Re-import the helper AFTER the mocks so its dynamic imports resolve to them.
+    const { audit: freshAudit } = await import('./audit-log-helper');
+    await freshAudit(makeCtx(), { action: 'DLQ_REQUEUE', targetType: 'Recording', targetId: 'r1' });
+
+    expect(configureSpy).toHaveBeenCalledOnce();
+    expect(generateSpy).toHaveBeenCalledOnce();
+    expect(createSpy).toHaveBeenCalledOnce();
+    // Amplify must be configured BEFORE the client is generated.
+    expect(order).toEqual(['configure', 'generate']);
+
+    vi.doUnmock('../functions/_shared/configure-amplify');
+    vi.doUnmock('aws-amplify/data');
+    vi.resetModules();
+  });
+});
+
 describe('audit helper — diff computation', () => {
   it('emits per-key { before, after } for keys that differ', () => {
     const d = diffShallow({ a: 1, b: 'old', c: true }, { a: 1, b: 'new', c: false });
