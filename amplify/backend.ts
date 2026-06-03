@@ -851,6 +851,31 @@ preprocessLambda.addToRolePolicy(
   }),
 );
 
+// recordingMutations → S3 hard-delete / restore on the recordings prefix (#478).
+//
+// `softDeleteRecording` issues DeleteObject on the recording's original /
+// web-canonical / sidecar keys after the row update — versioning (on per
+// storage-lifecycle.ts) turns each into a delete-marker, so the prior
+// version stays restorable for the 30-day noncurrent-version window.
+// `restoreRecording` reverses it by deleting that delete-marker version,
+// which needs `s3:DeleteObjectVersion` + `s3:ListBucketVersions` (to find
+// the marker's versionId). Scoped to `recordings/*`.
+recordingMutationsLambda.addEnvironment('MEDIA_BUCKET_NAME', mediaBucket.bucketName);
+recordingMutationsLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['s3:DeleteObject', 's3:DeleteObjectVersion'],
+    resources: [`${mediaBucket.bucketArn}/recordings/*`],
+  }),
+);
+recordingMutationsLambda.addToRolePolicy(
+  new PolicyStatement({
+    // ListBucketVersions is a bucket-level action; restore needs it to
+    // resolve the delete-marker's versionId before removing it.
+    actions: ['s3:ListBucketVersions'],
+    resources: [mediaBucket.bucketArn],
+  }),
+);
+
 // Pipeline stage 2 wiring (#433). The preprocess Lambda consumes the
 // preprocess SQS queue (populated by submitRecording), advances the
 // Recording row via the Amplify Data client (so AppSync's

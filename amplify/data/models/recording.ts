@@ -198,10 +198,13 @@ export const Recording = a
  * delete therefore touches only the Recording row; the parent
  * Message keeps standing.
  *
- * Deferred (out of scope, tracked separately):
- *   - S3 hard-delete of the original / web-canonical / sidecar keys.
- *     Phase 3 / storage lifecycle work — versioning preserves the
- *     30-day undo window per CLAUDE.md.
+ * S3 hard-delete (#478): after the row update the handler issues
+ * DeleteObject on the recording's `originalKey` / `webCanonicalKey` /
+ * `wordTimestampsKey` / `peaksJsonKey`. Bucket versioning turns each into
+ * a recoverable delete-marker (30-day noncurrent-version window per
+ * `storage-lifecycle.ts`); `restoreRecording` reverses it inside that
+ * window. Best-effort — a failed object delete is logged + recorded on
+ * the audit `after.s3Deleted`, never rolls back the row soft-delete.
  */
 export const softDeleteRecording = a
   .mutation()
@@ -316,4 +319,26 @@ export const reparseRecording = a
   // Moderator + admin only. Enumerated per-group for Identity Pool
   // role routing (same rationale as reprocessRecording above).
   .authorization((allow) => allow.groups(['admin', 'moderator']))
+  .handler(a.handler.function(recordingMutations));
+
+/**
+ * `restoreRecording` — admin-only reversal of `softDeleteRecording` (#478).
+ *
+ * Clears `deletedAt` / `deletedBy` on the row and restores each S3 object
+ * by removing its latest delete-marker (exposing the prior real version) —
+ * only effective inside the 30-day noncurrent-version recovery window.
+ * Idempotent on a non-deleted row. Best-effort on S3: a failed restore is
+ * logged + recorded on the audit `after.s3Restored`, never blocks the row
+ * un-delete. Writes a `RECORDING_RESTORE` AuditLog entry.
+ */
+export const restoreRecording = a
+  .mutation()
+  .arguments({
+    recordingId: a.id().required(),
+    reason: a.string(),
+  })
+  .returns(a.ref('Recording'))
+  // Admin only — restore is a recovery action, narrower than the
+  // moderator-accessible reprocess/reparse.
+  .authorization((allow) => allow.group('admin'))
   .handler(a.handler.function(recordingMutations));

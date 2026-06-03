@@ -18,6 +18,7 @@ import {
   submitRecording,
   reprocessRecording,
   reparseRecording,
+  restoreRecording,
 } from './models/recording';
 import { Sdr, listSdrPublic } from './models/sdr';
 import { listSdrPublicLambda } from '../functions/listSdrPublicLambda/resource';
@@ -158,6 +159,9 @@ export const schema = a
 
     // Recording soft-delete — issue #29
     softDeleteRecording,
+
+    // Recording admin restore (row + S3 delete-marker reversal) — issue #478
+    restoreRecording,
 
     // Recording authenticated upload + contentHash uniqueness — issue #284
     submitRecording,

@@ -1,5 +1,6 @@
 import type { AppSyncResolverHandler } from 'aws-lambda';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
+import { S3Client, DeleteObjectCommand, ListObjectVersionsCommand } from '@aws-sdk/client-s3';
 import {
   audit as defaultAudit,
   type AuditContext,
@@ -39,10 +40,13 @@ import {
  * entries gated by a verification step (anti-spam). A Recording
  * delete therefore touches only the Recording row.
  *
- * Deferred (out of scope, tracked separately):
- *   - **S3 hard-delete** of the original / web-canonical / sidecar
- *     keys. Phase 3 / storage lifecycle work — versioning
- *     preserves the 30-day undo window.
+ *   - `restoreRecording` — admin-only. Reverses a soft-delete: clears
+ *     `deletedAt`/`deletedBy` + removes the S3 delete-markers (#478).
+ *
+ * S3 hard-delete (#478): `softDeleteRecording` issues DeleteObject on the
+ * recording's `originalKey` / `webCanonicalKey` / `wordTimestampsKey` /
+ * `peaksJsonKey` after the row update. Bucket versioning turns each into a
+ * recoverable delete-marker; the keys touched land on the audit `after`.
  *
  * Returns the post-mutation Recording row.
  */
@@ -148,12 +152,46 @@ export interface TranscriptQueueMessage {
   enqueuedAt: string;
 }
 
+/**
+ * S3 side-effects for Recording hard-delete / restore (#478). Injected in
+ * tests so the delete/restore wiring is asserted without a live bucket.
+ *
+ * `deleteObject` issues a plain DeleteObject — on a version-enabled bucket
+ * (storage-lifecycle.ts) that writes a delete-marker, so the prior version
+ * stays restorable for the 30-day noncurrent-version window.
+ * `restoreObject` reverses it by deleting the latest delete-marker version
+ * for the key (resolved via ListObjectVersions); a no-op if none exists.
+ */
+export interface RecordingS3 {
+  deleteObject(key: string): Promise<void>;
+  restoreObject(key: string): Promise<void>;
+}
+
 interface Deps {
   dataClient?: RecordingMutationsDataClient;
   audit?: AuditFn;
   now?: () => Date;
   enqueuePreprocess?: EnqueuePreprocessFn;
   enqueueLinguistic?: EnqueueLinguisticFn;
+  s3?: RecordingS3;
+}
+
+/** Recording S3-key columns whose objects are hard-deleted / restored (#478). */
+const RECORDING_KEY_FIELDS = [
+  'originalKey',
+  'webCanonicalKey',
+  'wordTimestampsKey',
+  'peaksJsonKey',
+] as const;
+
+/** Collect the non-empty S3 keys referenced by a Recording row. */
+export function recordingS3Keys(row: RecordingRow): string[] {
+  const keys: string[] = [];
+  for (const field of RECORDING_KEY_FIELDS) {
+    const v = row[field];
+    if (typeof v === 'string' && v.length > 0) keys.push(v);
+  }
+  return keys;
 }
 
 let injected: Deps = {};
@@ -187,6 +225,47 @@ function getSqsClient(): SQSClient {
   if (!cachedSqsClient) cachedSqsClient = new SQSClient({});
   return cachedSqsClient;
 }
+
+let cachedS3Client: S3Client | undefined;
+function getS3Client(): S3Client {
+  if (!cachedS3Client) cachedS3Client = new S3Client({});
+  return cachedS3Client;
+}
+
+function requireMediaBucket(): string {
+  const v = process.env.MEDIA_BUCKET_NAME;
+  if (!v) {
+    throw new Error(
+      'recordingMutations: MEDIA_BUCKET_NAME env var is required for S3 delete/restore',
+    );
+  }
+  return v;
+}
+
+/**
+ * Production {@link RecordingS3}. `deleteObject` relies on bucket
+ * versioning to turn the delete into a recoverable delete-marker;
+ * `restoreObject` finds the latest delete-marker version for the key and
+ * removes it, exposing the prior real version again.
+ */
+const defaultS3: RecordingS3 = {
+  async deleteObject(key) {
+    await getS3Client().send(new DeleteObjectCommand({ Bucket: requireMediaBucket(), Key: key }));
+  },
+  async restoreObject(key) {
+    const bucket = requireMediaBucket();
+    const listed = await getS3Client().send(
+      new ListObjectVersionsCommand({ Bucket: bucket, Prefix: key }),
+    );
+    // ListObjectVersions returns versions for every key sharing the prefix;
+    // match the exact key and take the current delete-marker.
+    const marker = (listed.DeleteMarkers ?? []).find((m) => m.Key === key && m.IsLatest);
+    if (!marker?.VersionId) return; // nothing to restore — not currently delete-marked
+    await getS3Client().send(
+      new DeleteObjectCommand({ Bucket: bucket, Key: key, VersionId: marker.VersionId }),
+    );
+  },
+};
 
 /**
  * Production implementation of {@link EnqueuePreprocessFn}. Reads the
@@ -268,7 +347,7 @@ function snapshot(row: RecordingRow): Record<string, unknown> {
 
 async function dispatchSoftDelete(
   event: Parameters<AppSyncResolverHandler<Record<string, unknown>, RecordingRow | null>>[0],
-  deps: { client: RecordingMutationsDataClient; audit: AuditFn; now: () => Date },
+  deps: { client: RecordingMutationsDataClient; audit: AuditFn; now: () => Date; s3: RecordingS3 },
 ): Promise<RecordingRow | null> {
   if (!isAdmin(event.identity)) {
     throw new Error('softDeleteRecording: caller is not in the admin group');
@@ -310,12 +389,33 @@ async function dispatchSoftDelete(
   }
   const after = updated.data ?? { ...before, ...patch };
 
+  // S3 hard-delete (#478). Best-effort + AFTER the row update: the row is
+  // the audit-of-record, so a failed object delete must not roll back the
+  // soft-delete or surface as a client error. Bucket versioning turns each
+  // DeleteObject into a recoverable delete-marker (30-day window). The keys
+  // actually deleted are recorded on the audit `after` so the trail shows
+  // exactly what was touched; a failed key is logged and omitted.
+  const keys = recordingS3Keys(before);
+  const s3Deleted: string[] = [];
+  for (const key of keys) {
+    try {
+      await deps.s3.deleteObject(key);
+      s3Deleted.push(key);
+    } catch (err) {
+      console.error('softDeleteRecording: S3 DeleteObject failed (row already soft-deleted)', {
+        recordingId: targetId,
+        key,
+        err: String(err),
+      });
+    }
+  }
+
   await deps.audit(auditContextFrom(event), {
     action: 'RECORDING_DELETE',
     targetType: 'Recording',
     targetId,
     before: snapshot(before),
-    after: snapshot(after),
+    after: { ...snapshot(after), s3Deleted },
     reason: normalisedReason,
   });
 
@@ -323,6 +423,83 @@ async function dispatchSoftDelete(
   // recording-less submission flow (see CLAUDE.md → Domain model →
   // Recording) both rely on Messages being independent of their
   // Recording rows.
+
+  return after;
+}
+
+/**
+ * `restoreRecording` — admin-only reversal of `softDeleteRecording` (#478).
+ *
+ * Clears `deletedAt` / `deletedBy` on the row and restores each S3 object
+ * by removing its latest delete-marker (so the prior real version is
+ * exposed again) — only works inside the 30-day noncurrent-version window.
+ * Idempotent on a row that is not deleted. Best-effort on the S3 side: a
+ * failed restore is logged + recorded on the audit, never blocks the row
+ * flip. Writes a `RECORDING_RESTORE` AuditLog entry.
+ */
+async function dispatchRestore(
+  event: Parameters<AppSyncResolverHandler<Record<string, unknown>, RecordingRow | null>>[0],
+  deps: { client: RecordingMutationsDataClient; audit: AuditFn; now: () => Date; s3: RecordingS3 },
+): Promise<RecordingRow | null> {
+  if (!isAdmin(event.identity)) {
+    throw new Error('restoreRecording: caller is not in the admin group');
+  }
+  const actorSub = identitySub(event.identity);
+  if (!actorSub) {
+    throw new Error('restoreRecording: caller has no identity sub');
+  }
+  const targetId =
+    typeof event.arguments.recordingId === 'string' ? event.arguments.recordingId : '';
+  const reason = typeof event.arguments.reason === 'string' ? event.arguments.reason : '';
+  if (!targetId) {
+    throw new Error('restoreRecording: recordingId argument is required');
+  }
+
+  const fetched = await deps.client.models.Recording.get({ id: targetId });
+  const before = fetched.data;
+  if (!before) {
+    throw new Error(`restoreRecording: Recording row not found for id=${targetId}`);
+  }
+  if (!before.deletedAt) {
+    // Already live — nothing to restore.
+    return before;
+  }
+
+  const patch: Partial<RecordingRow> & { id: string } = {
+    id: targetId,
+    deletedAt: null,
+    deletedBy: null,
+  };
+  const updated = await deps.client.models.Recording.update(patch);
+  if (updated.errors) {
+    throw new Error(
+      `restoreRecording: Recording.update returned errors: ${JSON.stringify(updated.errors)}`,
+    );
+  }
+  const after = updated.data ?? { ...before, ...patch };
+
+  const keys = recordingS3Keys(before);
+  const s3Restored: string[] = [];
+  for (const key of keys) {
+    try {
+      await deps.s3.restoreObject(key);
+      s3Restored.push(key);
+    } catch (err) {
+      console.error(
+        'restoreRecording: S3 restore failed (row already un-deleted; object may be past the 30-day window)',
+        { recordingId: targetId, key, err: String(err) },
+      );
+    }
+  }
+
+  await deps.audit(auditContextFrom(event), {
+    action: 'RECORDING_RESTORE',
+    targetType: 'Recording',
+    targetId,
+    before: snapshot(before),
+    after: { ...snapshot(after), s3Restored },
+    reason: reason ? reason : null,
+  });
 
   return after;
 }
@@ -704,7 +881,8 @@ export const handler: AppSyncResolverHandler<Record<string, unknown>, RecordingR
     injected.enqueuePreprocess ?? defaultEnqueuePreprocess;
   const enqueueLinguistic: EnqueueLinguisticFn =
     injected.enqueueLinguistic ?? defaultEnqueueLinguistic;
-  const deps = { client, audit: auditFn, now };
+  const s3: RecordingS3 = injected.s3 ?? defaultS3;
+  const deps = { client, audit: auditFn, now, s3 };
 
   // AppSync's pipeline-function payload puts `fieldName` at the top level
   // (see the VTL template generated by Amplify Gen 2 for Lambda data sources).
@@ -721,6 +899,8 @@ export const handler: AppSyncResolverHandler<Record<string, unknown>, RecordingR
       return dispatchReprocess(event, { client, audit: auditFn, now, enqueuePreprocess });
     case 'reparseRecording':
       return dispatchReparse(event, { client, audit: auditFn, now, enqueueLinguistic });
+    case 'restoreRecording':
+      return dispatchRestore(event, deps);
     default:
       throw new Error(`recordingMutations: unsupported fieldName "${field}"`);
   }
