@@ -19,9 +19,19 @@ import { spawn } from 'node:child_process';
  *                   Default in sandbox / dev.
  *   - `'afftdn'`  — ffmpeg `afftdn=nr=<nrDb>:nf=<nfDb>` filter.
  *                   Default in prod.
- *   - `'rnnoise'` — throws `RnnoiseNotImplemented` until the
- *                   RNNoise WASM layer ships behind a feature
- *                   flag. Tracker: deferred follow-up.
+ *   - `'rnnoise'` — ffmpeg `arnndn=m=<model>` filter (RNNoise, #476).
+ *                   The standard neural denoiser for HF voice;
+ *                   typically beats afftdn on narrowband AM/USB
+ *                   captures with persistent carrier noise. Uses
+ *                   ffmpeg's native `arnndn` filter (the preprocess
+ *                   stage is already ffmpeg-based — no WASM/resampling
+ *                   glue) against an operator-supplied `.rnnn` model.
+ *                   FAILS CLOSED: if the model path is unset the call
+ *                   throws (no silent fallback to afftdn/off); if the
+ *                   ffmpeg build lacks `arnndn` the non-zero exit
+ *                   surfaces as a `DenoiseError`. WER vs afftdn +
+ *                   cold-start delta are validated by the operator on
+ *                   real HF traffic post-deploy.
  *
  * Tunables (env, validated):
  *   - `NOISE_REDUCTION_NR_DB` — afftdn `nr` (noise reduction
@@ -29,6 +39,9 @@ import { spawn } from 'node:child_process';
  *   - `NOISE_REDUCTION_NF_DB` — afftdn `nf` (noise floor).
  *     Default `-25`. Below the gate, denoising aggression
  *     ramps up. Range `-80` – `-20`.
+ *   - `NOISE_REDUCTION_RNNOISE_MODEL` — absolute path to the
+ *     `.rnnn` RNNoise model ffmpeg's `arnndn` loads. Required
+ *     when mode is `rnnoise`; no default (fail closed).
  *
  * Pure JS. Injectable `spawnFn` + `copyFileFn` test seams so
  * vitest never shells out / touches the real filesystem.
@@ -54,6 +67,8 @@ export interface DenoiseOpts {
   mode?: NoiseReductionMode;
   nrDb?: number;
   nfDb?: number;
+  /** Path to the `.rnnn` model for `arnndn`. Required when mode is `rnnoise`. */
+  rnnoiseModelPath?: string | null;
   ffmpegBinary?: string;
   spawnFn?: typeof spawn;
   copyFileFn?: typeof copyFile;
@@ -79,10 +94,17 @@ export class DenoiseError extends Error {
   }
 }
 
-export class RnnoiseNotImplemented extends Error {
+/**
+ * Thrown when `rnnoise` mode is selected but no model path is
+ * configured. Fail-closed marker (no silent fallback to afftdn/off)
+ * per the #476 acceptance criteria.
+ */
+export class RnnoiseModelMissing extends Error {
   constructor() {
-    super('denoise: NOISE_REDUCTION_MODE=rnnoise selected but RNNoise WASM layer not yet shipped');
-    this.name = 'RnnoiseNotImplemented';
+    super(
+      'denoise: NOISE_REDUCTION_MODE=rnnoise requires NOISE_REDUCTION_RNNOISE_MODEL (path to a .rnnn model); refusing to denoise (fail closed)',
+    );
+    this.name = 'RnnoiseModelMissing';
   }
 }
 
@@ -99,6 +121,7 @@ export function readDenoiseConfig(env: Record<string, string | undefined> = proc
   mode: NoiseReductionMode;
   nrDb: number;
   nfDb: number;
+  rnnoiseModelPath: string | null;
 } {
   const rawMode = env.NOISE_REDUCTION_MODE;
   let mode: NoiseReductionMode = DEFAULT_NOISE_REDUCTION_MODE;
@@ -120,6 +143,7 @@ export function readDenoiseConfig(env: Record<string, string | undefined> = proc
       minValue: -80,
       maxValue: -20,
     }),
+    rnnoiseModelPath: env.NOISE_REDUCTION_RNNOISE_MODEL || null,
   };
 }
 
@@ -167,16 +191,28 @@ export function buildAfftdnFilter(nrDb: number, nfDb: number): string {
 }
 
 /**
+ * Builds the ffmpeg `-af arnndn=m=<model>` filter expression for
+ * RNNoise (#476). The model path is operator-supplied; ffmpeg loads
+ * the `.rnnn` weights and applies the network. Exposed for tests.
+ */
+export function buildArnndnFilter(modelPath: string): string {
+  return `arnndn=m=${modelPath}`;
+}
+
+/**
  * Runs the configured denoise mode against `inputPath`,
  * producing `outputPath`. Resolves with the mode used + nr/nf
  * applied (null for `off` mode) + captured stderr tail.
  *
  * Mode dispatch:
  *   - `off`     → `copyFile(input, output)`. No shell-out.
- *   - `afftdn`  → ffmpeg with the symmetric `-y -loglevel error
- *                 -i input -af afftdn=... output` invocation.
- *                 Same UTF-8-safe stderr capture as #49/#50.
- *   - `rnnoise` → throws `RnnoiseNotImplemented`.
+ *   - `afftdn`  → ffmpeg `-af afftdn=...` (symmetric `-y -loglevel
+ *                 error -i input -af ... output` invocation; same
+ *                 UTF-8-safe stderr capture as #49/#50).
+ *   - `rnnoise` → ffmpeg `-af arnndn=m=<model>` (#476). Throws
+ *                 `RnnoiseModelMissing` if no model path is set
+ *                 (fail closed); a build without `arnndn` surfaces
+ *                 as a `DenoiseError` on the non-zero exit.
  *
  * Throws `DenoiseError` on ffmpeg non-zero exit / spawn failure.
  */
@@ -210,15 +246,28 @@ export async function denoise(opts: DenoiseOpts): Promise<DenoiseResult> {
     };
   }
 
-  if (mode === 'rnnoise') {
-    throw new RnnoiseNotImplemented();
-  }
-
-  const nrDb = opts.nrDb ?? DEFAULT_NR_DB;
-  const nfDb = opts.nfDb ?? DEFAULT_NF_DB;
   const ffmpegBinary = opts.ffmpegBinary ?? DEFAULT_FFMPEG_BINARY;
   const spawnFn = opts.spawnFn ?? spawn;
-  const filter = buildAfftdnFilter(nrDb, nfDb);
+
+  // Build the per-mode ffmpeg `-af` filter + the nr/nf reported on the
+  // result. afftdn carries nr/nf; rnnoise (arnndn) carries neither (null).
+  let filter: string;
+  let resultNrDb: number | null;
+  let resultNfDb: number | null;
+  if (mode === 'rnnoise') {
+    const modelPath = opts.rnnoiseModelPath;
+    if (typeof modelPath !== 'string' || modelPath.length === 0) {
+      // Fail closed — never silently downgrade to afftdn/off (#476).
+      throw new RnnoiseModelMissing();
+    }
+    filter = buildArnndnFilter(modelPath);
+    resultNrDb = null;
+    resultNfDb = null;
+  } else {
+    resultNrDb = opts.nrDb ?? DEFAULT_NR_DB;
+    resultNfDb = opts.nfDb ?? DEFAULT_NF_DB;
+    filter = buildAfftdnFilter(resultNrDb, resultNfDb);
+  }
 
   const args = ['-y', '-loglevel', 'error', '-i', opts.inputPath, '-af', filter, opts.outputPath];
 
@@ -262,9 +311,9 @@ export async function denoise(opts: DenoiseOpts): Promise<DenoiseResult> {
         resolve({
           inputPath: opts.inputPath,
           outputPath: opts.outputPath,
-          mode: 'afftdn',
-          nrDb,
-          nfDb,
+          mode,
+          nrDb: resultNrDb,
+          nfDb: resultNfDb,
           stderrTail: decode(),
         });
         return;

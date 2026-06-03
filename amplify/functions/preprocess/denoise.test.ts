@@ -7,8 +7,9 @@ import {
   DEFAULT_NR_DB,
   DenoiseError,
   NOISE_REDUCTION_MODES,
-  RnnoiseNotImplemented,
+  RnnoiseModelMissing,
   buildAfftdnFilter,
+  buildArnndnFilter,
   denoise,
   isNoiseReductionMode,
   readDenoiseConfig,
@@ -59,12 +60,19 @@ describe('buildAfftdnFilter', () => {
   });
 });
 
+describe('buildArnndnFilter', () => {
+  it('produces the arnndn filter expression with the model path', () => {
+    expect(buildArnndnFilter('/opt/models/sh.rnnn')).toBe('arnndn=m=/opt/models/sh.rnnn');
+  });
+});
+
 describe('readDenoiseConfig', () => {
   it('returns built-in defaults when env is unset', () => {
     expect(readDenoiseConfig({})).toEqual({
       mode: DEFAULT_NOISE_REDUCTION_MODE,
       nrDb: DEFAULT_NR_DB,
       nfDb: DEFAULT_NF_DB,
+      rnnoiseModelPath: null,
     });
   });
 
@@ -75,7 +83,16 @@ describe('readDenoiseConfig', () => {
         NOISE_REDUCTION_NR_DB: '20',
         NOISE_REDUCTION_NF_DB: '-35',
       }),
-    ).toEqual({ mode: 'off', nrDb: 20, nfDb: -35 });
+    ).toEqual({ mode: 'off', nrDb: 20, nfDb: -35, rnnoiseModelPath: null });
+  });
+
+  it('reads the rnnoise model path from env', () => {
+    expect(
+      readDenoiseConfig({
+        NOISE_REDUCTION_MODE: 'rnnoise',
+        NOISE_REDUCTION_RNNOISE_MODEL: '/opt/models/sh.rnnn',
+      }),
+    ).toMatchObject({ mode: 'rnnoise', rnnoiseModelPath: '/opt/models/sh.rnnn' });
   });
 
   it('falls back to default mode + warns on unknown mode value', () => {
@@ -153,11 +170,68 @@ describe('denoise — mode=off', () => {
   });
 });
 
-describe('denoise — mode=rnnoise', () => {
-  it('throws RnnoiseNotImplemented (deferred until WASM layer ships)', async () => {
+describe('denoise — mode=rnnoise (#476)', () => {
+  it('fails closed with RnnoiseModelMissing when no model path is configured', async () => {
+    const spawnFn = vi.fn(() => makeFakeProc());
     await expect(
-      denoise({ inputPath: '/in.wav', outputPath: '/out.wav', mode: 'rnnoise' }),
-    ).rejects.toBeInstanceOf(RnnoiseNotImplemented);
+      denoise({
+        inputPath: '/in.wav',
+        outputPath: '/out.wav',
+        mode: 'rnnoise',
+        spawnFn: spawnFn as unknown as typeof SpawnFn,
+      }),
+    ).rejects.toBeInstanceOf(RnnoiseModelMissing);
+    // Fail closed — must not silently shell out to afftdn/off.
+    expect(spawnFn).not.toHaveBeenCalled();
+  });
+
+  it('invokes ffmpeg with -af arnndn=m=<model> when a model path is set', async () => {
+    let recordedArgs: readonly string[] = [];
+    const fakeProc = makeFakeProc();
+    const spawnFn = vi.fn((_b: string, args: readonly string[]) => {
+      recordedArgs = args;
+      queueMicrotask(() => fakeProc.emit('close', 0));
+      return fakeProc;
+    });
+    const result = await denoise({
+      inputPath: '/in.wav',
+      outputPath: '/out.wav',
+      mode: 'rnnoise',
+      rnnoiseModelPath: '/opt/models/sh.rnnn',
+      spawnFn: spawnFn as unknown as typeof SpawnFn,
+    });
+    expect(recordedArgs).toEqual([
+      '-y',
+      '-loglevel',
+      'error',
+      '-i',
+      '/in.wav',
+      '-af',
+      'arnndn=m=/opt/models/sh.rnnn',
+      '/out.wav',
+    ]);
+    // arnndn carries no nr/nf tunables.
+    expect(result).toMatchObject({ mode: 'rnnoise', nrDb: null, nfDb: null });
+  });
+
+  it('fails closed with a DenoiseError when the ffmpeg build lacks arnndn (non-zero exit)', async () => {
+    const fakeProc = makeFakeProc();
+    const spawnFn = vi.fn(() => {
+      queueMicrotask(() => {
+        fakeProc.stderr.emit('data', Buffer.from("No such filter: 'arnndn'\n"));
+        fakeProc.emit('close', 1);
+      });
+      return fakeProc;
+    });
+    await expect(
+      denoise({
+        inputPath: '/in.wav',
+        outputPath: '/out.wav',
+        mode: 'rnnoise',
+        rnnoiseModelPath: '/opt/models/sh.rnnn',
+        spawnFn: spawnFn as unknown as typeof SpawnFn,
+      }),
+    ).rejects.toBeInstanceOf(DenoiseError);
   });
 });
 
