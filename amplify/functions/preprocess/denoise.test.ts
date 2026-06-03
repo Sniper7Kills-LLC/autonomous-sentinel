@@ -8,6 +8,7 @@ import {
   DenoiseError,
   NOISE_REDUCTION_MODES,
   RnnoiseModelMissing,
+  RnnoiseModelPathUnsafe,
   buildAfftdnFilter,
   buildArnndnFilter,
   denoise,
@@ -63,6 +64,12 @@ describe('buildAfftdnFilter', () => {
 describe('buildArnndnFilter', () => {
   it('produces the arnndn filter expression with the model path', () => {
     expect(buildArnndnFilter('/opt/models/sh.rnnn')).toBe('arnndn=m=/opt/models/sh.rnnn');
+  });
+
+  it('throws on a model path with filtergraph-special characters', () => {
+    expect(() => buildArnndnFilter('/opt/my models/sh.rnnn')).toThrow(RnnoiseModelPathUnsafe);
+    expect(() => buildArnndnFilter('/opt/a:b.rnnn')).toThrow(RnnoiseModelPathUnsafe);
+    expect(() => buildArnndnFilter('/opt/a,b.rnnn')).toThrow(RnnoiseModelPathUnsafe);
   });
 });
 
@@ -182,6 +189,20 @@ describe('denoise — mode=rnnoise (#476)', () => {
       }),
     ).rejects.toBeInstanceOf(RnnoiseModelMissing);
     // Fail closed — must not silently shell out to afftdn/off.
+    expect(spawnFn).not.toHaveBeenCalled();
+  });
+
+  it('fails closed (no spawn) on a model path with filtergraph-special chars', async () => {
+    const spawnFn = vi.fn(() => makeFakeProc());
+    await expect(
+      denoise({
+        inputPath: '/in.wav',
+        outputPath: '/out.wav',
+        mode: 'rnnoise',
+        rnnoiseModelPath: '/opt/my models/sh.rnnn',
+        spawnFn: spawnFn as unknown as typeof SpawnFn,
+      }),
+    ).rejects.toBeInstanceOf(RnnoiseModelPathUnsafe);
     expect(spawnFn).not.toHaveBeenCalled();
   });
 

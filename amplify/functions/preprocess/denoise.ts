@@ -191,11 +191,36 @@ export function buildAfftdnFilter(nrDb: number, nfDb: number): string {
 }
 
 /**
+ * Characters that have meaning inside an ffmpeg filtergraph (option
+ * `:`/`=`, filter `,`, chain `;`, link `[]`, quoting `'`/`"`/`\`,
+ * whitespace). A model path containing any of these would break
+ * ffmpeg's filter parser even though the argv itself is shell-safe
+ * (we spawn with an args array, not a shell). RNNoise model paths are
+ * plain filesystem paths (e.g. `/opt/models/sh.rnnn`), so we reject
+ * anything else rather than attempt ffmpeg's two-level escaping.
+ */
+const FILTERGRAPH_UNSAFE = /[\s:,;=[\]'"\\]/;
+
+export class RnnoiseModelPathUnsafe extends Error {
+  constructor(modelPath: string) {
+    super(
+      `denoise: NOISE_REDUCTION_RNNOISE_MODEL contains characters unsafe for an ffmpeg filtergraph (whitespace : , ; = [ ] ' " \\): ${JSON.stringify(modelPath)}`,
+    );
+    this.name = 'RnnoiseModelPathUnsafe';
+  }
+}
+
+/**
  * Builds the ffmpeg `-af arnndn=m=<model>` filter expression for
  * RNNoise (#476). The model path is operator-supplied; ffmpeg loads
- * the `.rnnn` weights and applies the network. Exposed for tests.
+ * the `.rnnn` weights and applies the network. Throws
+ * `RnnoiseModelPathUnsafe` (fail closed) if the path contains
+ * filtergraph-special characters. Exposed for tests.
  */
 export function buildArnndnFilter(modelPath: string): string {
+  if (FILTERGRAPH_UNSAFE.test(modelPath)) {
+    throw new RnnoiseModelPathUnsafe(modelPath);
+  }
   return `arnndn=m=${modelPath}`;
 }
 
