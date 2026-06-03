@@ -1,17 +1,21 @@
 /**
- * Public banned-region landing page, no-ISO fallback (#202).
+ * Public banned-region landing page (#202) — `/blocked?country=<ISO2>`.
  *
- * Entered when a blocked visitor lands on `/blocked` without a country in
- * the path. The country is resolved from the `cloudfront-viewer-country`
- * request header (CloudFront in front of this app injects it); absent →
- * null, which `fetchBlockedContent` resolves to the generic default.
+ * The WAF custom response returns HTTP 403 and redirects a blocked-country
+ * visitor to `/blocked`. This is a static export (`output: 'export'`), so:
+ *   - there is no request runtime to read `cloudfront-viewer-country`, and
+ *   - a dynamic `[iso2]` segment can't be statically served.
+ * So the country (when known) rides as `?country=<ISO2>`, read client-side by
+ * `<BlockedRegionLoader>`; a bare `/blocked` resolves to the generic default.
  *
- * Same as `/blocked/[iso2]`: the WAF custom response already returns HTTP
- * 403 + redirect; this server component renders at 200 with `noindex`.
- * Strict-403 from the page itself is DEFERRED (documented on #202).
+ * This server component stays static and owns the `noindex` metadata (these
+ * ban pages must never be indexed); the client loader sits under a `<Suspense>`
+ * boundary as `useSearchParams()` requires under static export. The page
+ * renders at HTTP 200 — strict-403 from the page itself would need a route
+ * handler and is DEFERRED (documented on #202); the WAF response already 403s.
  */
 import type { Metadata } from 'next';
-import { headers } from 'next/headers';
+import { Suspense } from 'react';
 import { BlockedRegionLoader } from '@/components/blocked/BlockedRegionLoader';
 
 export const metadata: Metadata = {
@@ -19,8 +23,10 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default async function BlockedPage() {
-  const headerList = await headers();
-  const iso2 = headerList.get('cloudfront-viewer-country');
-  return <BlockedRegionLoader iso2={iso2} />;
+export default function BlockedPage() {
+  return (
+    <Suspense fallback={null}>
+      <BlockedRegionLoader />
+    </Suspense>
+  );
 }
