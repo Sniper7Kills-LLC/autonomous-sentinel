@@ -44,6 +44,8 @@ import {
 } from './models/notification-preference';
 import { notificationPreferenceMutations } from '../functions/notificationPreferenceMutations/resource';
 import { BannedRegionPage } from './models/banned-region-page';
+import { BannedCountry } from './models/banned-country';
+import { BannedIp } from './models/banned-ip';
 import { LinguisticConfig } from './models/linguistic-config';
 import { ReputationConfig } from './models/reputation-config';
 import { PlaybackConfig } from './models/playback-config';
@@ -109,6 +111,8 @@ export const schema = a
     LinguisticRule,
     LinguisticPromptTemplate,
     BannedRegionPage,
+    BannedCountry,
+    BannedIp,
 
     // Money + accounts
     Donation,
