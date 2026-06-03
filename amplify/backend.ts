@@ -8,6 +8,7 @@ import {
   StartingPosition,
 } from 'aws-cdk-lib/aws-lambda';
 import { StreamViewType } from 'aws-cdk-lib/aws-dynamodb';
+import { CfnWebACLAssociation } from 'aws-cdk-lib/aws-wafv2';
 import { SqsEventSource, SqsDlq } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { Policy, PolicyStatement, Role } from 'aws-cdk-lib/aws-iam';
 import { Rule, Schedule } from 'aws-cdk-lib/aws-events';
@@ -1469,6 +1470,25 @@ transcribeDispatchFn.addEventSource(
 // [TranscribeAwsStack, data, function] cycle (synth passes, deploy fails).
 const wafStack = backend.createStack('WafStack');
 const waf = attachWaf(wafStack);
+
+// Associate the Web ACL with the Amplify Hosting app (#681). Amplify natively
+// integrates a CLOUDFRONT-scope WAFv2 Web ACL via a `CfnWebACLAssociation`
+// keyed on the APP arn (the AWS "WAF for Amplify via CDK" pattern) — applied by
+// `ampx pipeline-deploy`, so there is no manual console step.
+//
+// Guarded on `AWS_APP_ID` (present only in a real Amplify pipeline build): in
+// `ampx sandbox` the id is unset, so the association is skipped — a sandbox
+// deploy must never associate (and thus hijack) the prod app's Web ACL. Region
+// + account come from the stack tokens; only the app id rides via env (no
+// hardcoded ARN). The Web ACL is referenced from the same stack — no new
+// cross-stack edge, no CFN cycle.
+const amplifyAppId = process.env.AWS_APP_ID;
+if (amplifyAppId) {
+  new CfnWebACLAssociation(wafStack, 'AmplifyWebAclAssociation', {
+    resourceArn: `arn:aws:amplify:${wafStack.region}:${wafStack.account}:apps/${amplifyAppId}`,
+    webAclArn: waf.webAcl.attrArn,
+  });
+}
 
 const wafSyncLambda = backend.wafSync.resources.lambda as LambdaFunction;
 // `Stack.of(wafSyncLambda)` resolves to the data stack (resourceGroupName:'data').
