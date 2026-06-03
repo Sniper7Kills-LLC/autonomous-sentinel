@@ -179,3 +179,16 @@
   color: var(--text-2, #9a9a9a);
   letter-spacing: 0.02em;
 }
+
+/* Captioned field (e.g. the IP-ban expiry datetime input) */
+.field {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.fieldLabel {
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  color: var(--text-2, #9a9a9a);
+}

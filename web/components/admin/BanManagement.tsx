@@ -604,14 +604,17 @@ function IpBansTab() {
           onChange={(e) => setReason(e.target.value)}
           aria-label="Block reason"
         />
-        <input
-          type="datetime-local"
-          className={styles.input}
-          value={expiresAt}
-          onChange={(e) => setExpiresAt(e.target.value)}
-          aria-label="Expiry (optional)"
-          title="Optional expiry (local time, must be in the future) — the ban auto-lifts after this. Leave blank for a permanent ban."
-        />
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>Expires (optional)</span>
+          <input
+            type="datetime-local"
+            className={styles.input}
+            value={expiresAt}
+            onChange={(e) => setExpiresAt(e.target.value)}
+            aria-label="Expiry (optional)"
+            title="Optional expiry (local time, must be in the future) — the ban auto-lifts after this. Leave blank for a permanent ban."
+          />
+        </label>
         <ScopeRadio name="ip-scope" value={scope} onChange={setScope} disabled={busy} />
         <Button type="submit" variant="danger" size="sm" disabled={busy || !cidrValid}>
           Block

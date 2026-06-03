@@ -167,6 +167,13 @@ describe('BanManagement (#112)', () => {
     );
   });
 
+  it('shows a visible "Expires" label on the IP tab', async () => {
+    render(<BanManagement />);
+    fireEvent.click(screen.getByRole('tab', { name: 'IP CIDR' }));
+    await waitFor(() => expect(listIpMock).toHaveBeenCalled());
+    expect(screen.getByText(/expires \(optional\)/i)).toBeInTheDocument();
+  });
+
   it('rejects an expiry in the past (would be a silent no-op ban)', async () => {
     render(<BanManagement />);
     fireEvent.click(screen.getByRole('tab', { name: 'IP CIDR' }));
