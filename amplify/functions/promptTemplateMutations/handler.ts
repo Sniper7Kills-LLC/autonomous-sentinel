@@ -137,12 +137,18 @@ const defaultStore: PromptTemplateStore = {
 
   async activate(targetId, priorActiveIds, now) {
     const tableName = requireTableName();
+    // Alias the attribute names through ExpressionAttributeNames. DynamoDB
+    // matches reserved words on the whole attribute name (so `isActive` /
+    // `updatedAt` are not strictly reserved), but aliasing is the standard
+    // safe form for raw UpdateExpressions and removes any doubt.
+    const names = { '#isActive': 'isActive', '#updatedAt': 'updatedAt' };
     const transactItems = [
       {
         Update: {
           TableName: tableName,
           Key: marshall({ id: targetId }),
-          UpdateExpression: 'SET isActive = :t, updatedAt = :u',
+          UpdateExpression: 'SET #isActive = :t, #updatedAt = :u',
+          ExpressionAttributeNames: names,
           ExpressionAttributeValues: marshall({ ':t': true, ':u': now }),
           // Guard against activating a row that was deleted between the
           // read and the transaction.
@@ -153,7 +159,8 @@ const defaultStore: PromptTemplateStore = {
         Update: {
           TableName: tableName,
           Key: marshall({ id: pid }),
-          UpdateExpression: 'SET isActive = :f, updatedAt = :u',
+          UpdateExpression: 'SET #isActive = :f, #updatedAt = :u',
+          ExpressionAttributeNames: names,
           ExpressionAttributeValues: marshall({ ':f': false, ':u': now }),
         },
       })),
