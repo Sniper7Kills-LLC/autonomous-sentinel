@@ -536,19 +536,67 @@ function buildBedrockContext(result: ClassifyResult, summaries: RuleSummary[]): 
 }
 
 /**
+ * Identity of a rule for dedup purposes (#575): a rule is "the same" as
+ * another when its component, appliesToType, and (whitespace-trimmed)
+ * pattern all match. messageType is intentionally excluded — the bug is
+ * exact-duplicate accumulation of the same matcher, and a TYPE rule's
+ * pattern + a field rule's (component, appliesToType) already pin the
+ * classification context. The pattern is a regex, so only outer
+ * whitespace is trimmed; case + internal spacing are significant.
+ */
+export function ruleDedupKey(
+  component: string,
+  appliesToType: string | null | undefined,
+  pattern: string,
+): string {
+  return `${component} ${appliesToType ?? ''} ${pattern.trim()}`;
+}
+
+/**
+ * Drop proposed rules that duplicate an already-active rule (#575). The
+ * AI re-proposes matchers it has emitted before; without this guard the
+ * LinguisticRule table accumulates identical rows on every fallback.
+ * Dedups against the supplied existing ruleset AND within the batch
+ * itself (the model can emit the same rule twice in one response).
+ */
+export function filterNewProposedRules(
+  proposed: ProposedRule[],
+  existing: readonly { component: string; appliesToType: string | null; pattern: string }[],
+): ProposedRule[] {
+  const seen = new Set(existing.map((e) => ruleDedupKey(e.component, e.appliesToType, e.pattern)));
+  const out: ProposedRule[] = [];
+  for (const r of proposed) {
+    const key = ruleDedupKey(r.component, r.appliesToType, r.pattern);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(r);
+  }
+  return out;
+}
+
+/**
  * Persist the model's proposed per-component rules (#544). Hybrid
  * activation: rules at/above the auto-activate bar go live; the rest
  * land disabled for the admin review queue. captureMap is stringified
  * for the AWSJSON column. Returns the count written.
+ *
+ * Skips rules that duplicate an already-active rule in `existing` (#575)
+ * so the ruleset stops accumulating identical rows.
  */
 async function writeProposedRules(
   client: LinguisticDataClient,
   rules: ProposedRule[],
   fallbackType: string,
   promptVersion: number,
+  existing: readonly RuleSummary[],
 ): Promise<number> {
+  const fresh = filterNewProposedRules(rules, existing);
+  const skipped = rules.length - fresh.length;
+  if (skipped > 0) {
+    console.info('linguistic: skipped duplicate AI-proposed rules (#575)', { skipped });
+  }
   let written = 0;
-  for (const r of rules) {
+  for (const r of fresh) {
     const confidence = typeof r.confidence === 'number' ? r.confidence : AI_RULE_DEFAULT_CONFIDENCE;
     try {
       const res = await client.models.LinguisticRule.create({
@@ -1343,7 +1391,13 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
       // rules on an SQS redrive.
       const alreadyTried = existingAttempts.some((a) => a.provider === BEDROCK_PROVIDER);
       if (fb.rules.length > 0 && !alreadyTried) {
-        const n = await writeProposedRules(client, fb.rules, result.type, bedrockVersion);
+        const n = await writeProposedRules(
+          client,
+          fb.rules,
+          result.type,
+          bedrockVersion,
+          summaries,
+        );
         if (n > 0) {
           console.info('linguistic: wrote AI-proposed rules', {
             recordingId: msg.recordingId,

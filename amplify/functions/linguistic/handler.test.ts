@@ -5,6 +5,8 @@ import {
   handler,
   classify,
   parseMessage,
+  filterNewProposedRules,
+  ruleDedupKey,
   __setDeps,
   __resetDeps,
   type LinguisticDataClient,
@@ -1644,6 +1646,55 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
     expect(ctx).toContain('SKYKING'); // the active rule is listed for refinement
   });
 
+  it('skips persisting AI-proposed rules that duplicate an active rule (#575)', async () => {
+    // The active ruleset already contains the TYPE rule the model
+    // re-proposes; only the genuinely-new SENDER rule should be written.
+    const engineWithRules: RulesMatcher = {
+      tryMatch: () => Promise.resolve(null),
+      snapshot: () =>
+        Promise.resolve([
+          {
+            id: 'r1',
+            component: 'TYPE' as const,
+            messageType: 'SKYKING',
+            appliesToType: null,
+            pattern: 'SKYKING',
+            confidence: 0.95,
+          },
+        ]),
+    };
+    const { client, ruleCreateSpy } = makeDataStub();
+    const rules: ProposedRule[] = [
+      // duplicate of the active rule (trailing whitespace must not defeat dedup)
+      { component: 'TYPE', messageType: 'SKYKING', pattern: 'SKYKING  ', confidence: 0.95 },
+      {
+        component: 'SENDER',
+        appliesToType: 'SKYKING',
+        pattern: 'THIS IS (?<sender>\\w+)',
+        confidence: 0.6,
+      },
+    ];
+    const bedrockFallback = vi.fn().mockResolvedValue({ ...fbSuccess, rules });
+    __setDeps({
+      dataClient: client,
+      rulesEngine: engineWithRules,
+      bedrockFallback,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'm',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-dedup',
+        transcript: 'zzz noise',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(ruleCreateSpy).toHaveBeenCalledTimes(1);
+    expect((ruleCreateSpy.mock.calls[0]![0] as { component: string }).component).toBe('SENDER');
+  });
+
   it('does NOT invoke Bedrock when a rule captured the fields', async () => {
     // The inverse of #552: a field-bearing rule match is trusted and the
     // AI is skipped.
@@ -2441,5 +2492,38 @@ describe('linguistic — low-confidence Amazon Transcribe escalation (#588)', ()
     );
     expect(stub.updateSpy.mock.calls[0]?.[0]).not.toHaveProperty('escalatedAt');
     errSpy.mockRestore();
+  });
+});
+
+describe('rule dedup helpers (#575)', () => {
+  it('ruleDedupKey ignores messageType and trims the pattern', () => {
+    expect(ruleDedupKey('RECEIVER', 'ALLSTATIONS', '(?<receiver>all stations)  ')).toBe(
+      ruleDedupKey('RECEIVER', 'ALLSTATIONS', '(?<receiver>all stations)'),
+    );
+  });
+
+  it('distinguishes by component and appliesToType', () => {
+    expect(ruleDedupKey('SENDER', 'SKYKING', 'x')).not.toBe(
+      ruleDedupKey('RECEIVER', 'SKYKING', 'x'),
+    );
+    expect(ruleDedupKey('SENDER', 'SKYKING', 'x')).not.toBe(ruleDedupKey('SENDER', null, 'x'));
+  });
+
+  it('filterNewProposedRules drops rules matching the existing ruleset', () => {
+    const existing = [{ component: 'TYPE', appliesToType: null, pattern: 'SKYKING' }];
+    const proposed: ProposedRule[] = [
+      { component: 'TYPE', pattern: 'SKYKING', confidence: 0.9 },
+      { component: 'RECEIVER', appliesToType: 'SKYKING', pattern: 'all stations', confidence: 0.8 },
+    ];
+    const out = filterNewProposedRules(proposed, existing);
+    expect(out.map((r) => r.component)).toEqual(['RECEIVER']);
+  });
+
+  it('filterNewProposedRules dedups within the batch itself', () => {
+    const proposed: ProposedRule[] = [
+      { component: 'TYPE', pattern: 'SKYKING', confidence: 0.9 },
+      { component: 'TYPE', pattern: 'SKYKING', confidence: 0.7 },
+    ];
+    expect(filterNewProposedRules(proposed, [])).toHaveLength(1);
   });
 });
