@@ -47,6 +47,12 @@ describe('wafSync reconcile-webacl (#199/#201)', () => {
     });
   });
 
+  it('read geo rule uses a plain 403 when bannedRegionBodyKey is null (AppSync ACL)', () => {
+    const rule = buildGeoReadRule(['KP'], { ...cfg, bannedRegionBodyKey: null });
+    expect(rule.Action).toEqual({ Block: {} });
+    expect(rule.Statement).toEqual({ GeoMatchStatement: { CountryCodes: ['KP'] } });
+  });
+
   it('extractGeoCodes reads codes back out, null when the rule is absent', () => {
     const rules = [managed, buildGeoWriteRule(['RU'], cfg)];
     expect(extractGeoCodes(rules, 'CountryBlockWrite')).toEqual(['RU']);

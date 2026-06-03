@@ -1,13 +1,20 @@
 import { describe, it, expect } from 'vitest';
 import { App, Stack } from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
-import { attachWaf, WAF_RESOURCE_NAMES } from './waf';
+import { attachWaf, attachAppSyncWaf, WAF_RESOURCE_NAMES } from './waf';
 
 function synth(): { template: Template; webAclArn: string } {
   const app = new App();
   const stack = new Stack(app, 'TestWafStack');
   const { webAcl } = attachWaf(stack);
   return { template: Template.fromStack(stack), webAclArn: webAcl.attrArn };
+}
+
+function synthAppSync(): Template {
+  const app = new App();
+  const stack = new Stack(app, 'TestAppSyncWafStack');
+  attachAppSyncWaf(stack);
+  return Template.fromStack(stack);
 }
 
 describe('attachWaf (#198/#199/#200/#201/#202)', () => {
@@ -102,5 +109,47 @@ describe('attachWaf (#198/#199/#200/#201/#202)', () => {
       AutoPublish: true,
       FunctionConfig: Match.objectLike({ Runtime: 'cloudfront-js-2.0' }),
     });
+  });
+});
+
+describe('attachAppSyncWaf (#687)', () => {
+  it('creates a REGIONAL Web ACL that defaults to allow', () => {
+    const t = synthAppSync();
+    t.hasResourceProperties('AWS::WAFv2::WebACL', {
+      Scope: 'REGIONAL',
+      DefaultAction: { Allow: {} },
+    });
+  });
+
+  it('provisions two REGIONAL read IPSets (v4 + v6), no others', () => {
+    const t = synthAppSync();
+    t.resourceCountIs('AWS::WAFv2::IPSet', 2);
+    t.resourcePropertiesCountIs(
+      'AWS::WAFv2::IPSet',
+      { Scope: 'REGIONAL', IPAddressVersion: 'IPV4' },
+      1,
+    );
+    t.resourcePropertiesCountIs(
+      'AWS::WAFv2::IPSet',
+      { Scope: 'REGIONAL', IPAddressVersion: 'IPV6' },
+      1,
+    );
+  });
+
+  it('has a plain-block IP rule and NO managed rule groups (cost)', () => {
+    const t = synthAppSync();
+    t.hasResourceProperties('AWS::WAFv2::WebACL', {
+      Rules: Match.arrayWith([
+        Match.objectLike({ Name: 'IpBlockRegionalRead', Action: { Block: {} } }),
+      ]),
+    });
+    // no managed rule groups on the AppSync ACL
+    const acls = t.findResources('AWS::WAFv2::WebACL');
+    const rules = (
+      Object.values(acls)[0] as { Properties: { Rules: { Statement?: Record<string, unknown> }[] } }
+    ).Properties.Rules;
+    expect(rules.some((r) => r.Statement && 'ManagedRuleGroupStatement' in r.Statement)).toBe(
+      false,
+    );
   });
 });

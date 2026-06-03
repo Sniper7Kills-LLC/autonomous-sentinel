@@ -52,7 +52,7 @@ import { dlqAdmin } from './functions/dlqAdmin/resource';
 import { stripeRevenueWorker } from './functions/stripeRevenueWorker/resource';
 import { wafSync } from './functions/wafSync/resource';
 import { wafMetrics } from './functions/wafMetrics/resource';
-import { attachWaf, WAF_RESOURCE_NAMES } from './waf';
+import { attachWaf, attachAppSyncWaf, WAF_RESOURCE_NAMES, APPSYNC_WAF_NAMES } from './waf';
 import { attachBudgetAlarms, attachBudgetThrottleAction, readBudgetConfig } from './budgets';
 import { applyCognitoTokenValidity } from './cognito-token-validity';
 import { attachStorageLifecycle, readStorageLifecycleConfig } from './storage-lifecycle';
@@ -1490,6 +1490,21 @@ if (amplifyAppId) {
   });
 }
 
+// REGIONAL WAF read-block on the AppSync data API (#687). The CLOUDFRONT Web
+// ACL above protects the website edge only; AppSync is a separate regional
+// endpoint, so a read-block needs its own regional Web ACL. wafSync reconciles
+// its read IPSets + geo-read rule from the same read_write ban rows.
+const appSyncWaf = attachAppSyncWaf(wafStack);
+// The association is created in the DATA stack (where the AppSync API lives):
+// it imports the regional Web ACL ARN from WafStack (data → WafStack, the same
+// one-way direction wafSync already uses) and the API ARN intra-stack — so
+// there is NO WafStack → data edge and no CFN cycle.
+const graphqlApi = backend.data.resources.cfnResources.cfnGraphqlApi;
+new CfnWebACLAssociation(Stack.of(graphqlApi), 'AppSyncWebAclAssociation', {
+  resourceArn: graphqlApi.attrArn,
+  webAclArn: appSyncWaf.webAcl.attrArn,
+});
+
 const wafSyncLambda = backend.wafSync.resources.lambda as LambdaFunction;
 // `Stack.of(wafSyncLambda)` resolves to the data stack (resourceGroupName:'data').
 const wafSyncStack = Stack.of(wafSyncLambda);
@@ -1512,7 +1527,16 @@ wafSyncLambda.addEnvironment('GEO_WRITE_PRIORITY', String(WAF_RESOURCE_NAMES.geo
 wafSyncLambda.addEnvironment('GEO_READ_PRIORITY', String(WAF_RESOURCE_NAMES.geoReadPriority));
 wafSyncLambda.addEnvironment('BANNED_REGION_BODY_KEY', WAF_RESOURCE_NAMES.bannedRegionBodyKey);
 
-// wafv2 Get*/Update* on exactly the ACL + four IPSets (resource-scoped).
+// AppSync REGIONAL ACL + read IPSets (#687). Presence of APPSYNC_WEB_ACL_ID /
+// APPSYNC_IPSET_V4_READ_ID switches on the regional reconcile in wafSync.
+wafSyncLambda.addEnvironment('APPSYNC_WEB_ACL_ID', appSyncWaf.webAcl.attrId);
+wafSyncLambda.addEnvironment('APPSYNC_WEB_ACL_NAME', APPSYNC_WAF_NAMES.webAcl);
+wafSyncLambda.addEnvironment('APPSYNC_IPSET_V4_READ_ID', appSyncWaf.ipSets.v4Read.attrId);
+wafSyncLambda.addEnvironment('APPSYNC_IPSET_V4_READ_NAME', APPSYNC_WAF_NAMES.ipSets.v4Read);
+wafSyncLambda.addEnvironment('APPSYNC_IPSET_V6_READ_ID', appSyncWaf.ipSets.v6Read.attrId);
+wafSyncLambda.addEnvironment('APPSYNC_IPSET_V6_READ_NAME', APPSYNC_WAF_NAMES.ipSets.v6Read);
+
+// wafv2 Get*/Update* on exactly the two ACLs + their IPSets (resource-scoped).
 wafSyncLambda.addToRolePolicy(
   new PolicyStatement({
     actions: ['wafv2:GetWebACL', 'wafv2:UpdateWebACL', 'wafv2:GetIPSet', 'wafv2:UpdateIPSet'],
@@ -1522,6 +1546,9 @@ wafSyncLambda.addToRolePolicy(
       waf.ipSets.v4Read.attrArn,
       waf.ipSets.v6Write.attrArn,
       waf.ipSets.v6Read.attrArn,
+      appSyncWaf.webAcl.attrArn,
+      appSyncWaf.ipSets.v4Read.attrArn,
+      appSyncWaf.ipSets.v6Read.attrArn,
     ],
   }),
 );
@@ -1606,6 +1633,8 @@ backend.addOutput({
   custom: {
     wafWebAclArn: waf.webAcl.attrArn,
     wafWebAclName: WAF_RESOURCE_NAMES.webAcl,
+    // REGIONAL WAF on the AppSync data API (#687) — associated in code.
+    appSyncWebAclArn: appSyncWaf.webAcl.attrArn,
     // Viewer-request CF function (#679) — associate with the Amplify-Hosting
     // distribution's default behavior (operational step, see amplify/README.md).
     blockedGeoRewriteFunctionArn: waf.blockedGeoRewrite.attrFunctionArn,
