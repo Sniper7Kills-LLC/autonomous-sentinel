@@ -19,6 +19,33 @@ vi.mock('@/lib/admin/bans', async (importActual) => {
   };
 });
 
+const listCountryMock = vi.fn<() => Promise<unknown[]>>();
+const addCountryMock = vi.fn<(i: unknown) => Promise<void>>();
+const removeCountryMock = vi.fn<(i: string) => Promise<void>>();
+const listIpMock = vi.fn<() => Promise<unknown[]>>();
+const addIpMock = vi.fn<(i: unknown) => Promise<void>>();
+const removeIpMock = vi.fn<(c: string) => Promise<void>>();
+
+vi.mock('@/lib/admin/waf-bans', async (importActual) => {
+  const actual = await importActual<Record<string, unknown>>();
+  return {
+    ...actual, // keep the real isValidCidr / cidrVersion
+    listCountryBans: () => listCountryMock(),
+    addCountryBan: (i: unknown) => addCountryMock(i),
+    removeCountryBan: (i: string) => removeCountryMock(i),
+    listIpBans: () => listIpMock(),
+    addIpBan: (i: unknown) => addIpMock(i),
+    removeIpBan: (c: string) => removeIpMock(c),
+    fetchWafMetrics: () => Promise.resolve(null), // banner degrades to nothing
+  };
+});
+
+// The Region-pages tab renders the real BannedRegionEditor, which has its own
+// data layer; stub it so these tests stay scoped to ban management.
+vi.mock('@/components/admin/BannedRegionEditor', () => ({
+  BannedRegionEditor: () => <div data-testid="region-editor-stub" />,
+}));
+
 function row(p: Partial<BannedUser>): BannedUser {
   return {
     cognitoSub: 'sub-1',
@@ -36,6 +63,12 @@ beforeEach(() => {
   findMock.mockReset().mockResolvedValue('sub-2');
   banMock.mockReset().mockResolvedValue();
   unbanMock.mockReset().mockResolvedValue();
+  listCountryMock.mockReset().mockResolvedValue([]);
+  addCountryMock.mockReset().mockResolvedValue();
+  removeCountryMock.mockReset().mockResolvedValue();
+  listIpMock.mockReset().mockResolvedValue([]);
+  addIpMock.mockReset().mockResolvedValue();
+  removeIpMock.mockReset().mockResolvedValue();
   vi.spyOn(window, 'confirm').mockReturnValue(true);
 });
 
@@ -81,11 +114,62 @@ describe('BanManagement (#112)', () => {
     await waitFor(() => expect(screen.queryByText('bad@actor.test')).not.toBeInTheDocument());
   });
 
-  it('shows a WAF-deferred note on the IP + Country tabs', () => {
+  it('adds a country ban (uppercased ISO + scope) from the Country tab', async () => {
+    render(<BanManagement />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Country' }));
+    await waitFor(() => expect(listCountryMock).toHaveBeenCalled());
+    fireEvent.change(screen.getByLabelText('ISO country code to block'), {
+      target: { value: 'ru' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^block$/i }));
+    await waitFor(() =>
+      expect(addCountryMock).toHaveBeenCalledWith(
+        expect.objectContaining({ iso2: 'RU', scope: 'write' }),
+      ),
+    );
+  });
+
+  it('rejects an invalid country code without calling the mutation', async () => {
+    render(<BanManagement />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Country' }));
+    await waitFor(() => expect(listCountryMock).toHaveBeenCalled());
+    fireEvent.change(screen.getByLabelText('ISO country code to block'), {
+      target: { value: 'X' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^block$/i }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/2-letter ISO/i);
+    expect(addCountryMock).not.toHaveBeenCalled();
+  });
+
+  it('blocks an invalid CIDR on the IP tab and disables submit', async () => {
     render(<BanManagement />);
     fireEvent.click(screen.getByRole('tab', { name: 'IP CIDR' }));
-    expect(screen.getByText(/arrive with the AWS WAF/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('tab', { name: 'Country' }));
-    expect(screen.getByText(/arrive with the AWS WAF/i)).toBeInTheDocument();
+    await waitFor(() => expect(listIpMock).toHaveBeenCalled());
+    fireEvent.change(screen.getByLabelText('IP CIDR range to block'), {
+      target: { value: '999.0.0.0/24' },
+    });
+    expect(await screen.findByText(/not a valid ipv4 or ipv6 cidr/i)).toBeInTheDocument();
+    expect(addIpMock).not.toHaveBeenCalled();
+  });
+
+  it('adds a valid CIDR ban from the IP tab', async () => {
+    render(<BanManagement />);
+    fireEvent.click(screen.getByRole('tab', { name: 'IP CIDR' }));
+    await waitFor(() => expect(listIpMock).toHaveBeenCalled());
+    fireEvent.change(screen.getByLabelText('IP CIDR range to block'), {
+      target: { value: '203.0.113.0/24' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^block$/i }));
+    await waitFor(() =>
+      expect(addIpMock).toHaveBeenCalledWith(
+        expect.objectContaining({ cidr: '203.0.113.0/24', scope: 'write' }),
+      ),
+    );
+  });
+
+  it('renders the banned-region editor on the Region pages tab', () => {
+    render(<BanManagement />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Region pages' }));
+    expect(screen.getByTestId('region-editor-stub')).toBeInTheDocument();
   });
 });
