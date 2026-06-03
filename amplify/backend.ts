@@ -1525,7 +1525,8 @@ wafSyncLambda.addEnvironment('GEO_WRITE_RULE_NAME', WAF_RESOURCE_NAMES.geoWriteR
 wafSyncLambda.addEnvironment('GEO_READ_RULE_NAME', WAF_RESOURCE_NAMES.geoReadRule);
 wafSyncLambda.addEnvironment('GEO_WRITE_PRIORITY', String(WAF_RESOURCE_NAMES.geoWritePriority));
 wafSyncLambda.addEnvironment('GEO_READ_PRIORITY', String(WAF_RESOURCE_NAMES.geoReadPriority));
-wafSyncLambda.addEnvironment('BANNED_REGION_BODY_KEY', WAF_RESOURCE_NAMES.bannedRegionBodyKey);
+wafSyncLambda.addEnvironment('BANNED_BODY_KEY', WAF_RESOURCE_NAMES.bannedBodyKey);
+wafSyncLambda.addEnvironment('BLOCKED_REDIRECT_PATH', WAF_RESOURCE_NAMES.blockedRedirectPath);
 
 // AppSync REGIONAL ACL + read IPSets (#687). Presence of APPSYNC_WEB_ACL_ID /
 // APPSYNC_IPSET_V4_READ_ID switches on the regional reconcile in wafSync.

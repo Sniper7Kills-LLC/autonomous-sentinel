@@ -164,6 +164,8 @@ export function ipSetRefs(): IpSetRef[] {
  * block — no banned-region custom response, GraphQL clients don't render HTML).
  */
 export function webAclTargets(): WebAclTarget[] {
+  const blockedPath = process.env.BLOCKED_REDIRECT_PATH ?? '/blocked';
+  const bannedBodyKey = process.env.BANNED_BODY_KEY ?? 'banned';
   const targets: WebAclTarget[] = [
     {
       id: requireEnv('WEB_ACL_ID'),
@@ -175,7 +177,10 @@ export function webAclTargets(): WebAclTarget[] {
         geoReadName: process.env.GEO_READ_RULE_NAME ?? 'CountryBlockRead',
         geoWritePriority: envNumber('GEO_WRITE_PRIORITY', 10),
         geoReadPriority: envNumber('GEO_READ_PRIORITY', 11),
-        bannedRegionBodyKey: process.env.BANNED_REGION_BODY_KEY ?? 'banned-region',
+        // Website: reads redirect to the rich /blocked page; writes (API-style)
+        // get the self-contained banned 403 body (#689).
+        readAction: { kind: 'redirect', location: blockedPath },
+        writeAction: { kind: 'customBody', bodyKey: bannedBodyKey },
       },
     },
   ];
@@ -190,7 +195,10 @@ export function webAclTargets(): WebAclTarget[] {
         geoReadName: process.env.GEO_READ_RULE_NAME ?? 'CountryBlockRead',
         geoWritePriority: envNumber('GEO_WRITE_PRIORITY', 10),
         geoReadPriority: envNumber('GEO_READ_PRIORITY', 11),
-        bannedRegionBodyKey: null, // plain 403, no custom-response body on this ACL
+        // AppSync (API): a 302 would break GraphQL clients → return the banned
+        // 403 body instead. writeAction is unused (readOnly).
+        readAction: { kind: 'customBody', bodyKey: bannedBodyKey },
+        writeAction: { kind: 'plain' },
       },
     });
   }
