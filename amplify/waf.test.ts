@@ -94,4 +94,13 @@ describe('attachWaf (#198/#199/#200/#201/#202)', () => {
     const { webAclArn } = synth();
     expect(webAclArn).toBeTruthy();
   });
+
+  it('provisions the auto-publish viewer-request geo-rewrite CF function (#679)', () => {
+    const { template } = synth();
+    template.hasResourceProperties('AWS::CloudFront::Function', {
+      Name: 'eam-blocked-geo-rewrite',
+      AutoPublish: true,
+      FunctionConfig: Match.objectLike({ Runtime: 'cloudfront-js-2.0' }),
+    });
+  });
 });

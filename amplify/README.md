@@ -49,6 +49,19 @@ distribution via the Amplify console **Hosting → Firewall** (or
 `aws wafv2 associate-web-acl`). This is the only manual step; everything else
 (rules, lists, logging) is code-managed.
 
+### Operational step — associate the geo-rewrite CF function (#679)
+
+The CloudFront **viewer-request** function `eam-blocked-geo-rewrite`
+(`waf.ts` → `blockedGeoRewriteFunctionArn` in `amplify_outputs.json` → `custom`;
+source in `cloudfront/blocked-geo-rewrite.js`) rewrites a bare `/blocked`
+request to `/blocked?country=<CloudFront-Viewer-Country>` so blocked-country
+visitors auto-land on their per-country banned-region page (otherwise `/blocked`
+shows the generic default). Since Amplify Hosting owns the distribution, attach
+it as the **viewer-request** function association on the default cache behavior
+(Amplify console or `aws cloudfront`). Ensure the distribution forwards /
+populates the `CloudFront-Viewer-Country` header; if it's absent the function
+passes through unchanged (generic default page — no breakage).
+
 ## Sandbox
 
 ```bash

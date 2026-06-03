@@ -1586,6 +1586,9 @@ backend.addOutput({
   custom: {
     wafWebAclArn: waf.webAcl.attrArn,
     wafWebAclName: WAF_RESOURCE_NAMES.webAcl,
+    // Viewer-request CF function (#679) — associate with the Amplify-Hosting
+    // distribution's default behavior (operational step, see amplify/README.md).
+    blockedGeoRewriteFunctionArn: waf.blockedGeoRewrite.attrFunctionArn,
   },
 });
 
