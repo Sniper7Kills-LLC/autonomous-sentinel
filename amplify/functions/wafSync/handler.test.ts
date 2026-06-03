@@ -7,10 +7,13 @@ import {
   __setDeps,
   __resetDeps,
   type WafSyncDeps,
+  type WebAclTarget,
 } from './handler';
-import { buildGeoWriteRule, type WafRule } from './reconcile-webacl';
+import { buildGeoWriteRule, type WafRule, type GeoRuleConfig } from './reconcile-webacl';
 
-const IPSET_ENV: Record<string, string> = {
+const BASE_ENV: Record<string, string> = {
+  WEB_ACL_ID: 'acl-id',
+  WEB_ACL_NAME: 'EamWebAcl',
   IPSET_V4_WRITE_ID: 'v4w-id',
   IPSET_V4_WRITE_NAME: 'v4w',
   IPSET_V4_READ_ID: 'v4r-id',
@@ -21,7 +24,16 @@ const IPSET_ENV: Record<string, string> = {
   IPSET_V6_READ_NAME: 'v6r',
 };
 
-const geoCfg = {
+const APPSYNC_ENV: Record<string, string> = {
+  APPSYNC_WEB_ACL_ID: 'racl-id',
+  APPSYNC_WEB_ACL_NAME: 'EamAppSyncWebAcl',
+  APPSYNC_IPSET_V4_READ_ID: 'rv4r-id',
+  APPSYNC_IPSET_V4_READ_NAME: 'rv4r',
+  APPSYNC_IPSET_V6_READ_ID: 'rv6r-id',
+  APPSYNC_IPSET_V6_READ_NAME: 'rv6r',
+};
+
+const geoCfg: GeoRuleConfig = {
   geoWriteName: 'CountryBlockWrite',
   geoReadName: 'CountryBlockRead',
   geoWritePriority: 10,
@@ -29,11 +41,18 @@ const geoCfg = {
   bannedRegionBodyKey: 'banned-region',
 };
 
+const cfTarget: WebAclTarget = {
+  id: 'acl-id',
+  name: 'EamWebAcl',
+  scope: 'CLOUDFRONT',
+  readOnly: false,
+  cfg: geoCfg,
+};
+
 const event = {} as DynamoDBStreamEvent;
 const context = {} as Context;
 const cb = () => undefined;
 
-/** A complete WebAclState double — getWebAcl captures everything in one call. */
 function aclState(rules: WafRule[] = []) {
   return {
     rules,
@@ -44,27 +63,26 @@ function aclState(rules: WafRule[] = []) {
   };
 }
 
-/** A deps double with in-memory IPSet + Web ACL state and call spies. */
 function makeDeps(over: Partial<WafSyncDeps> = {}): {
   deps: WafSyncDeps;
   ipUpdates: Record<string, string[]>;
-  aclUpdates: WafRule[][];
+  aclUpdates: { scope: string; rules: WafRule[] }[];
 } {
   const ipUpdates: Record<string, string[]> = {};
-  const aclUpdates: WafRule[][] = [];
+  const aclUpdates: { scope: string; rules: WafRule[] }[] = [];
   const deps: WafSyncDeps = {
     scanBannedIps: vi.fn<WafSyncDeps['scanBannedIps']>(() => Promise.resolve([])),
     scanBannedCountries: vi.fn<WafSyncDeps['scanBannedCountries']>(() => Promise.resolve([])),
     getIpSet: vi.fn<WafSyncDeps['getIpSet']>((ref) =>
-      Promise.resolve({ addresses: [], lockToken: `lock-${ref.key}` }),
+      Promise.resolve({ addresses: [], lockToken: `lock-${ref.scope}-${ref.key}` }),
     ),
     updateIpSet: vi.fn<WafSyncDeps['updateIpSet']>((ref, addresses) => {
-      ipUpdates[ref.key] = addresses;
+      ipUpdates[`${ref.scope}:${ref.key}`] = addresses;
       return Promise.resolve();
     }),
     getWebAcl: vi.fn<WafSyncDeps['getWebAcl']>(() => Promise.resolve(aclState())),
-    updateWebAcl: vi.fn<WafSyncDeps['updateWebAcl']>((_state, rules) => {
-      aclUpdates.push(rules);
+    updateWebAcl: vi.fn<WafSyncDeps['updateWebAcl']>((target, _state, rules) => {
+      aclUpdates.push({ scope: target.scope, rules });
       return Promise.resolve();
     }),
     now: () => Date.parse('2026-06-02T00:00:00Z'),
@@ -73,22 +91,21 @@ function makeDeps(over: Partial<WafSyncDeps> = {}): {
   return { deps, ipUpdates, aclUpdates };
 }
 
-describe('wafSync handler (#199/#200/#201)', () => {
+describe('wafSync handler (#199/#200/#201/#687)', () => {
   beforeEach(() => {
-    Object.assign(process.env, IPSET_ENV);
+    Object.assign(process.env, BASE_ENV);
     vi.spyOn(console, 'info').mockImplementation(() => undefined);
   });
   afterEach(() => {
     __resetDeps();
-    for (const k of Object.keys(IPSET_ENV)) delete process.env[k];
+    for (const k of [...Object.keys(BASE_ENV), ...Object.keys(APPSYNC_ENV)]) delete process.env[k];
     vi.restoreAllMocks();
   });
 
   describe('reconcileIpSets', () => {
-    it('updates only the sets whose addresses changed', async () => {
+    it('updates only the sets whose addresses changed (CLOUDFRONT only by default)', async () => {
       const { deps, ipUpdates } = makeDeps({
         getIpSet: vi.fn<WafSyncDeps['getIpSet']>((ref) =>
-          // v4Write already has the target; the rest are empty
           Promise.resolve({
             addresses: ref.key === 'v4Write' ? ['203.0.113.0/24'] : [],
             lockToken: 'lk',
@@ -101,10 +118,25 @@ describe('wafSync handler (#199/#200/#201)', () => {
         v6Write: ['2001:db8::/32'],
         v6Read: [],
       });
-      // v4Write unchanged (skip), v6Write changed (update), reads unchanged
+      expect(results).toHaveLength(4); // no APPSYNC env → CF sets only
       expect(results.find((r) => r.key === 'v4Write')?.changed).toBe(false);
       expect(results.find((r) => r.key === 'v6Write')?.changed).toBe(true);
-      expect(ipUpdates).toEqual({ v6Write: ['2001:db8::/32'] });
+      expect(ipUpdates).toEqual({ 'CLOUDFRONT:v6Write': ['2001:db8::/32'] });
+    });
+
+    it('also reconciles the two REGIONAL read sets when APPSYNC env is present', async () => {
+      Object.assign(process.env, APPSYNC_ENV);
+      const { deps, ipUpdates } = makeDeps();
+      const results = await reconcileIpSets(deps, {
+        v4Write: ['203.0.113.0/24'],
+        v4Read: ['203.0.113.0/24'],
+        v6Write: [],
+        v6Read: [],
+      });
+      expect(results).toHaveLength(6); // 4 CF + 2 regional read
+      // regional v4Read mirrors the read desired-set; regional v6Read stays empty
+      expect(ipUpdates['REGIONAL:v4Read']).toEqual(['203.0.113.0/24']);
+      expect(ipUpdates['REGIONAL:v6Read']).toBeUndefined();
     });
   });
 
@@ -114,24 +146,43 @@ describe('wafSync handler (#199/#200/#201)', () => {
       const { deps, aclUpdates } = makeDeps({
         getWebAcl: vi.fn<WafSyncDeps['getWebAcl']>(() => Promise.resolve(aclState(existing))),
       });
-      const res = await reconcileWebAcl(deps, { write: ['RU'], read: [] });
+      const res = await reconcileWebAcl(deps, cfTarget, { write: ['RU'], read: [] });
       expect(res.changed).toBe(false);
       expect(aclUpdates).toHaveLength(0);
-      // single Get — no redundant second fetch inside updateWebAcl
       expect(deps.getWebAcl).toHaveBeenCalledTimes(1);
     });
 
-    it('updates when the desired country codes differ', async () => {
+    it('updates the CLOUDFRONT ACL with write + read geo rules', async () => {
       const { deps, aclUpdates } = makeDeps();
-      const res = await reconcileWebAcl(deps, { write: ['RU', 'CN'], read: ['KP'] });
+      const res = await reconcileWebAcl(deps, cfTarget, { write: ['RU', 'CN'], read: ['KP'] });
       expect(res.changed).toBe(true);
-      expect(aclUpdates).toHaveLength(1);
-      expect(aclUpdates[0]!.map((r) => r.Name)).toEqual(['CountryBlockWrite', 'CountryBlockRead']);
+      expect(aclUpdates[0]!.rules.map((r) => r.Name)).toEqual([
+        'CountryBlockWrite',
+        'CountryBlockRead',
+      ]);
+    });
+
+    it('read-only (AppSync) target injects ONLY the read geo rule, ignoring write codes', async () => {
+      const regionalTarget: WebAclTarget = {
+        id: 'racl-id',
+        name: 'EamAppSyncWebAcl',
+        scope: 'REGIONAL',
+        readOnly: true,
+        cfg: { ...geoCfg, bannedRegionBodyKey: null },
+      };
+      const { deps, aclUpdates } = makeDeps();
+      const res = await reconcileWebAcl(deps, regionalTarget, {
+        write: ['RU', 'CN'],
+        read: ['KP'],
+      });
+      expect(res.changed).toBe(true);
+      // no CountryBlockWrite — write-only bans never reach AppSync
+      expect(aclUpdates[0]!.rules.map((r) => r.Name)).toEqual(['CountryBlockRead']);
     });
   });
 
   describe('full reconcile', () => {
-    it('projects scanned rows onto IP sets + geo rules', async () => {
+    it('CLOUDFRONT only by default: 4 IP sets + 1 web ACL', async () => {
       const { deps, ipUpdates, aclUpdates } = makeDeps({
         scanBannedIps: vi.fn<WafSyncDeps['scanBannedIps']>(() =>
           Promise.resolve([
@@ -149,16 +200,48 @@ describe('wafSync handler (#199/#200/#201)', () => {
       __setDeps(deps);
       const summary = await handler(event, context, cb);
 
-      // read_write CIDR lands in both write+read v4 sets; write-only only in write
-      expect(ipUpdates.v4Write?.sort()).toEqual(['198.51.100.5/32', '203.0.113.0/24']);
-      expect(ipUpdates.v4Read).toEqual(['203.0.113.0/24']);
-      // countries: write list = both, read list = read_write only
-      expect(aclUpdates[0]!.map((r) => r.Name)).toEqual(['CountryBlockWrite', 'CountryBlockRead']);
-      expect(summary.webAclChanged).toBe(true);
+      expect(ipUpdates['CLOUDFRONT:v4Write']?.sort()).toEqual([
+        '198.51.100.5/32',
+        '203.0.113.0/24',
+      ]);
+      expect(ipUpdates['CLOUDFRONT:v4Read']).toEqual(['203.0.113.0/24']);
+      expect(aclUpdates[0]!.rules.map((r) => r.Name)).toEqual([
+        'CountryBlockWrite',
+        'CountryBlockRead',
+      ]);
       expect(summary.ipSets).toHaveLength(4);
+      expect(summary.webAcls).toEqual([{ scope: 'CLOUDFRONT', changed: true }]);
     });
 
-    it('clears everything when both tables are empty (no rules, empty sets)', async () => {
+    it('with APPSYNC env: also blocks read_write bans on the regional ACL (read-only)', async () => {
+      Object.assign(process.env, APPSYNC_ENV);
+      const { deps, ipUpdates, aclUpdates } = makeDeps({
+        scanBannedIps: vi.fn<WafSyncDeps['scanBannedIps']>(() =>
+          Promise.resolve([
+            { cidr: '203.0.113.0/24', scope: 'read_write' },
+            { cidr: '198.51.100.5/32', scope: 'write' },
+          ]),
+        ),
+        scanBannedCountries: vi.fn<WafSyncDeps['scanBannedCountries']>(() =>
+          Promise.resolve([{ iso2: 'ru', scope: 'read_write' }]),
+        ),
+      });
+      __setDeps(deps);
+      const summary = await handler(event, context, cb);
+
+      expect(summary.ipSets).toHaveLength(6);
+      expect(summary.webAcls).toEqual([
+        { scope: 'CLOUDFRONT', changed: true },
+        { scope: 'REGIONAL', changed: true },
+      ]);
+      // regional read set gets ONLY the read_write CIDR (write-only excluded)
+      expect(ipUpdates['REGIONAL:v4Read']).toEqual(['203.0.113.0/24']);
+      // regional ACL: read geo rule only
+      const regionalUpdate = aclUpdates.find((u) => u.scope === 'REGIONAL');
+      expect(regionalUpdate?.rules.map((r) => r.Name)).toEqual(['CountryBlockRead']);
+    });
+
+    it('clears everything when both tables are empty', async () => {
       const { deps, ipUpdates, aclUpdates } = makeDeps({
         getWebAcl: vi.fn<WafSyncDeps['getWebAcl']>(() =>
           Promise.resolve(aclState([buildGeoWriteRule(['RU'], geoCfg)])),
@@ -166,9 +249,7 @@ describe('wafSync handler (#199/#200/#201)', () => {
       });
       __setDeps(deps);
       await handler(event, context, cb);
-      // geo rule removed → UpdateWebACL with no geo rules
-      expect(aclUpdates[0]!.map((r) => r.Name)).toEqual([]);
-      // no IP updates needed (already empty)
+      expect(aclUpdates[0]!.rules.map((r) => r.Name)).toEqual([]);
       expect(ipUpdates).toEqual({});
     });
   });

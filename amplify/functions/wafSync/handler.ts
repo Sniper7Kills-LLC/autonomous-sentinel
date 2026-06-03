@@ -1,23 +1,25 @@
 /**
  * `wafSync` — reconciles the admin-managed ban lists into live AWS WAF state
- * (#199/#200/#201).
+ * (#199/#200/#201/#687).
  *
  * Triggered directly by the DynamoDB streams on the `BannedCountry` and
  * `BannedIp` tables (see `amplify/backend.ts`). The stream event is only a
  * wake-up: the handler ignores its contents and performs a full, idempotent
  * reconcile by scanning both (small) tables and projecting them onto:
- *   - four WAF IPSets — IPv4/IPv6 × write/read — via `UpdateIPSet`
- *   - the two runtime-injected geo rules on the Web ACL — via `UpdateWebACL`
+ *   - the CLOUDFRONT Web ACL (website edge): four IPSets (IPv4/IPv6 ×
+ *     write/read) + two runtime geo rules (write + read).
+ *   - the REGIONAL Web ACL on the AppSync data API (#687), when configured:
+ *     two **read** IPSets (IPv4/IPv6) + one runtime geo **read** rule. Only
+ *     `read_write` bans reach AppSync — write-only bans leave the data API open
+ *     so a write-blocked visitor can still browse (the front-end reads via
+ *     AppSync). Queries vs mutations are indistinguishable at WAF anyway.
  *
  * Idempotent + full-reconcile means concurrent / coalesced invocations all
  * converge on the same end state; the Lambda runs with reserved concurrency 1
  * so the optimistic `LockToken` on `Update*` doesn't thrash.
  *
  * Cycle-safety: reads via the **raw DynamoDB SDK** (Scan), never the Amplify
- * Data client, so there is no `allow.resource` edge from the data stack back to
- * this function — the only cross-stack edges are this function → {data tables /
- * streams, WAF resources}, all one-directional (see the design note in
- * `backend.ts`).
+ * Data client — so no `allow.resource` data→function edge (see backend.ts).
  */
 
 import type { DynamoDBStreamEvent, Context, Callback } from 'aws-lambda';
@@ -46,18 +48,32 @@ import {
 } from './reconcile-webacl';
 
 type IpSetKey = keyof DesiredIpSets; // 'v4Write' | 'v4Read' | 'v6Write' | 'v6Read'
+export type WafScope = 'CLOUDFRONT' | 'REGIONAL';
 
-interface IpSetRef {
+export interface IpSetRef {
+  /** Which desired-set drives this IPSet's addresses. */
   key: IpSetKey;
   id: string;
   name: string;
+  scope: WafScope;
+}
+
+/** A Web ACL whose runtime geo rules wafSync reconciles. */
+export interface WebAclTarget {
+  id: string;
+  name: string;
+  scope: WafScope;
+  cfg: GeoRuleConfig;
+  /**
+   * Read-scope only (the AppSync regional ACL): inject just the geo **read**
+   * rule, never a write geo rule. Write-only bans must not touch AppSync.
+   */
+  readOnly: boolean;
 }
 
 /**
  * The Web ACL fields a reconcile needs. Captured in a single `GetWebACL` so the
- * subsequent `UpdateWebACL` reuses the SAME `LockToken` + metadata — no second
- * Get (which would burn a WAF API call and reuse a token fetched at a different
- * moment than the metadata it pairs with).
+ * subsequent `UpdateWebACL` reuses the SAME `LockToken` + metadata.
  */
 export interface WebAclState {
   rules: WafRule[];
@@ -72,8 +88,8 @@ export interface WafSyncDeps {
   scanBannedCountries: () => Promise<BannedCountryRow[]>;
   getIpSet: (ref: IpSetRef) => Promise<{ addresses: string[]; lockToken: string }>;
   updateIpSet: (ref: IpSetRef, addresses: string[], lockToken: string) => Promise<void>;
-  getWebAcl: () => Promise<WebAclState>;
-  updateWebAcl: (state: WebAclState, rules: WafRule[]) => Promise<void>;
+  getWebAcl: (target: WebAclTarget) => Promise<WebAclState>;
+  updateWebAcl: (target: WebAclTarget, state: WebAclState, rules: WafRule[]) => Promise<void>;
   now: () => number;
 }
 
@@ -93,31 +109,92 @@ function envNumber(name: string, fallback: number): number {
   return n;
 }
 
+/**
+ * IPSets to reconcile: the four CLOUDFRONT sets always; the two REGIONAL read
+ * sets (AppSync) only when `APPSYNC_IPSET_V4_READ_ID` is configured. The
+ * regional sets mirror the read desired-sets (read_write bans only).
+ */
 export function ipSetRefs(): IpSetRef[] {
-  return [
+  const refs: IpSetRef[] = [
     {
       key: 'v4Write',
+      scope: 'CLOUDFRONT',
       id: requireEnv('IPSET_V4_WRITE_ID'),
       name: requireEnv('IPSET_V4_WRITE_NAME'),
     },
-    { key: 'v4Read', id: requireEnv('IPSET_V4_READ_ID'), name: requireEnv('IPSET_V4_READ_NAME') },
+    {
+      key: 'v4Read',
+      scope: 'CLOUDFRONT',
+      id: requireEnv('IPSET_V4_READ_ID'),
+      name: requireEnv('IPSET_V4_READ_NAME'),
+    },
     {
       key: 'v6Write',
+      scope: 'CLOUDFRONT',
       id: requireEnv('IPSET_V6_WRITE_ID'),
       name: requireEnv('IPSET_V6_WRITE_NAME'),
     },
-    { key: 'v6Read', id: requireEnv('IPSET_V6_READ_ID'), name: requireEnv('IPSET_V6_READ_NAME') },
+    {
+      key: 'v6Read',
+      scope: 'CLOUDFRONT',
+      id: requireEnv('IPSET_V6_READ_ID'),
+      name: requireEnv('IPSET_V6_READ_NAME'),
+    },
   ];
+  if (process.env.APPSYNC_IPSET_V4_READ_ID) {
+    refs.push({
+      key: 'v4Read',
+      scope: 'REGIONAL',
+      id: requireEnv('APPSYNC_IPSET_V4_READ_ID'),
+      name: requireEnv('APPSYNC_IPSET_V4_READ_NAME'),
+    });
+    refs.push({
+      key: 'v6Read',
+      scope: 'REGIONAL',
+      id: requireEnv('APPSYNC_IPSET_V6_READ_ID'),
+      name: requireEnv('APPSYNC_IPSET_V6_READ_NAME'),
+    });
+  }
+  return refs;
 }
 
-export function geoRuleConfig(): GeoRuleConfig {
-  return {
-    geoWriteName: process.env.GEO_WRITE_RULE_NAME ?? 'CountryBlockWrite',
-    geoReadName: process.env.GEO_READ_RULE_NAME ?? 'CountryBlockRead',
-    geoWritePriority: envNumber('GEO_WRITE_PRIORITY', 10),
-    geoReadPriority: envNumber('GEO_READ_PRIORITY', 11),
-    bannedRegionBodyKey: process.env.BANNED_REGION_BODY_KEY ?? 'banned-region',
-  };
+/**
+ * Web ACL targets: the CLOUDFRONT website ACL always; the REGIONAL AppSync ACL
+ * only when `APPSYNC_WEB_ACL_ID` is configured (read-scope geo only, plain 403
+ * block — no banned-region custom response, GraphQL clients don't render HTML).
+ */
+export function webAclTargets(): WebAclTarget[] {
+  const targets: WebAclTarget[] = [
+    {
+      id: requireEnv('WEB_ACL_ID'),
+      name: requireEnv('WEB_ACL_NAME'),
+      scope: 'CLOUDFRONT',
+      readOnly: false,
+      cfg: {
+        geoWriteName: process.env.GEO_WRITE_RULE_NAME ?? 'CountryBlockWrite',
+        geoReadName: process.env.GEO_READ_RULE_NAME ?? 'CountryBlockRead',
+        geoWritePriority: envNumber('GEO_WRITE_PRIORITY', 10),
+        geoReadPriority: envNumber('GEO_READ_PRIORITY', 11),
+        bannedRegionBodyKey: process.env.BANNED_REGION_BODY_KEY ?? 'banned-region',
+      },
+    },
+  ];
+  if (process.env.APPSYNC_WEB_ACL_ID) {
+    targets.push({
+      id: requireEnv('APPSYNC_WEB_ACL_ID'),
+      name: requireEnv('APPSYNC_WEB_ACL_NAME'),
+      scope: 'REGIONAL',
+      readOnly: true,
+      cfg: {
+        geoWriteName: 'CountryBlockWrite', // unused (readOnly) but required by the type
+        geoReadName: process.env.GEO_READ_RULE_NAME ?? 'CountryBlockRead',
+        geoWritePriority: envNumber('GEO_WRITE_PRIORITY', 10),
+        geoReadPriority: envNumber('GEO_READ_PRIORITY', 11),
+        bannedRegionBodyKey: null, // plain 403, no custom-response body on this ACL
+      },
+    });
+  }
+  return targets;
 }
 
 /** Sorted-membership equality (order-insensitive). */
@@ -128,14 +205,21 @@ function sameAddresses(a: string[], b: string[]): boolean {
   return sa.every((v, i) => v === sb[i]);
 }
 
+function sortedEqual(a: string[], b: string[]): boolean {
+  const sa = [...a].sort();
+  const sb = [...b].sort();
+  return sa.length === sb.length && sa.every((v, i) => v === sb[i]);
+}
+
 let cachedDeps: WafSyncDeps | null = null;
 
 function defaultDeps(): WafSyncDeps {
   const region = process.env.AWS_REGION ?? 'us-east-1';
   const ddb = new DynamoDBClient({ region });
-  // WAF for CLOUDFRONT scope is a global service addressed via us-east-1.
+  // One client for both scopes — CLOUDFRONT WAF is global but addressed via
+  // us-east-1, and the AppSync REGIONAL ACL is us-east-1; the Scope arg on each
+  // call distinguishes them.
   const waf = new WAFV2Client({ region: 'us-east-1' });
-  const scope = process.env.WEB_ACL_SCOPE ?? 'CLOUDFRONT';
 
   async function scanAll<T>(table: string): Promise<T[]> {
     const rows: T[] = [];
@@ -155,31 +239,24 @@ function defaultDeps(): WafSyncDeps {
     scanBannedCountries: () => scanAll<BannedCountryRow>(requireEnv('BANNED_COUNTRY_TABLE')),
     getIpSet: async (ref) => {
       const res = await waf.send(
-        new GetIPSetCommand({ Id: ref.id, Name: ref.name, Scope: scope as never }),
+        new GetIPSetCommand({ Id: ref.id, Name: ref.name, Scope: ref.scope }),
       );
-      return {
-        addresses: res.IPSet?.Addresses ?? [],
-        lockToken: res.LockToken ?? '',
-      };
+      return { addresses: res.IPSet?.Addresses ?? [], lockToken: res.LockToken ?? '' };
     },
     updateIpSet: async (ref, addresses, lockToken) => {
       await waf.send(
         new UpdateIPSetCommand({
           Id: ref.id,
           Name: ref.name,
-          Scope: scope as never,
+          Scope: ref.scope,
           Addresses: addresses,
           LockToken: lockToken,
         }),
       );
     },
-    getWebAcl: async () => {
+    getWebAcl: async (target) => {
       const res = await waf.send(
-        new GetWebACLCommand({
-          Id: requireEnv('WEB_ACL_ID'),
-          Name: requireEnv('WEB_ACL_NAME'),
-          Scope: scope as never,
-        }),
+        new GetWebACLCommand({ Id: target.id, Name: target.name, Scope: target.scope }),
       );
       return {
         rules: (res.WebACL?.Rules ?? []) as unknown as WafRule[],
@@ -189,12 +266,12 @@ function defaultDeps(): WafSyncDeps {
         customResponseBodies: res.WebACL?.CustomResponseBodies,
       };
     },
-    updateWebAcl: async (state, rules) => {
+    updateWebAcl: async (target, state, rules) => {
       await waf.send(
         new UpdateWebACLCommand({
-          Id: requireEnv('WEB_ACL_ID'),
-          Name: requireEnv('WEB_ACL_NAME'),
-          Scope: scope as never,
+          Id: target.id,
+          Name: target.name,
+          Scope: target.scope,
           DefaultAction: state.defaultAction as never,
           VisibilityConfig: state.visibilityConfig as never,
           CustomResponseBodies: state.customResponseBodies as never,
@@ -220,51 +297,56 @@ export function __resetDeps(): void {
   cachedDeps = null;
 }
 
+export interface IpSetResult {
+  key: IpSetKey;
+  scope: WafScope;
+  changed: boolean;
+}
+
 export async function reconcileIpSets(
   deps: WafSyncDeps,
   desired: DesiredIpSets,
-): Promise<{ key: IpSetKey; changed: boolean }[]> {
-  const results: { key: IpSetKey; changed: boolean }[] = [];
+): Promise<IpSetResult[]> {
+  const results: IpSetResult[] = [];
   for (const ref of ipSetRefs()) {
     const want = desired[ref.key];
     const current = await deps.getIpSet(ref);
     if (sameAddresses(current.addresses, want)) {
-      results.push({ key: ref.key, changed: false });
+      results.push({ key: ref.key, scope: ref.scope, changed: false });
       continue;
     }
     await deps.updateIpSet(ref, want, current.lockToken);
-    results.push({ key: ref.key, changed: true });
+    results.push({ key: ref.key, scope: ref.scope, changed: true });
   }
   return results;
 }
 
 export async function reconcileWebAcl(
   deps: WafSyncDeps,
+  target: WebAclTarget,
   desired: DesiredCountries,
 ): Promise<{ changed: boolean }> {
-  const cfg = geoRuleConfig();
-  const acl = await deps.getWebAcl();
-  const currentWrite = (extractGeoCodes(acl.rules, cfg.geoWriteName) ?? []).slice().sort();
-  const currentRead = (extractGeoCodes(acl.rules, cfg.geoReadName) ?? []).slice().sort();
-  const wantWrite = desired.write.slice().sort();
-  const wantRead = desired.read.slice().sort();
+  const cfg = target.cfg;
+  const acl = await deps.getWebAcl(target);
 
-  const unchanged =
-    currentWrite.length === wantWrite.length &&
-    currentWrite.every((v, i) => v === wantWrite[i]) &&
-    currentRead.length === wantRead.length &&
-    currentRead.every((v, i) => v === wantRead[i]);
+  // Read-only (AppSync) targets never carry a write geo rule.
+  const wantWrite = target.readOnly ? [] : desired.write;
+  const wantRead = desired.read;
+  const currentWrite = target.readOnly ? [] : (extractGeoCodes(acl.rules, cfg.geoWriteName) ?? []);
+  const currentRead = extractGeoCodes(acl.rules, cfg.geoReadName) ?? [];
 
-  if (unchanged) return { changed: false };
+  if (sortedEqual(currentWrite, wantWrite) && sortedEqual(currentRead, wantRead)) {
+    return { changed: false };
+  }
 
-  const rules = reconcileRules(acl.rules, desired.write, desired.read, cfg);
-  await deps.updateWebAcl(acl, rules);
+  const rules = reconcileRules(acl.rules, wantWrite, wantRead, cfg);
+  await deps.updateWebAcl(target, acl, rules);
   return { changed: true };
 }
 
 export interface WafSyncSummary {
-  ipSets: { key: IpSetKey; changed: boolean }[];
-  webAclChanged: boolean;
+  ipSets: IpSetResult[];
+  webAcls: { scope: WafScope; changed: boolean }[];
 }
 
 export const handler = async (
@@ -282,9 +364,13 @@ export const handler = async (
   const desiredCountries = computeDesiredCountries(countryRows);
 
   const ipSets = await reconcileIpSets(deps, desiredIp);
-  const webAcl = await reconcileWebAcl(deps, desiredCountries);
+  const webAcls: { scope: WafScope; changed: boolean }[] = [];
+  for (const target of webAclTargets()) {
+    const r = await reconcileWebAcl(deps, target, desiredCountries);
+    webAcls.push({ scope: target.scope, changed: r.changed });
+  }
 
-  const summary: WafSyncSummary = { ipSets, webAclChanged: webAcl.changed };
+  const summary: WafSyncSummary = { ipSets, webAcls };
   console.info('wafSync reconcile complete', JSON.stringify(summary));
   return summary;
 };

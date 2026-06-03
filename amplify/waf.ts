@@ -46,6 +46,20 @@ export const WAF_RESOURCE_NAMES = {
   bannedRegionBodyKey: 'banned-region',
 } as const;
 
+/**
+ * REGIONAL WAF for the AppSync data API (#687). A separate, minimal Web ACL —
+ * CLOUDFRONT-scope resources can't attach to a regional resource. Cost-minimal:
+ * default allow + only the read-scope ban enforcement (IP set rule here + a geo
+ * read rule injected by wafSync). NO managed rule groups (each adds $/mo;
+ * AppSync has its own auth). Only read_write bans reach it.
+ */
+export const APPSYNC_WAF_NAMES = {
+  webAcl: 'EamAppSyncWebAcl',
+  ipSets: { v4Read: 'EamAppSyncBanV4Read', v6Read: 'EamAppSyncBanV6Read' },
+  ipBlockRule: 'IpBlockRegionalRead',
+  ipBlockPriority: 0,
+} as const;
+
 /** Tiny meta-refresh stub returned on read-blocked traffic → the #202 page. */
 const BANNED_REGION_BODY = [
   '<!doctype html><html lang="en"><head><meta charset="utf-8">',
@@ -227,4 +241,58 @@ export function attachWaf(stack: Stack): WafResources {
   });
 
   return { webAcl, ipSets, logGroup, blockedGeoRewrite };
+}
+
+export interface AppSyncWafResources {
+  webAcl: CfnWebACL;
+  ipSets: { v4Read: CfnIPSet; v6Read: CfnIPSet };
+}
+
+/**
+ * REGIONAL Web ACL for the AppSync data API (#687). Two empty read IPSets
+ * (filled by wafSync from the read_write ban rows) + a single block rule that
+ * ORs them; a geo read rule is injected at runtime by wafSync. Default allow,
+ * no managed rule groups (cost). The association to the AppSync API is created
+ * in `backend.ts` (in the data stack, to avoid a WafStack→data CFN cycle).
+ */
+export function attachAppSyncWaf(stack: Stack): AppSyncWafResources {
+  const ipSets = {
+    v4Read: new CfnIPSet(stack, 'EamAppSyncBanV4Read', {
+      name: APPSYNC_WAF_NAMES.ipSets.v4Read,
+      scope: 'REGIONAL',
+      ipAddressVersion: 'IPV4',
+      addresses: [],
+    }),
+    v6Read: new CfnIPSet(stack, 'EamAppSyncBanV6Read', {
+      name: APPSYNC_WAF_NAMES.ipSets.v6Read,
+      scope: 'REGIONAL',
+      ipAddressVersion: 'IPV6',
+      addresses: [],
+    }),
+  } as const;
+
+  const ipBlockRule: CfnWebACL.RuleProperty = {
+    name: APPSYNC_WAF_NAMES.ipBlockRule,
+    priority: APPSYNC_WAF_NAMES.ipBlockPriority,
+    action: { block: {} }, // plain 403 — GraphQL clients don't render HTML
+    statement: {
+      orStatement: {
+        statements: [
+          { ipSetReferenceStatement: { arn: ipSets.v4Read.attrArn } },
+          { ipSetReferenceStatement: { arn: ipSets.v6Read.attrArn } },
+        ],
+      },
+    },
+    visibilityConfig: ruleVisibility(APPSYNC_WAF_NAMES.ipBlockRule),
+  };
+
+  const webAcl = new CfnWebACL(stack, 'EamAppSyncWebAcl', {
+    name: APPSYNC_WAF_NAMES.webAcl,
+    scope: 'REGIONAL',
+    defaultAction: { allow: {} },
+    visibilityConfig: ruleVisibility('EamAppSyncWaf'),
+    rules: [ipBlockRule],
+  });
+
+  return { webAcl, ipSets };
 }

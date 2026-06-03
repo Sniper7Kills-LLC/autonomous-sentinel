@@ -36,8 +36,13 @@ export interface GeoRuleConfig {
   geoWritePriority: number;
   /** WAF rule priority for the read geo rule (must be unique in the ACL). */
   geoReadPriority: number;
-  /** Custom-response body key for read-blocked traffic (the banned-region stub). */
-  bannedRegionBodyKey: string;
+  /**
+   * Custom-response body key for read-blocked traffic (the banned-region stub on
+   * the CLOUDFRONT website ACL). `null` → a plain 403 block with no custom
+   * response (the REGIONAL AppSync ACL, whose clients don't render HTML and
+   * which doesn't define that response body).
+   */
+  bannedRegionBodyKey: string | null;
 }
 
 function visibility(metricName: string) {
@@ -69,21 +74,23 @@ export function buildGeoWriteRule(codes: string[], cfg: GeoRuleConfig): WafRule 
 }
 
 /**
- * Read-scope geo block: country matches on any request → 403 with the
- * banned-region custom response body (drives the #202 landing page).
+ * Read-scope geo block: country matches on any request → 403. On the website
+ * ACL (`bannedRegionBodyKey` set) it returns the banned-region custom response
+ * (the #202 landing page); on the AppSync ACL (`bannedRegionBodyKey: null`) a
+ * plain 403.
  */
 export function buildGeoReadRule(codes: string[], cfg: GeoRuleConfig): WafRule {
+  const action = cfg.bannedRegionBodyKey
+    ? {
+        Block: {
+          CustomResponse: { ResponseCode: 403, CustomResponseBodyKey: cfg.bannedRegionBodyKey },
+        },
+      }
+    : { Block: {} };
   return {
     Name: cfg.geoReadName,
     Priority: cfg.geoReadPriority,
-    Action: {
-      Block: {
-        CustomResponse: {
-          ResponseCode: 403,
-          CustomResponseBodyKey: cfg.bannedRegionBodyKey,
-        },
-      },
-    },
+    Action: action,
     Statement: { GeoMatchStatement: { CountryCodes: codes } },
     VisibilityConfig: visibility(cfg.geoReadName),
   };
