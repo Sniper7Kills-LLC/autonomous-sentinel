@@ -55,70 +55,71 @@ export function isWriteRequest(method: string, path: string): boolean {
   return methodIsWrite && pathIsWrite;
 }
 
-/** wafv2 SDK (PascalCase) statement: method ∈ WRITE_METHODS AND path ∈ prefixes. */
-export function buildWritePathStatement(): WafStatement {
-  return {
-    AndStatement: {
-      Statements: [
-        {
-          OrStatement: {
-            Statements: WRITE_METHODS.map((method) => ({
-              ByteMatchStatement: {
-                FieldToMatch: { Method: {} },
-                PositionalConstraint: 'EXACTLY',
-                SearchString: method,
-                TextTransformations: [{ Priority: 0, Type: 'NONE' }],
-              },
-            })),
+/**
+ * The two component conditions of a write request — a method `OrStatement` and
+ * a path `OrStatement` — as wafv2 SDK (PascalCase) statements.
+ *
+ * Returned as a flat ARRAY (not wrapped in their own `AndStatement`) because
+ * the caller spreads them into the rule's existing `AndStatement` alongside the
+ * geo / IP-set match. WAF rejects an `AndStatement` nested directly inside
+ * another `AndStatement` ("nested statement is not valid, field: AND_STATEMENT"),
+ * so the conditions must be flattened into a single AND.
+ */
+export function writePathStatements(): WafStatement[] {
+  return [
+    {
+      OrStatement: {
+        Statements: WRITE_METHODS.map((method) => ({
+          ByteMatchStatement: {
+            FieldToMatch: { Method: {} },
+            PositionalConstraint: 'EXACTLY',
+            SearchString: method,
+            TextTransformations: [{ Priority: 0, Type: 'NONE' }],
           },
-        },
-        {
-          OrStatement: {
-            Statements: WRITE_PATH_PREFIXES.map((prefix) => ({
-              ByteMatchStatement: {
-                FieldToMatch: { UriPath: {} },
-                PositionalConstraint: 'STARTS_WITH',
-                SearchString: prefix,
-                TextTransformations: [{ Priority: 0, Type: 'LOWERCASE' }],
-              },
-            })),
-          },
-        },
-      ],
+        })),
+      },
     },
-  };
+    {
+      OrStatement: {
+        Statements: WRITE_PATH_PREFIXES.map((prefix) => ({
+          ByteMatchStatement: {
+            FieldToMatch: { UriPath: {} },
+            PositionalConstraint: 'STARTS_WITH',
+            SearchString: prefix,
+            TextTransformations: [{ Priority: 0, Type: 'LOWERCASE' }],
+          },
+        })),
+      },
+    },
+  ];
 }
 
-/** CDK L1 (camelCase) equivalent of {@link buildWritePathStatement}. */
-export function buildWritePathStatementCdk(): WafStatement {
-  return {
-    andStatement: {
-      statements: [
-        {
-          orStatement: {
-            statements: WRITE_METHODS.map((method) => ({
-              byteMatchStatement: {
-                fieldToMatch: { method: {} },
-                positionalConstraint: 'EXACTLY',
-                searchString: method,
-                textTransformations: [{ priority: 0, type: 'NONE' }],
-              },
-            })),
+/** CDK L1 (camelCase) equivalent of {@link writePathStatements}. */
+export function writePathStatementsCdk(): WafStatement[] {
+  return [
+    {
+      orStatement: {
+        statements: WRITE_METHODS.map((method) => ({
+          byteMatchStatement: {
+            fieldToMatch: { method: {} },
+            positionalConstraint: 'EXACTLY',
+            searchString: method,
+            textTransformations: [{ priority: 0, type: 'NONE' }],
           },
-        },
-        {
-          orStatement: {
-            statements: WRITE_PATH_PREFIXES.map((prefix) => ({
-              byteMatchStatement: {
-                fieldToMatch: { uriPath: {} },
-                positionalConstraint: 'STARTS_WITH',
-                searchString: prefix,
-                textTransformations: [{ priority: 0, type: 'LOWERCASE' }],
-              },
-            })),
-          },
-        },
-      ],
+        })),
+      },
     },
-  };
+    {
+      orStatement: {
+        statements: WRITE_PATH_PREFIXES.map((prefix) => ({
+          byteMatchStatement: {
+            fieldToMatch: { uriPath: {} },
+            positionalConstraint: 'STARTS_WITH',
+            searchString: prefix,
+            textTransformations: [{ priority: 0, type: 'LOWERCASE' }],
+          },
+        })),
+      },
+    },
+  ];
 }

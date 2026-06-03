@@ -20,7 +20,7 @@ const managed: WafRule = { Name: 'AWSCommon', Priority: 0, Statement: {} };
 const ipWrite: WafRule = { Name: 'IpBlockWrite', Priority: 20, Statement: {} };
 
 describe('wafSync reconcile-webacl (#199/#201)', () => {
-  it('write geo rule ANDs the country match with the write-path matcher, plain 403', () => {
+  it('write geo rule is a FLAT AND: country + method-OR + path-OR, plain 403', () => {
     const rule = buildGeoWriteRule(['RU', 'CN'], cfg);
     expect(rule.Name).toBe('CountryBlockWrite');
     expect(rule.Priority).toBe(10);
@@ -28,11 +28,15 @@ describe('wafSync reconcile-webacl (#199/#201)', () => {
     interface Geo {
       GeoMatchStatement: { CountryCodes: string[] };
     }
-    const statement = rule.Statement as { AndStatement: { Statements: [Geo, unknown] } };
-    const [geo, writePath] = statement.AndStatement.Statements;
+    const statement = rule.Statement as {
+      AndStatement: { Statements: [Geo, unknown, unknown] };
+    };
+    const [geo, methodOr, pathOr] = statement.AndStatement.Statements;
     expect(geo.GeoMatchStatement.CountryCodes).toEqual(['RU', 'CN']);
-    // second statement is the write-path AndStatement
-    expect(writePath).toHaveProperty('AndStatement');
+    // write-path conditions are spread in flat — NOT nested under an AndStatement
+    expect(methodOr).toHaveProperty('OrStatement');
+    expect(pathOr).toHaveProperty('OrStatement');
+    expect(methodOr).not.toHaveProperty('AndStatement');
   });
 
   it('read geo rule matches any request and returns the banned-region body', () => {

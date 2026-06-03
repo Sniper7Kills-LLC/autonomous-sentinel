@@ -19,7 +19,7 @@
  * same shape `GetWebACL` returns and `UpdateWebACL` expects.
  */
 
-import { buildWritePathStatement, type WafStatement } from './write-path-matcher';
+import { writePathStatements } from './write-path-matcher';
 
 export interface WafRule {
   Name: string;
@@ -53,14 +53,15 @@ function visibility(metricName: string) {
  * surface. Plain 403 — write blocks don't render the banned-region page.
  */
 export function buildGeoWriteRule(codes: string[], cfg: GeoRuleConfig): WafRule {
-  const writePath: WafStatement = buildWritePathStatement();
   return {
     Name: cfg.geoWriteName,
     Priority: cfg.geoWritePriority,
     Action: { Block: {} },
     Statement: {
+      // Flat AND: country match + the two write-path conditions. The write-path
+      // conditions are spread (not nested) — WAF forbids AND-inside-AND.
       AndStatement: {
-        Statements: [{ GeoMatchStatement: { CountryCodes: codes } }, writePath],
+        Statements: [{ GeoMatchStatement: { CountryCodes: codes } }, ...writePathStatements()],
       },
     },
     VisibilityConfig: visibility(cfg.geoWriteName),

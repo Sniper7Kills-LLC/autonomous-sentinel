@@ -3,8 +3,8 @@ import {
   WRITE_METHODS,
   WRITE_PATH_PREFIXES,
   isWriteRequest,
-  buildWritePathStatement,
-  buildWritePathStatementCdk,
+  writePathStatements,
+  writePathStatementsCdk,
 } from './write-path-matcher';
 
 describe('wafSync write-path matcher (#201)', () => {
@@ -32,18 +32,19 @@ describe('wafSync write-path matcher (#201)', () => {
     expect([...WRITE_PATH_PREFIXES]).toEqual(['/api/', '/stripe/']);
   });
 
-  it('SDK statement ORs every method and every path prefix under an AND', () => {
+  it('SDK statements are a FLAT pair of OrStatements (no nested AND)', () => {
     interface ByteMatch {
       ByteMatchStatement: { SearchString: string };
     }
     interface Or {
       OrStatement: { Statements: ByteMatch[] };
     }
-    interface And {
-      AndStatement: { Statements: [Or, Or] };
-    }
-    const s = buildWritePathStatement() as unknown as And;
-    const [methodOr, pathOr] = s.AndStatement.Statements;
+    const stmts = writePathStatements() as unknown as [Or, Or];
+    // Exactly two statements, neither wrapped in an AndStatement — WAF forbids
+    // AND-inside-AND, so callers spread these into their own AND.
+    expect(stmts).toHaveLength(2);
+    for (const s of stmts) expect(s).not.toHaveProperty('AndStatement');
+    const [methodOr, pathOr] = stmts;
     expect(methodOr.OrStatement.Statements.map((m) => m.ByteMatchStatement.SearchString)).toEqual([
       ...WRITE_METHODS,
     ]);
@@ -52,18 +53,17 @@ describe('wafSync write-path matcher (#201)', () => {
     ]);
   });
 
-  it('CDK statement mirrors the SDK statement modulo key casing', () => {
+  it('CDK statements mirror the SDK pair modulo key casing', () => {
     interface ByteMatch {
       byteMatchStatement: { searchString: string };
     }
     interface Or {
       orStatement: { statements: ByteMatch[] };
     }
-    interface And {
-      andStatement: { statements: [Or, Or] };
-    }
-    const cdk = buildWritePathStatementCdk() as unknown as And;
-    const [methodOr, pathOr] = cdk.andStatement.statements;
+    const stmts = writePathStatementsCdk() as unknown as [Or, Or];
+    expect(stmts).toHaveLength(2);
+    for (const s of stmts) expect(s).not.toHaveProperty('andStatement');
+    const [methodOr, pathOr] = stmts;
     expect(methodOr.orStatement.statements.map((m) => m.byteMatchStatement.searchString)).toEqual([
       ...WRITE_METHODS,
     ]);

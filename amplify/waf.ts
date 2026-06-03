@@ -1,7 +1,7 @@
 import { type Stack } from 'aws-cdk-lib';
 import { CfnWebACL, CfnIPSet, CfnLoggingConfiguration } from 'aws-cdk-lib/aws-wafv2';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
-import { buildWritePathStatementCdk } from './functions/wafSync/write-path-matcher';
+import { writePathStatementsCdk } from './functions/wafSync/write-path-matcher';
 
 /**
  * AWS WAF in front of CloudFront (#198) + the admin-managed country (#199) and
@@ -129,6 +129,8 @@ export function attachWaf(stack: Stack): WafResources {
     priority: 20,
     action: { block: {} },
     statement: {
+      // Flat AND: (v4 OR v6 write IP set) + the two write-path conditions.
+      // Spread, not nested — WAF rejects an AndStatement inside an AndStatement.
       andStatement: {
         statements: [
           {
@@ -139,7 +141,7 @@ export function attachWaf(stack: Stack): WafResources {
               ],
             },
           },
-          buildWritePathStatementCdk(),
+          ...writePathStatementsCdk(),
         ],
       },
     },
