@@ -143,8 +143,19 @@ async function getDefaultDataClient(): Promise<DlqRecordingClient> {
  * transient update failure (keep the message) — #714.
  */
 function isConditionalCheckFailed(errors: unknown): boolean {
-  const blob = JSON.stringify(errors ?? '');
-  return blob.includes('ConditionalCheckFailed');
+  if (!Array.isArray(errors)) return false;
+  return errors.some((e) => {
+    if (!e || typeof e !== 'object') return false;
+    const { errorType, message } = e as { errorType?: unknown; message?: unknown };
+    // Prefer the AppSync `errorType` (`DynamoDB:ConditionalCheckFailedException`);
+    // fall back to the human message for transports that omit errorType. Match
+    // only these two fields — not the whole serialised error — so an unrelated
+    // field (path/locations) can't false-positive.
+    return (
+      (typeof errorType === 'string' && errorType.includes('ConditionalCheckFailed')) ||
+      (typeof message === 'string' && message.includes('ConditionalCheckFailed'))
+    );
+  });
 }
 
 function isAdmin(identity: unknown): boolean {
