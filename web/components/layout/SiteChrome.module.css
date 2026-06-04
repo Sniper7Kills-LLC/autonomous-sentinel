@@ -44,49 +44,55 @@
 }
 
 /*
- * Two-line classification banner (#726). The public banner uses the US
+ * Two-line classification banner. The public banner uses the US
  * government UNCLASSIFIED green (#007a33); the admin/moderator area adds
- * `.bannerRestricted` for the classified/restricted red (#c8102e). Both
- * carry white text — contrast ≥ 4.5:1 against either fill (WCAG 2.1 AA).
+ * `.bannerRestricted` for the classified/restricted red (#c8102e).
  *
- * Diagonal hazard slashes flank the centred text (#728): two striped
- * gutters painted over the solid fill at the left/right edges, with the
- * fill left solid behind the text so legibility/contrast is unaffected.
- * The slashes are a translucent black overlay, so they read correctly on
- * either the green or red base without a second colour token.
+ * The bar is the full-width diagonal hazard stripe restored to its
+ * original pre-#726 look (#733): bright banner colour alternating with
+ * near-black on a -45° axis, like caution tape. The two-line text rides a
+ * centred solid chip on top, so it stays fully legible (white text on a
+ * solid fill, contrast ≥ 4.5:1 — WCAG 2.1 AA) over the stripes.
  */
 .banner {
+  display: flex;
+  justify-content: center;
+  padding: 5px 0;
+  background: repeating-linear-gradient(
+    -45deg,
+    #007a33 0,
+    #007a33 14px,
+    #0d100b 14px,
+    #0d100b 22px
+  );
+}
+
+.bannerRestricted {
+  background: repeating-linear-gradient(
+    -45deg,
+    #c8102e 0,
+    #c8102e 14px,
+    #0d100b 14px,
+    #0d100b 22px
+  );
+}
+
+.bannerChip {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 1px;
-  padding: 4px 72px 5px;
-  background-color: #007a33;
-  background-image:
-    repeating-linear-gradient(-45deg, rgba(0, 0, 0, 0.32) 0 9px, transparent 9px 19px),
-    repeating-linear-gradient(-45deg, rgba(0, 0, 0, 0.32) 0 9px, transparent 9px 19px);
-  background-position:
-    left center,
-    right center;
-  background-size: 84px 100%;
-  background-repeat: no-repeat;
+  padding: 3px 16px;
+  background: #007a33;
   color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.7);
   font-family: var(--font-mono);
   text-align: center;
   text-transform: uppercase;
 }
 
-.bannerRestricted {
-  background-color: #c8102e;
-}
-
-/* Drop the slash gutters on narrow screens so they never crowd the text. */
-@media (max-width: 30rem) {
-  .banner {
-    padding-left: 12px;
-    padding-right: 12px;
-    background-image: none;
-  }
+.bannerRestricted .bannerChip {
+  background: #c8102e;
 }
 
 .bannerTop {
@@ -103,7 +109,7 @@
   letter-spacing: 0.2em;
   padding-left: 0.2em;
   /* Full-opacity white — hierarchy comes from weight/size, not dimming,
-   * so contrast stays a clean ≥ 4.5:1 on both banner fills. */
+   * so contrast stays a clean ≥ 4.5:1 on the solid chip. */
 }
 
 /* Skip-to-content link — visually hidden until focused (WCAG 2.1 AA, #73). */
