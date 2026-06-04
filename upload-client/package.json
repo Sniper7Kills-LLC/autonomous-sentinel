@@ -19,21 +19,21 @@
     "chokidar": "^5.0.0",
     "electron-store": "^11.0.2",
     "keytar": "^7.9.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
-    "@types/react": "^19.2.15",
+    "@types/react": "^19.2.16",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^6.0.2",
-    "electron": "^42.3.0",
+    "electron": "^42.3.3",
     "electron-builder": "^26.8.1",
     "electron-vite": "^6.0.0-beta.1",
     "jsdom": "^29.1.1",
     "typescript": "^6.0.3",
-    "vite": "^8.0.14"
+    "vite": "^8.0.16"
   },
   "build": {
     "appId": "watch.eam.autonomous-sentinel-client",
