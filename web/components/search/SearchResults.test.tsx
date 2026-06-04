@@ -26,6 +26,7 @@ const sampleItem = {
   confidence: 0.9,
   flaggedForReview: false,
   publishedAt: '2026-05-27T12:30:00Z',
+  submitterId: null,
 };
 
 describe('SearchResults', () => {

@@ -13,6 +13,7 @@ describe('toDisplayRecording', () => {
       durationMs: 4200,
       sdrId: 's1',
       automated: true,
+      uploaderId: 'sub-uploader-1',
       webCanonicalKey: 'recordings/web/r1.opus',
       wordTimestampsKey: 'recordings/web/r1.words.json',
       peaksJsonKey: 'recordings/web/r1.peaks.json',
@@ -22,6 +23,7 @@ describe('toDisplayRecording', () => {
     expect(r.modulation).toBe('USB');
     expect(r.automated).toBe(true);
     expect(r.sdrId).toBe('s1');
+    expect(r.uploaderId).toBe('sub-uploader-1');
     expect(r.webCanonicalKey).toBe('recordings/web/r1.opus');
     expect(r.wordTimestampsKey).toBe('recordings/web/r1.words.json');
     expect(r.peaksJsonKey).toBe('recordings/web/r1.peaks.json');
@@ -38,6 +40,7 @@ describe('toDisplayRecording', () => {
     expect(r.wordTimestampsKey).toBeNull();
     expect(r.peaksJsonKey).toBeNull();
     expect(r.transcriptionConfidence).toBeNull();
+    expect(r.uploaderId).toBeNull();
     expect(r.linguisticAttempts).toEqual([]);
     expect(r.transcripts).toEqual([]);
   });

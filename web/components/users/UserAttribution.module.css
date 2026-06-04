@@ -1,0 +1,28 @@
+.line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin: 0.25rem 0 0;
+  font-family: var(--font-jb-mono);
+  font-size: 0.8rem;
+  color: var(--text-2);
+}
+
+.prefix {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.72rem;
+}
+
+.link {
+  color: var(--accent, #58a6ff);
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.nullLabel {
+  font-style: italic;
+}

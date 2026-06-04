@@ -17,6 +17,12 @@ export type DisplayMessage = {
   confidence: number | null;
   flaggedForReview: boolean;
   publishedAt: string | null;
+  /**
+   * Cognito sub of the witness who submitted a recording-less Message
+   * (#285). `null` for SDR-derived / automated Messages — the detail
+   * page renders the automated label in that case.
+   */
+  submitterId: string | null;
 };
 
 export type ListResult = {

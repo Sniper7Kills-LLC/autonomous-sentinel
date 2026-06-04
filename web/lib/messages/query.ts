@@ -46,6 +46,7 @@ type RawRow = {
   confidence: number | null | undefined;
   flaggedForReview: boolean | null | undefined;
   publishedAt: string | null | undefined;
+  submitterId?: string | null | undefined;
 };
 
 function isMessageType(v: unknown): v is MessageType {
@@ -63,6 +64,7 @@ export function toDisplayMessage(r: RawRow): DisplayMessage {
     confidence: typeof r.confidence === 'number' ? r.confidence : null,
     flaggedForReview: Boolean(r.flaggedForReview),
     publishedAt: r.publishedAt ?? null,
+    submitterId: r.submitterId ?? null,
   };
 }
 

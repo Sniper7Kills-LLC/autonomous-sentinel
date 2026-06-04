@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { RecordingAdminControls } from './RecordingAdminControls';
 
@@ -21,6 +21,11 @@ vi.mock('@/lib/uploads/reparse', () => ({
   reparseRecording: (id: string): Promise<void> => reparseMock(id),
 }));
 
+const softDeleteMock = vi.fn<(id: string, reason?: string) => Promise<void>>();
+vi.mock('@/lib/messages/admin', () => ({
+  softDeleteRecording: (id: string, reason?: string): Promise<void> => softDeleteMock(id, reason),
+}));
+
 describe('RecordingAdminControls (#566)', () => {
   beforeEach(() => {
     groupsMock.mockReset();
@@ -28,6 +33,12 @@ describe('RecordingAdminControls (#566)', () => {
     reprocessMock.mockResolvedValue();
     reparseMock.mockReset();
     reparseMock.mockResolvedValue();
+    softDeleteMock.mockReset();
+    softDeleteMock.mockResolvedValue();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('is hidden for a member session', async () => {
@@ -122,5 +133,34 @@ describe('RecordingAdminControls (#566)', () => {
     expect(screen.getByRole('button', { name: /re-parse transcript/i })).toBeDisabled();
     // The full reprocess stays available — it works from stored audio.
     expect(screen.getByRole('button', { name: /re-transcribe \+ parse/i })).toBeEnabled();
+  });
+
+  it('hides Delete recording for a moderator (admin-only #721)', async () => {
+    groupsMock.mockResolvedValue(['moderator']);
+    render(<RecordingAdminControls recordingId="rec-1" hasTranscript />);
+    await waitFor(() => expect(screen.getByTestId('recording-admin-controls')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: /delete recording/i })).not.toBeInTheDocument();
+  });
+
+  it('soft-deletes a recording after confirm and notifies the parent (#721)', async () => {
+    groupsMock.mockResolvedValue(['admin']);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const onDeleted = vi.fn();
+    render(<RecordingAdminControls recordingId="rec-del" hasTranscript onDeleted={onDeleted} />);
+    await waitFor(() => expect(screen.getByTestId('recording-admin-controls')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /delete recording/i }));
+    await waitFor(() => expect(softDeleteMock).toHaveBeenCalledWith('rec-del', undefined));
+    expect(onDeleted).toHaveBeenCalled();
+  });
+
+  it('does not soft-delete when the confirm is cancelled (#721)', async () => {
+    groupsMock.mockResolvedValue(['admin']);
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const onDeleted = vi.fn();
+    render(<RecordingAdminControls recordingId="rec-del" hasTranscript onDeleted={onDeleted} />);
+    await waitFor(() => expect(screen.getByTestId('recording-admin-controls')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /delete recording/i }));
+    expect(softDeleteMock).not.toHaveBeenCalled();
+    expect(onDeleted).not.toHaveBeenCalled();
   });
 });
