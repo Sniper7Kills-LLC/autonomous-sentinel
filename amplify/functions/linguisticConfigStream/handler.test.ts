@@ -93,11 +93,13 @@ describe('processConfigChange — audit on every update (#481a)', () => {
     expect(sendReprocess).not.toHaveBeenCalled();
   });
 
-  it('records actorId null as a system entry', async () => {
+  it('records a system entry (no actorId) when there is no actor', async () => {
     const { client, auditCreate, sendReprocess } = makeStub();
     __setDeps({ dataClient: client, sendReprocess, now: NOW, reprocessQueueUrl: 'q' });
     await processConfigChange(update({ actorId: null }), {});
-    expect(auditCreate.mock.calls[0]?.[0]).toMatchObject({ actorId: null });
+    // actorId is OMITTED (not null) for system entries — a NULL value would
+    // break the i('actorId') sparse GSI key (#718).
+    expect(auditCreate.mock.calls[0]?.[0]).not.toHaveProperty('actorId');
   });
 });
 

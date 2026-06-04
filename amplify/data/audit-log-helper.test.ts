@@ -72,7 +72,7 @@ describe('audit helper', () => {
     expect(input.targetId).toBe('msg-1');
   });
 
-  it('treats unauthenticated ctx (no identity) as a system-emitted entry (actorId null)', async () => {
+  it('treats unauthenticated ctx (no identity) as a system entry — omits actorId (sparse GSI key, #718)', async () => {
     await audit(
       { request: { headers: {} } },
       {
@@ -84,7 +84,8 @@ describe('audit helper', () => {
     );
 
     const input = fake.createSpy.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(input.actorId).toBeNull();
+    // Omitted, not null — a NULL value would break the i('actorId') GSI key.
+    expect(input).not.toHaveProperty('actorId');
   });
 
   it('returns the created entry id from the data client response', async () => {
@@ -247,7 +248,10 @@ describe('audit helper', () => {
     );
 
     const input = fake.createSpy.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(input.targetMessageId).toBeNull();
+    // Omitted, not null — a NULL value would break the gsi-Message.auditEntries
+    // GSI key (#718). Actor present here (makeCtx has identity), so actorId stays.
+    expect(input).not.toHaveProperty('targetMessageId');
+    expect(input.actorId).toBe('cognito-sub-actor-123');
   });
 
   it('throws if the data client returns errors', async () => {
