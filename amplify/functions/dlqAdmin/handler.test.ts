@@ -195,6 +195,66 @@ describe('dlqAdmin handler (#107)', () => {
       );
     });
 
+    it('with a messageId, re-receives a fresh handle and deletes that one (stale-handle fix #731)', async () => {
+      const send = vi.fn();
+      // Re-receive round: the target message comes back with a FRESH handle
+      // (the UI-held one is stale). A decoy with a different id is ignored.
+      send.mockResolvedValueOnce({
+        Messages: [
+          { MessageId: 'other', ReceiptHandle: 'fresh-other' },
+          { MessageId: 'm-target', ReceiptHandle: 'fresh-target' },
+        ],
+      });
+      // SendMessage (primary) + DeleteMessage resolve.
+      send.mockResolvedValue({});
+      const audit = vi.fn().mockResolvedValue('audit-id');
+      __setDeps({ sqs: { send } as never, audit });
+
+      const res = await handler(
+        event('requeueDlqMessage', {
+          stage: 'transcribe',
+          messageId: 'm-target',
+          receiptHandle: 'stale-handle',
+          body: '{"recordingId":"rec-9"}',
+          recordingId: 'rec-9',
+        }),
+        context,
+        cb,
+      );
+
+      expect(res).toEqual({ status: 'requeued' });
+      // First call re-receives from the DLQ to find a fresh handle.
+      expect(send.mock.calls[0]![0]).toBeInstanceOf(ReceiveMessageCommand);
+      // The delete uses the FRESH handle, never the stale UI-supplied one.
+      const deleteCmd = (send.mock.calls as unknown[][])
+        .map((c) => c[0])
+        .find((c): c is DeleteMessageCommand => c instanceof DeleteMessageCommand)!;
+      expect(deleteCmd.input.ReceiptHandle).toBe('fresh-target');
+      expect(deleteCmd.input.ReceiptHandle).not.toBe('stale-handle');
+    });
+
+    it('with a messageId no longer on the DLQ, does NOT requeue (avoids a half-requeue)', async () => {
+      const send = vi.fn().mockResolvedValue({ Messages: [] });
+      const audit = vi.fn();
+      __setDeps({ sqs: { send } as never, audit });
+
+      await expect(
+        handler(
+          event('requeueDlqMessage', {
+            stage: 'transcribe',
+            messageId: 'gone',
+            receiptHandle: 'stale',
+            body: '{}',
+          }),
+          context,
+          cb,
+        ),
+      ).rejects.toThrow(/no longer on the DLQ/);
+      // Never sent to the primary queue, never audited.
+      expect(send.mock.calls.every((c) => !(c[0] instanceof SendMessageCommand))).toBe(true);
+      expect(audit).not.toHaveBeenCalled();
+    });
+
     it('requires receiptHandle + body', async () => {
       __setDeps({ sqs: { send: vi.fn() } as never, audit: vi.fn() });
       await expect(
@@ -247,6 +307,67 @@ describe('dlqAdmin handler (#107)', () => {
       expect(audit).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({ action: 'DLQ_DROP', targetId: 'rec-7' }),
+      );
+    });
+
+    it('with a messageId, deletes the FRESH handle from the DLQ (stale-handle fix #731)', async () => {
+      const send = vi.fn();
+      // Re-receive: the target returns with a fresh handle; the UI-held one is stale.
+      send.mockResolvedValueOnce({
+        Messages: [{ MessageId: 'm-drop', ReceiptHandle: 'fresh-drop' }],
+      });
+      send.mockResolvedValue({});
+      const update = vi.fn().mockResolvedValue({ data: { id: 'rec-7' } });
+      const audit = vi.fn().mockResolvedValue('audit-id');
+      __setDeps({
+        sqs: { send } as never,
+        dataClient: { models: { Recording: { update } } },
+        audit,
+        now: () => new Date('2026-06-02T00:00:00.000Z'),
+      });
+
+      const res = await handler(
+        event('dropDlqMessage', {
+          stage: 'linguistic',
+          messageId: 'm-drop',
+          receiptHandle: 'stale-handle',
+          recordingId: 'rec-7',
+        }),
+        context,
+        cb,
+      );
+
+      expect(res).toEqual({ status: 'dropped' });
+      const deleteCmd = (send.mock.calls as unknown[][])
+        .map((c) => c[0])
+        .find((c): c is DeleteMessageCommand => c instanceof DeleteMessageCommand)!;
+      expect(deleteCmd.input.QueueUrl).toBe(ENV.LINGUISTIC_DLQ_URL);
+      expect(deleteCmd.input.ReceiptHandle).toBe('fresh-drop');
+      expect(deleteCmd.input.ReceiptHandle).not.toBe('stale-handle');
+    });
+
+    it('with a messageId already gone from the DLQ, resolves dropped without a delete', async () => {
+      // Re-receive returns nothing → message already removed; drop is a no-op success.
+      const send = vi.fn().mockResolvedValue({ Messages: [] });
+      const audit = vi.fn().mockResolvedValue('audit-id');
+      __setDeps({ sqs: { send } as never, audit, now: () => new Date('2026-06-02T00:00:00.000Z') });
+
+      const res = await handler(
+        event('dropDlqMessage', {
+          stage: 'preprocess',
+          messageId: 'gone',
+          receiptHandle: 'stale',
+        }),
+        context,
+        cb,
+      );
+
+      expect(res).toEqual({ status: 'dropped' });
+      expect(send.mock.calls.every((c) => !(c[0] instanceof DeleteMessageCommand))).toBe(true);
+      // Still audited — the admin's intent (it's gone) is recorded.
+      expect(audit).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ action: 'DLQ_DROP' }),
       );
     });
 
