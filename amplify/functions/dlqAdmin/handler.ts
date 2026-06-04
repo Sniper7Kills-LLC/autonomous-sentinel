@@ -232,8 +232,15 @@ function parseBody(body: string): { recordingId: string | null; errorReason: str
  * SQS can't fetch a specific MessageId, so we page through the queue:
  * incidental non-target messages are received with a short visibility
  * timeout (briefly hidden) so successive rounds advance instead of
- * re-reading the same items. Returns the fresh handle, or `null` when the
- * message isn't on the queue (already actioned / in-flight).
+ * re-reading the same items. A message the function itself receives and
+ * matches is returned immediately (before its hide matters), so the scan
+ * can never hide its own target. These are dead-letter queues with no
+ * other consumer, so nothing else hides messages concurrently — when this
+ * runs, every stuck message is visible.
+ *
+ * Returns the fresh handle, or `null` when the message isn't on the queue
+ * (already actioned). Bounded at `maxRounds × 10` messages scanned; a DLQ
+ * larger than that logs a warning rather than silently reporting "gone".
  */
 async function receiveFreshHandle(
   sqs: SQSClient,
@@ -255,7 +262,9 @@ async function receiveFreshHandle(
       }),
     );
     const batch = res.Messages ?? [];
-    if (batch.length === 0) break;
+    // Empty batch / only-already-seen batch → the queue holds nothing new;
+    // the target genuinely isn't here.
+    if (batch.length === 0) return null;
     let progressed = false;
     for (const m of batch) {
       if (!m.MessageId || !m.ReceiptHandle) continue;
@@ -265,10 +274,16 @@ async function receiveFreshHandle(
         progressed = true;
       }
     }
-    // Only re-seeing already-known messages → the queue is exhausted of
-    // anything new; the target isn't here.
-    if (!progressed) break;
+    if (!progressed) return null;
   }
+  // Fell through every round still finding new messages → the DLQ is larger
+  // than the scan budget and the target may lie beyond it. Surface it rather
+  // than report a false "gone" (which would no-op the drop / abort requeue).
+  console.warn('receiveFreshHandle: scan budget exhausted before finding the target message', {
+    messageId,
+    queueUrl,
+    scanned: maxRounds * 10,
+  });
   return null;
 }
 
