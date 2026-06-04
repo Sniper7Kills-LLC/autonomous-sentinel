@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useState, type JSX } from 'react';
+import Link from 'next/link';
 import { Authenticator } from '@aws-amplify/ui-react';
 import '@aws-amplify/ui-react/styles.css';
 import { Alert } from '@/components/ui/Alert';
@@ -37,12 +38,12 @@ function Hero() {
           uploads runs your file.
         </p>
         <div className={styles.heroLinks}>
-          <a className={styles.heroLink} href="/about">
+          <Link className={styles.heroLink} href="/about">
             What this site is →
-          </a>
-          <a className={styles.heroLink} href="/dev/style-guide">
+          </Link>
+          <Link className={styles.heroLink} href="/dev/style-guide">
             Design system →
-          </a>
+          </Link>
         </div>
       </div>
     </section>

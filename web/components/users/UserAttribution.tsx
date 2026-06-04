@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { getUserLabel, shortSub, type UserLabel } from '@/lib/users/label';
 import styles from './UserAttribution.module.css';
@@ -58,9 +59,9 @@ export function UserAttribution({ sub, prefix, nullLabel }: UserAttributionProps
   return (
     <p className={styles.line} data-testid="user-attribution">
       <span className={styles.prefix}>{prefix}</span>
-      <a className={styles.link} href={`/users/view?id=${encodeURIComponent(sub)}`}>
+      <Link className={styles.link} href={`/users/view?id=${encodeURIComponent(sub)}`}>
         {resolved?.label ?? shortSub(sub)}
-      </a>
+      </Link>
     </p>
   );
 }

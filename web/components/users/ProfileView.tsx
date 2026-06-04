@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { useSessionState } from '@/components/account/SessionGreeting';
 import { getProfile, type DisplayProfile, type UserRole } from '@/lib/users/profile';
@@ -167,12 +168,12 @@ export function ProfileView({ id }: ProfileViewProps) {
             embedding those flows here.
           */}
           <div className={styles.actions}>
-            <a className={styles.actionLink} href="/settings/notifications">
+            <Link className={styles.actionLink} href="/settings/notifications">
               Notification settings
-            </a>
-            <a className={styles.actionLink} href="/settings/delete">
+            </Link>
+            <Link className={styles.actionLink} href="/settings/delete">
               Delete account
-            </a>
+            </Link>
           </div>
         </section>
       )}

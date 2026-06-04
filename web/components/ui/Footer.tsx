@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import styles from './Footer.module.css';
 
 /**
@@ -30,9 +31,9 @@ export function Footer({ buildId = BUILD_SHA }: FooterProps) {
         <a href="#skykings">Skykings</a>
         <a href="#skybird">Skybird</a>
         <a href="#map">Propagation map</a>
-        <a href="/donate">Donate</a>
-        <a href="/support">Supporter tiers</a>
-        <a href="/transparency">Cost transparency</a>
+        <Link href="/donate">Donate</Link>
+        <Link href="/support">Supporter tiers</Link>
+        <Link href="/transparency">Cost transparency</Link>
       </nav>
 
       <nav className={styles.col} aria-label="Footer resources">
