@@ -2,11 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { SiteHeader } from './SiteHeader';
 
-const fetchCallerGroups = vi.fn();
-vi.mock('@/lib/auth/roles', async (importActual) => {
-  const actual = await importActual<Record<string, unknown>>();
-  return { ...actual, fetchCallerGroups: () => fetchCallerGroups() as Promise<string[]> };
-});
+let callerGroups: string[] = [];
+vi.mock('@/components/auth/AuthProvider', () => ({
+  useCallerGroups: () => ({ groups: callerGroups, loading: false }),
+}));
 vi.mock('@/components/theme/ThemeToggle', () => ({
   ThemeToggle: () => <div data-testid="theme-toggle" />,
 }));
@@ -17,37 +16,35 @@ vi.mock('next/navigation', () => ({
 }));
 
 describe('SiteHeader', () => {
-  beforeEach(() => vi.useFakeTimers());
+  beforeEach(() => {
+    vi.useFakeTimers();
+    callerGroups = [];
+  });
   afterEach(() => {
     vi.runOnlyPendingTimers();
     vi.useRealTimers();
-    fetchCallerGroups.mockReset();
     push.mockReset();
   });
 
   it('always renders the primary nav + brand', () => {
-    fetchCallerGroups.mockResolvedValue([]);
     render(<SiteHeader />);
     expect(screen.getByRole('navigation', { name: /primary/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /messages/i })).toBeInTheDocument();
   });
 
-  it('hides the Admin link from members', async () => {
-    fetchCallerGroups.mockResolvedValue([]);
+  it('hides the Admin link from members', () => {
+    callerGroups = [];
     render(<SiteHeader />);
-    await vi.advanceTimersByTimeAsync(0);
     expect(screen.queryByRole('link', { name: /^admin$/i })).not.toBeInTheDocument();
   });
 
-  it('shows the Admin link for moderators and admins', async () => {
-    fetchCallerGroups.mockResolvedValue(['moderator']);
+  it('shows the Admin link for moderators and admins', () => {
+    callerGroups = ['moderator'];
     render(<SiteHeader />);
-    await vi.advanceTimersByTimeAsync(0);
     expect(screen.getByRole('link', { name: /^admin$/i })).toBeInTheDocument();
   });
 
   it('exposes an accessible site search input that submits to /search?q=', () => {
-    fetchCallerGroups.mockResolvedValue([]);
     render(<SiteHeader />);
     expect(screen.getByRole('search', { name: /site search/i })).toBeInTheDocument();
     const input = screen.getByRole('searchbox', { name: /search messages/i });
@@ -57,7 +54,6 @@ describe('SiteHeader', () => {
   });
 
   it('marks the active nav item with aria-current', () => {
-    fetchCallerGroups.mockResolvedValue([]);
     render(<SiteHeader />);
     expect(screen.getByRole('link', { name: /messages/i })).toHaveAttribute('aria-current', 'page');
   });

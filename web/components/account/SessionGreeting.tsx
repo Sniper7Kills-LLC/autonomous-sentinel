@@ -1,7 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { configureAmplifyOnce } from '@/lib/amplifyClient';
+import { useAuth } from '@/components/auth/AuthProvider';
 
 interface SessionState {
   loading: boolean;
@@ -19,42 +18,13 @@ interface SessionState {
  * Used to flip the landing page into its personalized panel for
  * authenticated visitors without forcing the Authenticator modal
  * onto guests.
+ *
+ * Backed by the root {@link useAuth} context (#720): identity is fetched
+ * once per session and served synchronously here, so consumers no longer
+ * re-probe Cognito (and flash) on every navigation. The hook surface is
+ * unchanged for back-compat with existing callers.
  */
 export function useSessionState(): SessionState {
-  const [state, setState] = useState<SessionState>({
-    loading: true,
-    signedIn: false,
-    username: null,
-    sub: null,
-  });
-
-  useEffect(() => {
-    let cancelled = false;
-    configureAmplifyOnce();
-    void (async () => {
-      try {
-        const { getCurrentUser, fetchAuthSession } = await import('aws-amplify/auth');
-        const user = await getCurrentUser();
-        const session = await fetchAuthSession();
-        const idClaims = session.tokens?.idToken?.payload;
-        const sub =
-          (typeof idClaims?.sub === 'string' ? idClaims.sub : null) ?? user?.userId ?? null;
-        if (cancelled) return;
-        setState({
-          loading: false,
-          signedIn: true,
-          username: user?.signInDetails?.loginId ?? user?.username ?? null,
-          sub,
-        });
-      } catch {
-        if (cancelled) return;
-        setState({ loading: false, signedIn: false, username: null, sub: null });
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return state;
+  const { loading, signedIn, username, sub } = useAuth();
+  return { loading, signedIn, username, sub };
 }
