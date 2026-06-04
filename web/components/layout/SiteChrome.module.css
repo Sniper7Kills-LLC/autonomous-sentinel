@@ -79,7 +79,8 @@
   font-size: 10px;
   letter-spacing: 0.2em;
   padding-left: 0.2em;
-  opacity: 0.94;
+  /* Full-opacity white — hierarchy comes from weight/size, not dimming,
+   * so contrast stays a clean ≥ 4.5:1 on both banner fills. */
 }
 
 /* Skip-to-content link — visually hidden until focused (WCAG 2.1 AA, #73). */
