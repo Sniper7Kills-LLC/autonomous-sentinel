@@ -744,3 +744,155 @@ describe('userMutations handler — unbanUser (#112)', () => {
     expect(auditSpy).not.toHaveBeenCalled();
   });
 });
+
+describe('userMutations handler — updateProfile (#736)', () => {
+  let users: Map<string, UserRow>;
+  let userUpdateSpy: ReturnType<typeof vi.fn>;
+  let auditSpy: Mock<() => Promise<string>>;
+
+  function setup(row: Partial<UserRow> = {}) {
+    users = new Map<string, UserRow>([
+      [
+        'cognito-sub-actor-123',
+        {
+          cognitoSub: 'cognito-sub-actor-123',
+          email: 'me@example.com',
+          preferredUsername: 'old-handle',
+          displayName: 'Old Name',
+          role: 'member',
+          piiBlanked: false,
+          ...row,
+        },
+      ],
+    ]);
+    userUpdateSpy = vi.fn((input: Partial<UserRow> & { cognitoSub: string }) => {
+      const before = users.get(input.cognitoSub);
+      const merged: UserRow = { ...(before ?? { cognitoSub: input.cognitoSub }), ...input };
+      users.set(input.cognitoSub, merged);
+      return Promise.resolve({ data: merged, errors: undefined });
+    });
+    auditSpy = vi.fn<() => Promise<string>>(() => Promise.resolve('audit-id-4'));
+    __setDeps({
+      dataClient: {
+        models: {
+          User: {
+            get: vi.fn((input: { cognitoSub: string }) =>
+              Promise.resolve({ data: users.get(input.cognitoSub) ?? null, errors: undefined }),
+            ),
+            update: userUpdateSpy,
+          },
+          Sdr: {
+            listSdrByOwnerId: vi.fn(() => Promise.resolve({ data: [], errors: undefined })),
+            update: vi.fn(),
+          },
+        },
+      } as unknown as UserMutationsDataClient,
+      audit: auditSpy,
+    });
+  }
+
+  it('updates only the provided profile fields and audits USER_PROFILE_UPDATE', async () => {
+    setup();
+    const event = makeEvent({
+      fieldName: 'updateProfile',
+      arguments: {
+        displayName: 'New Name',
+        bio: 'I watch the skies.',
+        avatarKey: 'profile-photos/cognito-sub-actor-123/a.png',
+      },
+    });
+    const result = (await handler(event, {} as Context, () => undefined)) as UserRow;
+
+    const patch = userUpdateSpy.mock.calls[0]?.[0] as UserRow;
+    expect(patch.cognitoSub).toBe('cognito-sub-actor-123');
+    expect(patch.displayName).toBe('New Name');
+    expect(patch.bio).toBe('I watch the skies.');
+    expect(patch.avatarKey).toBe('profile-photos/cognito-sub-actor-123/a.png');
+    // preferredUsername was not provided → untouched (key absent from patch).
+    expect('preferredUsername' in patch).toBe(false);
+
+    expect(result.displayName).toBe('New Name');
+
+    const [, opts] = auditSpy.mock.calls[0] as unknown as [unknown, Record<string, unknown>];
+    expect(opts.action).toBe('USER_PROFILE_UPDATE');
+    expect(opts.targetType).toBe('User');
+    expect(opts.targetId).toBe('cognito-sub-actor-123');
+  });
+
+  it('clears a field when an empty string is passed (stored as null)', async () => {
+    setup({ bio: 'something' });
+    const event = makeEvent({ fieldName: 'updateProfile', arguments: { bio: '' } });
+    await handler(event, {} as Context, () => undefined);
+
+    const patch = userUpdateSpy.mock.calls[0]?.[0] as UserRow;
+    expect(patch.bio).toBeNull();
+  });
+
+  it('rejects unauthenticated callers (no identity.sub)', async () => {
+    setup();
+    const event = makeEvent({ fieldName: 'updateProfile', arguments: { displayName: 'X' } });
+    event.identity = null;
+    await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(/identity/i);
+    expect(userUpdateSpy).not.toHaveBeenCalled();
+    expect(auditSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a banned user', async () => {
+    setup({ bannedAt: '2026-05-01T00:00:00.000Z', bannedReason: 'spam' });
+    const event = makeEvent({ fieldName: 'updateProfile', arguments: { displayName: 'X' } });
+    await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(/banned/i);
+    expect(userUpdateSpy).not.toHaveBeenCalled();
+    expect(auditSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a displayName over 80 chars', async () => {
+    setup();
+    const event = makeEvent({
+      fieldName: 'updateProfile',
+      arguments: { displayName: 'a'.repeat(81) },
+    });
+    await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(/80/);
+    expect(userUpdateSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a bio over 500 chars', async () => {
+    setup();
+    const event = makeEvent({
+      fieldName: 'updateProfile',
+      arguments: { bio: 'a'.repeat(501) },
+    });
+    await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(/500/);
+    expect(userUpdateSpy).not.toHaveBeenCalled();
+  });
+
+  it('never writes role / ban / pii / claim columns even if passed as args', async () => {
+    setup();
+    const event = makeEvent({
+      fieldName: 'updateProfile',
+      arguments: {
+        displayName: 'New Name',
+        // Hostile extra args — must be ignored.
+        role: 'admin',
+        bannedAt: null,
+        piiBlanked: false,
+        claimStatus: 'CLAIMED',
+      },
+    });
+    await handler(event, {} as Context, () => undefined);
+
+    const patch = userUpdateSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(Object.keys(patch).sort()).toEqual(['cognitoSub', 'displayName'].sort());
+    expect('role' in patch).toBe(false);
+    expect('bannedAt' in patch).toBe(false);
+    expect('piiBlanked' in patch).toBe(false);
+    expect('claimStatus' in patch).toBe(false);
+  });
+
+  it('throws if the target row does not exist', async () => {
+    setup();
+    users.clear();
+    const event = makeEvent({ fieldName: 'updateProfile', arguments: { displayName: 'X' } });
+    await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(/not found/i);
+    expect(userUpdateSpy).not.toHaveBeenCalled();
+  });
+});

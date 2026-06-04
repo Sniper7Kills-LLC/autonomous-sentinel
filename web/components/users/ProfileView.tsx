@@ -4,7 +4,12 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { useSessionState } from '@/components/account/SessionGreeting';
-import { getProfile, type DisplayProfile, type UserRole } from '@/lib/users/profile';
+import {
+  getProfile,
+  resolveAvatarUrl,
+  type DisplayProfile,
+  type UserRole,
+} from '@/lib/users/profile';
 import styles from './ProfileView.module.css';
 
 interface ProfileViewProps {
@@ -29,6 +34,12 @@ function formatJoined(ts: string | null): string | null {
   return d.toISOString().slice(0, 10);
 }
 
+/** First letter of the best label, for the no-avatar placeholder. */
+function monogram(label: string): string {
+  const ch = label.trim().charAt(0);
+  return ch ? ch.toUpperCase() : '?';
+}
+
 /**
  * `<ProfileView>` — public operator profile card (#85).
  *
@@ -47,6 +58,7 @@ function formatJoined(ts: string | null): string | null {
  */
 export function ProfileView({ id }: ProfileViewProps) {
   const [profile, setProfile] = useState<DisplayProfile | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const session = useSessionState();
@@ -55,6 +67,7 @@ export function ProfileView({ id }: ProfileViewProps) {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setAvatarUrl(null);
     getProfile(id)
       .then((p) => {
         if (!cancelled) setProfile(p);
@@ -69,6 +82,23 @@ export function ProfileView({ id }: ProfileViewProps) {
       cancelled = true;
     };
   }, [id]);
+
+  const avatarKey = profile?.avatarKey ?? null;
+  useEffect(() => {
+    let cancelled = false;
+    setAvatarUrl(null);
+    if (!avatarKey) return;
+    resolveAvatarUrl(avatarKey)
+      .then((url) => {
+        if (!cancelled) setAvatarUrl(url);
+      })
+      .catch(() => {
+        /* avatar is best-effort; fall back to the monogram placeholder */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [avatarKey]);
 
   if (loading) {
     return (
@@ -107,29 +137,43 @@ export function ProfileView({ id }: ProfileViewProps) {
   return (
     <div className={styles.shell}>
       <section className={styles.card} aria-labelledby="profile-name">
-        <div className={styles.top}>
-          <h2 id="profile-name" className={styles.name}>
-            {label}
-          </h2>
-          <Badge tone={ROLE_TONE[profile.role]}>{roleLabel(profile.role)}</Badge>
-          {isSelf && <Badge tone="info">YOU</Badge>}
-          {/*
-            Supporter-badge slot (#106): the Donation model has no public
-            read surface yet, so no badge data is available here. Render
-            nothing rather than fake a badge — wire the public badge-state
-            read in #106.
-          */}
+        <div className={styles.identity}>
+          {avatarUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element -- S3 signed URL, not a static asset
+            <img className={styles.avatar} src={avatarUrl} alt="" data-testid="profile-avatar" />
+          ) : (
+            <span className={styles.avatarPlaceholder} aria-hidden data-testid="profile-monogram">
+              {monogram(label)}
+            </span>
+          )}
+          <div className={styles.identityText}>
+            <div className={styles.top}>
+              <h2 id="profile-name" className={styles.name}>
+                {label}
+              </h2>
+              <Badge tone={ROLE_TONE[profile.role]}>{roleLabel(profile.role)}</Badge>
+              {isSelf && <Badge tone="info">YOU</Badge>}
+              {/*
+                Supporter-badge slot (#106): the Donation model has no public
+                read surface yet, so no badge data is available here. Render
+                nothing rather than fake a badge — wire the public badge-state
+                read in #106.
+              */}
+            </div>
+
+            {profile.handle && profile.displayName && profile.handle !== profile.displayName && (
+              <p className={styles.handle}>@{profile.handle}</p>
+            )}
+
+            {joined && (
+              <p className={styles.joined}>
+                Joined <time dateTime={profile.joinedAt ?? undefined}>{joined}</time>
+              </p>
+            )}
+          </div>
         </div>
 
-        {profile.handle && profile.displayName && profile.handle !== profile.displayName && (
-          <p className={styles.handle}>@{profile.handle}</p>
-        )}
-
-        {joined && (
-          <p className={styles.joined}>
-            Joined <time dateTime={profile.joinedAt ?? undefined}>{joined}</time>
-          </p>
-        )}
+        {profile.bio && <p className={styles.bio}>{profile.bio}</p>}
       </section>
 
       <section className={styles.card} aria-labelledby="profile-stats">

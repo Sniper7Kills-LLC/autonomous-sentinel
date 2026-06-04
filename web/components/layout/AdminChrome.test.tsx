@@ -11,7 +11,15 @@ vi.mock('next/navigation', () => ({
 }));
 vi.mock('@/components/auth/AuthProvider', () => ({
   useCallerGroups: () => callerGroups,
+  useAuth: () => ({
+    loading: callerGroups.loading,
+    signedIn: callerGroups.groups.length > 0,
+    username: callerGroups.groups.length > 0 ? 'admin@example.com' : null,
+    sub: callerGroups.groups.length > 0 ? 'sub-admin' : null,
+    groups: callerGroups.groups,
+  }),
 }));
+vi.mock('./UserMenu', () => ({ UserMenu: () => <div data-testid="user-menu" /> }));
 vi.mock('@/components/auth/AmplifyConfigure', () => ({ AmplifyConfigure: () => null }));
 vi.mock('@/components/theme/ThemeToggle', () => ({ ThemeToggle: () => <div /> }));
 

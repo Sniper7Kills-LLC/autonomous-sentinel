@@ -1,7 +1,23 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const updateProfileMock = vi.fn();
+
+vi.mock('@/lib/amplifyClient', () => ({
+  getDataClient: () => ({
+    mutations: {
+      updateProfile: updateProfileMock,
+    },
+  }),
+}));
+
+vi.mock('@/lib/auth/mode', () => ({
+  resolveAuthMode: vi.fn().mockResolvedValue('userPool'),
+}));
+
 import {
   toDisplayProfile,
   toReputationStats,
+  updateMyProfile,
   type RawReputation,
   type RawUserPublic,
 } from './profile';
@@ -31,6 +47,8 @@ describe('toDisplayProfile', () => {
     role: 'moderator',
     piiBlanked: false,
     createdAt: '2026-01-01T00:00:00Z',
+    bio: 'Listens to the HFGCS at 0300Z.',
+    avatarKey: 'avatars/sub-123.png',
   };
 
   it('maps a populated row with reputation', () => {
@@ -41,6 +59,8 @@ describe('toDisplayProfile', () => {
     expect(p.role).toBe('moderator');
     expect(p.joinedAt).toBe('2026-01-01T00:00:00Z');
     expect(p.piiBlanked).toBe(false);
+    expect(p.bio).toBe('Listens to the HFGCS at 0300Z.');
+    expect(p.avatarKey).toBe('avatars/sub-123.png');
     expect(p.reputation).toEqual({
       computedWeight: 2,
       validatedSubmissions: 5,
@@ -91,5 +111,31 @@ describe('toDisplayProfile', () => {
 
   it('empty id when cognitoSub missing', () => {
     expect(toDisplayProfile({ cognitoSub: null }, null).id).toBe('');
+  });
+
+  it('null-safes bio + avatarKey when absent', () => {
+    const p = toDisplayProfile({ cognitoSub: 'sub-1' }, null);
+    expect(p.bio).toBeNull();
+    expect(p.avatarKey).toBeNull();
+  });
+});
+
+describe('updateMyProfile', () => {
+  beforeEach(() => {
+    updateProfileMock.mockReset();
+  });
+
+  it('calls the updateProfile mutation with the input and userPool auth', async () => {
+    updateProfileMock.mockResolvedValue({ data: {}, errors: null });
+    await updateMyProfile({ displayName: 'New Name', bio: 'hi', avatarKey: 'avatars/a.png' });
+    expect(updateProfileMock).toHaveBeenCalledWith(
+      { displayName: 'New Name', bio: 'hi', avatarKey: 'avatars/a.png' },
+      { authMode: 'userPool' },
+    );
+  });
+
+  it('throws when the mutation returns errors', async () => {
+    updateProfileMock.mockResolvedValue({ data: null, errors: [{ message: 'Unauthorized' }] });
+    await expect(updateMyProfile({ bio: 'x' })).rejects.toThrow('Unauthorized');
   });
 });

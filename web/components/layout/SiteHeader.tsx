@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
-import { useCallerGroups } from '@/components/auth/AuthProvider';
+import { UserMenu } from './UserMenu';
+import { useAuth, useCallerGroups } from '@/components/auth/AuthProvider';
 import { isModeratorOrAdmin } from '@/lib/auth/roles';
 import styles from './SiteChrome.module.css';
 
@@ -31,6 +32,7 @@ export function SiteHeader() {
   const [clock, setClock] = useState<string>('');
   const [search, setSearch] = useState('');
   const { groups } = useCallerGroups();
+  const { signedIn } = useAuth();
   const showAdmin = isModeratorOrAdmin(groups);
 
   useEffect(() => {
@@ -99,7 +101,7 @@ export function SiteHeader() {
         <span className={styles.clock} suppressHydrationWarning>
           {clock ? `${clock}Z` : ' '}
         </span>
-        <ThemeToggle />
+        {signedIn ? <UserMenu /> : <ThemeToggle />}
       </div>
     </header>
   );

@@ -17,8 +17,8 @@ import { getDdbClient } from '../legacyClaimWorker/fan-out-production';
  *   - If the row is missing → return null.
  *   - If `piiBlanked=true` and the caller is NOT in the `admin`
  *     Cognito group → blank `email` / `preferredUsername` /
- *     `displayName` on the returned payload (the underlying row
- *     keeps the values for audit purposes).
+ *     `displayName` / `bio` / `avatarKey` on the returned payload
+ *     (the underlying row keeps the values for audit purposes).
  *   - Admin callers always see the un-filtered row, including the
  *     blanked-but-retained values.
  *
@@ -32,6 +32,8 @@ export type UserRow = {
   email?: string | null;
   preferredUsername?: string | null;
   displayName?: string | null;
+  bio?: string | null;
+  avatarKey?: string | null;
   piiBlanked?: boolean | null;
   [k: string]: unknown;
 };
@@ -74,7 +76,7 @@ function resolveDeps(): GetUserPublicDeps {
   };
 }
 
-const PII_FIELDS = ['email', 'preferredUsername', 'displayName'] as const;
+const PII_FIELDS = ['email', 'preferredUsername', 'displayName', 'bio', 'avatarKey'] as const;
 const ADMIN_GROUP = 'admin';
 
 function isAdmin(identity: unknown): boolean {

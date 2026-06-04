@@ -43,6 +43,10 @@ export interface DisplayProfile {
   joinedAt: string | null;
   /** True once the user has self-deleted (PII blanked). */
   piiBlanked: boolean;
+  /** Free-text user-authored bio, when set. */
+  bio: string | null;
+  /** S3 key of the avatar image, when set. Resolve via `resolveAvatarUrl`. */
+  avatarKey: string | null;
   /**
    * Reputation-derived public stats. `null` when the user has no
    * Reputation row yet (fresh account before first recompute).
@@ -69,6 +73,8 @@ export type RawUserPublic = {
   role?: string | null;
   piiBlanked?: boolean | null;
   createdAt?: string | null;
+  bio?: string | null;
+  avatarKey?: string | null;
 };
 
 export type RawReputation = {
@@ -89,6 +95,8 @@ export function toDisplayProfile(
     role: isUserRole(row.role) ? row.role : 'member',
     joinedAt: row.createdAt ?? null,
     piiBlanked: Boolean(row.piiBlanked),
+    bio: row.bio ?? null,
+    avatarKey: row.avatarKey ?? null,
     reputation: reputation ? toReputationStats(reputation) : null,
   };
 }
@@ -160,4 +168,54 @@ async function fetchReputation(
   } catch {
     return null;
   }
+}
+
+/**
+ * Update the caller's own profile via the owner-only `updateProfile`
+ * mutation (#736). All fields are optional; only the provided ones are
+ * written. Always uses the Cognito `userPool` token — the mutation is
+ * owner-gated server-side, so a guest call returns Unauthorized.
+ *
+ * The generated `Schema` mutations map does not resolve under the
+ * monorepo-root eslint pass (cross-workspace import path), so the call is
+ * funnelled through the same `as unknown as {...}` structural cast used in
+ * `lib/dlq/query.ts`.
+ */
+export async function updateMyProfile(input: {
+  displayName?: string;
+  preferredUsername?: string;
+  bio?: string;
+  avatarKey?: string;
+}): Promise<void> {
+  const client = getDataClient();
+  const mutateFn = (
+    client.mutations as unknown as {
+      updateProfile: (
+        input: {
+          displayName?: string;
+          preferredUsername?: string;
+          bio?: string;
+          avatarKey?: string;
+        },
+        opts: { authMode: 'userPool' },
+      ) => Promise<RawWrapper<unknown>>;
+    }
+  ).updateProfile;
+  const res = await mutateFn(input, { authMode: 'userPool' });
+  if (res.errors?.length) {
+    throw new Error(res.errors.map((e) => e.message).join('; '));
+  }
+}
+
+/**
+ * Resolve an S3 avatar key to a display URL via Amplify Storage.
+ *
+ * Returns `null` for a null/empty key. The `aws-amplify/storage` import is
+ * dynamic so it stays out of the initial bundle for profiles without an
+ * avatar.
+ */
+export async function resolveAvatarUrl(avatarKey: string | null): Promise<string | null> {
+  if (!avatarKey) return null;
+  const { getUrl } = await import('aws-amplify/storage');
+  return (await getUrl({ path: avatarKey })).url.toString();
 }

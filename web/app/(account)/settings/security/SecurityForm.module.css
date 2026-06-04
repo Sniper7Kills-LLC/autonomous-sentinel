@@ -1,0 +1,71 @@
+.shell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6, 2rem);
+  max-width: 32rem;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4, 1rem);
+  padding: var(--sp-5, 1.5rem);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--r-1);
+  background: var(--color-surface);
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-fg);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4, 1rem);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3, 0.75rem);
+}
+
+.status {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--color-fg);
+}
+
+.muted {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-fg-muted);
+}
+
+.enroll {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4, 1rem);
+}
+
+.secret {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  letter-spacing: 0.12em;
+  word-break: break-all;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--r-1);
+  background: var(--color-surface-2);
+  color: var(--color-fg);
+  user-select: all;
+}

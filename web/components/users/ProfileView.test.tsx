@@ -4,8 +4,10 @@ import { ProfileView } from './ProfileView';
 import type { DisplayProfile } from '@/lib/users/profile';
 
 const getProfileMock = vi.fn<(id: string) => Promise<DisplayProfile | null>>();
+const resolveAvatarUrlMock = vi.fn<(key: string | null) => Promise<string | null>>();
 vi.mock('@/lib/users/profile', () => ({
   getProfile: (id: string) => getProfileMock(id),
+  resolveAvatarUrl: (key: string | null) => resolveAvatarUrlMock(key),
 }));
 
 let sessionState = {
@@ -26,6 +28,8 @@ function profile(partial: Partial<DisplayProfile>): DisplayProfile {
     role: 'member',
     joinedAt: '2026-01-01T00:00:00Z',
     piiBlanked: false,
+    bio: null,
+    avatarKey: null,
     reputation: { computedWeight: 2, validatedSubmissions: 7, acceptedCorrections: 3 },
     ...partial,
   };
@@ -34,6 +38,8 @@ function profile(partial: Partial<DisplayProfile>): DisplayProfile {
 describe('ProfileView', () => {
   beforeEach(() => {
     getProfileMock.mockReset();
+    resolveAvatarUrlMock.mockReset();
+    resolveAvatarUrlMock.mockResolvedValue(null);
     sessionState = { loading: false, signedIn: false, username: null, sub: null };
   });
 
@@ -95,5 +101,28 @@ describe('ProfileView', () => {
     getProfileMock.mockRejectedValue(new Error('boom'));
     render(<ProfileView id="sub-1" />);
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/boom/));
+  });
+
+  it('renders the bio when present', async () => {
+    getProfileMock.mockResolvedValue(profile({ bio: 'Listens to the HFGCS.' }));
+    render(<ProfileView id="sub-1" />);
+    expect(await screen.findByText('Listens to the HFGCS.')).toBeInTheDocument();
+  });
+
+  it('renders a monogram placeholder when there is no avatar', async () => {
+    getProfileMock.mockResolvedValue(profile({ avatarKey: null }));
+    render(<ProfileView id="sub-1" />);
+    await screen.findByText('Spectre');
+    expect(screen.getByTestId('profile-monogram')).toHaveTextContent('S');
+    expect(screen.queryByTestId('profile-avatar')).not.toBeInTheDocument();
+  });
+
+  it('renders the avatar image once the key resolves', async () => {
+    getProfileMock.mockResolvedValue(profile({ avatarKey: 'avatars/sub-1.png' }));
+    resolveAvatarUrlMock.mockResolvedValue('https://cdn.example/avatars/sub-1.png');
+    render(<ProfileView id="sub-1" />);
+    const img = await screen.findByTestId('profile-avatar');
+    expect(img).toHaveAttribute('src', 'https://cdn.example/avatars/sub-1.png');
+    expect(resolveAvatarUrlMock).toHaveBeenCalledWith('avatars/sub-1.png');
   });
 });

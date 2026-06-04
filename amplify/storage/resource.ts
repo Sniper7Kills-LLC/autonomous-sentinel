@@ -35,5 +35,14 @@ export const storage = defineStorage({
     ],
     'pipeline-temp/*': [allow.authenticated.to(['read', 'write', 'delete'])],
     'exports/{entity_id}/*': [allow.entity('identity').to(['read'])],
+    // Self-authored profile photos (#736). The owner manages their own
+    // photo (entity-scoped write/delete); avatars are publicly viewable on
+    // profile pages, so guests + every group get read.
+    'profile-photos/{entity_id}/*': [
+      allow.entity('identity').to(['read', 'write', 'delete']),
+      allow.guest.to(['read']),
+      allow.authenticated.to(['read']),
+      allow.groups(['admin', 'moderator', 'member']).to(['read']),
+    ],
   }),
 });

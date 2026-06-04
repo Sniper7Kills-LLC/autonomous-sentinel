@@ -428,8 +428,9 @@ describe('audit helper — every action enum value works', () => {
     // (RECORDING_REPARSE).
     // Source of truth is `amplify/data/models/audit-log.ts`.
     // + #107 (DLQ_REQUEUE + DLQ_DROP) → 29.
-    expect(AUDIT_ACTIONS).toHaveLength(29);
-    expect(new Set(AUDIT_ACTIONS).size).toBe(29);
+    // + #736 (USER_PROFILE_UPDATE) → 30.
+    expect(AUDIT_ACTIONS).toHaveLength(30);
+    expect(new Set(AUDIT_ACTIONS).size).toBe(30);
   });
 
   it('exports every value defined on the AuditLog.action enum', () => {
@@ -452,6 +453,7 @@ describe('audit helper — every action enum value works', () => {
         'USER_UNBAN',
         'USER_ROLE_CHANGE',
         'USER_PII_BLANK',
+        'USER_PROFILE_UPDATE',
         'USER_CLAIM',
         'USER_CLAIM_FANOUT',
         'SDR_PII_BLANK',
