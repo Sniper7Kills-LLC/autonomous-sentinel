@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import LandingPage from './page';
+import { AuthProvider } from '@/components/auth/AuthProvider';
 
+vi.mock('@/lib/amplifyClient', () => ({ configureAmplifyOnce: vi.fn() }));
+vi.mock('aws-amplify/utils', () => ({ Hub: { listen: () => () => {} } }));
 vi.mock('@/components/auth/AmplifyConfigure', () => ({ AmplifyConfigure: () => null }));
 vi.mock('@/components/theme/ThemeToggle', () => ({
   ThemeToggle: () => <div data-testid="theme-toggle" />,
@@ -48,7 +51,11 @@ describe('LandingPage', () => {
 
   it('renders the hero and CTAs for guests', async () => {
     getCurrentUserMock.mockRejectedValue(new Error('not signed in'));
-    render(<LandingPage />);
+    render(
+      <AuthProvider>
+        <LandingPage />
+      </AuthProvider>,
+    );
     expect(
       screen.getByRole('heading', { name: /catalogue the emergency action message channel/i }),
     ).toBeInTheDocument();
@@ -64,7 +71,11 @@ describe('LandingPage', () => {
       username: 'member',
       signInDetails: { loginId: 'member@example.com' },
     });
-    render(<LandingPage />);
+    render(
+      <AuthProvider>
+        <LandingPage />
+      </AuthProvider>,
+    );
     await waitFor(() => {
       expect(screen.getByLabelText('Signed-in actions')).toBeInTheDocument();
     });

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Atkinson_Hyperlegible, JetBrains_Mono } from 'next/font/google';
 import { ThemeProvider, NO_FLASH_SCRIPT } from '../components/theme/ThemeProvider';
+import { AuthProvider } from '../components/auth/AuthProvider';
 import './globals.css';
 
 const atkinson = Atkinson_Hyperlegible({
@@ -63,7 +64,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body>
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          <AuthProvider>{children}</AuthProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

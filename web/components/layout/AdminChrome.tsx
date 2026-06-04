@@ -1,16 +1,15 @@
 'use client';
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { AmplifyConfigure } from '@/components/auth/AmplifyConfigure';
 import { Footer } from '@/components/ui/Footer';
 import { Badge } from '@/components/ui/Badge';
 import { SiteHeader } from './SiteHeader';
-import { fetchCallerGroups, isModeratorOrAdmin } from '@/lib/auth/roles';
+import { useCallerGroups } from '@/components/auth/AuthProvider';
+import { isModeratorOrAdmin } from '@/lib/auth/roles';
 import styles from './SiteChrome.module.css';
-
-type GateState = 'checking' | 'allowed' | 'denied';
 
 /**
  * Admin / moderator area sections (#71 nav shell). `ready` entries link
@@ -43,22 +42,12 @@ const ADMIN_SECTIONS: { href: string; label: string; ready: boolean }[] = [
 export function AdminChrome({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [state, setState] = useState<GateState>('checking');
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const groups = await fetchCallerGroups();
-        if (!cancelled) setState(isModeratorOrAdmin(groups) ? 'allowed' : 'denied');
-      } catch {
-        if (!cancelled) setState('denied');
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { groups, loading } = useCallerGroups();
+  const state: 'checking' | 'allowed' | 'denied' = loading
+    ? 'checking'
+    : isModeratorOrAdmin(groups)
+      ? 'allowed'
+      : 'denied';
 
   useEffect(() => {
     if (state === 'denied') router.replace('/?denied=admin');

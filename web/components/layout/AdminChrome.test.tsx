@@ -3,28 +3,27 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { AdminChrome } from './AdminChrome';
 
 const replace = vi.fn();
-const fetchCallerGroups = vi.fn();
+let callerGroups: { groups: string[]; loading: boolean } = { groups: [], loading: false };
 
 vi.mock('next/navigation', () => ({
   usePathname: () => '/admin',
   useRouter: () => ({ replace }),
 }));
-vi.mock('@/lib/auth/roles', async (importActual) => {
-  const actual = await importActual<Record<string, unknown>>();
-  return { ...actual, fetchCallerGroups: () => fetchCallerGroups() as Promise<string[]> };
-});
+vi.mock('@/components/auth/AuthProvider', () => ({
+  useCallerGroups: () => callerGroups,
+}));
 vi.mock('@/components/auth/AmplifyConfigure', () => ({ AmplifyConfigure: () => null }));
 vi.mock('@/components/theme/ThemeToggle', () => ({ ThemeToggle: () => <div /> }));
 
 describe('AdminChrome', () => {
   beforeEach(() => {
     replace.mockReset();
-    fetchCallerGroups.mockReset();
+    callerGroups = { groups: [], loading: false };
   });
   afterEach(() => vi.restoreAllMocks());
 
   it('renders the sidebar nav + children for admins', async () => {
-    fetchCallerGroups.mockResolvedValue(['admin']);
+    callerGroups = { groups: ['admin'], loading: false };
     render(
       <AdminChrome>
         <div data-testid="admin-content" />
@@ -38,7 +37,7 @@ describe('AdminChrome', () => {
   });
 
   it('redirects non-privileged users away from the admin area', async () => {
-    fetchCallerGroups.mockResolvedValue([]);
+    callerGroups = { groups: [], loading: false };
     render(
       <AdminChrome>
         <div data-testid="admin-content" />

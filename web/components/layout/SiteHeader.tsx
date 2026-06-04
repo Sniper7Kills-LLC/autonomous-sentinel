@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
-import { fetchCallerGroups, isModeratorOrAdmin } from '@/lib/auth/roles';
+import { useCallerGroups } from '@/components/auth/AuthProvider';
+import { isModeratorOrAdmin } from '@/lib/auth/roles';
 import styles from './SiteChrome.module.css';
 
 const NAV_ITEMS: { href: string; label: string }[] = [
@@ -28,29 +29,15 @@ export function SiteHeader() {
   const pathname = usePathname();
   const router = useRouter();
   const [clock, setClock] = useState<string>('');
-  const [showAdmin, setShowAdmin] = useState(false);
   const [search, setSearch] = useState('');
+  const { groups } = useCallerGroups();
+  const showAdmin = isModeratorOrAdmin(groups);
 
   useEffect(() => {
     const tick = () => setClock(new Date().toISOString().slice(0, 19).replace('T', ' '));
     tick();
     const id = window.setInterval(tick, 1000);
     return () => window.clearInterval(id);
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const groups = await fetchCallerGroups();
-        if (!cancelled) setShowAdmin(isModeratorOrAdmin(groups));
-      } catch {
-        if (!cancelled) setShowAdmin(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   const isActive = (href: string) =>
