@@ -10,6 +10,8 @@ import { CommentsSection } from '@/components/comments/CommentsSection';
 import { useSessionState } from '@/components/account/SessionGreeting';
 import { DebugDetailsPanel } from './DebugDetailsPanel';
 import { RecordingAdminControls } from './RecordingAdminControls';
+import { MessageAdminControls } from './MessageAdminControls';
+import { UserAttribution } from '@/components/users/UserAttribution';
 import { getMessage } from '@/lib/messages/query';
 import { listRecordingsForMessage, type DisplayRecording } from '@/lib/messages/recordings';
 import type { DisplayMessage } from '@/lib/messages/types';
@@ -24,6 +26,7 @@ export function MessageDetailView({ messageId }: MessageDetailViewProps) {
   const [recordings, setRecordings] = useState<DisplayRecording[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deleted, setDeleted] = useState(false);
   const session = useSessionState();
 
   useEffect(() => {
@@ -66,6 +69,22 @@ export function MessageDetailView({ messageId }: MessageDetailViewProps) {
 
   if (!message) {
     return <div className={styles.notFound}>Message not found.</div>;
+  }
+
+  if (deleted) {
+    return (
+      <div className={styles.notFound} role="status">
+        Message soft-deleted. It is now hidden from public view.
+      </div>
+    );
+  }
+
+  function handleMessageModerated(action: 'flag' | 'delete'): void {
+    if (action === 'delete') {
+      setDeleted(true);
+    } else {
+      setMessage((m) => (m ? { ...m, flaggedForReview: false } : m));
+    }
   }
 
   return (
@@ -121,6 +140,16 @@ export function MessageDetailView({ messageId }: MessageDetailViewProps) {
             signedIn={session.signedIn}
           />
         </div>
+        <UserAttribution
+          prefix="Submitted by"
+          sub={message.submitterId}
+          nullLabel="SDR-derived / automated"
+        />
+        <MessageAdminControls
+          messageId={message.id}
+          flaggedForReview={message.flaggedForReview}
+          onChanged={handleMessageModerated}
+        />
       </section>
 
       <section aria-labelledby="recs-title">
@@ -162,6 +191,11 @@ export function MessageDetailView({ messageId }: MessageDetailViewProps) {
                     </Badge>
                   )}
                 </div>
+                <UserAttribution
+                  prefix="Uploaded by"
+                  sub={r.uploaderId}
+                  nullLabel="Unknown / legacy"
+                />
                 {r.webCanonicalKey ? (
                   <AudioPlayer
                     recordingId={r.id}
@@ -181,7 +215,11 @@ export function MessageDetailView({ messageId }: MessageDetailViewProps) {
                   signedIn={session.signedIn}
                   transcript={r.transcript}
                 />
-                <RecordingAdminControls recordingId={r.id} hasTranscript={Boolean(r.transcript)} />
+                <RecordingAdminControls
+                  recordingId={r.id}
+                  hasTranscript={Boolean(r.transcript)}
+                  onDeleted={() => setRecordings((rs) => rs.filter((rec) => rec.id !== r.id))}
+                />
               </article>
             ))}
           </div>

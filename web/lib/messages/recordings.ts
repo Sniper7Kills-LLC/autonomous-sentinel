@@ -45,6 +45,12 @@ export type DisplayRecording = {
   transcriptionFailed: boolean;
   durationMs: number | null;
   sdrId: string | null;
+  /**
+   * Cognito sub of the uploader (#248), set from `ctx.identity.sub` at
+   * upload. `null` for legacy / v3-backfilled rows; the detail page
+   * renders an "unknown / legacy" attribution in that case.
+   */
+  uploaderId: string | null;
   automated: boolean;
   webCanonicalKey: string | null;
   wordTimestampsKey: string | null;
@@ -75,6 +81,7 @@ type RawRecording = {
   transcriptionFailed?: boolean | null;
   durationMs?: number | null;
   sdrId?: string | null;
+  uploaderId?: string | null;
   automated?: boolean | null;
   webCanonicalKey?: string | null;
   wordTimestampsKey?: string | null;
@@ -148,6 +155,7 @@ function toDisplay(r: RawRecording): DisplayRecording {
     transcriptionFailed: Boolean(r.transcriptionFailed),
     durationMs: typeof r.durationMs === 'number' ? r.durationMs : null,
     sdrId: r.sdrId ?? null,
+    uploaderId: r.uploaderId ?? null,
     automated: Boolean(r.automated),
     webCanonicalKey: r.webCanonicalKey ?? null,
     wordTimestampsKey: r.wordTimestampsKey ?? null,

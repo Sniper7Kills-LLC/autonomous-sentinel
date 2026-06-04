@@ -286,7 +286,8 @@
   border-top: 1px dashed var(--border-1);
 }
 
-.recAdminBackend select {
+.recAdminBackend select,
+.recAdminBackend input {
   font-family: var(--font-jb-mono);
   font-size: 0.78rem;
   padding: 0.25rem 0.4rem;

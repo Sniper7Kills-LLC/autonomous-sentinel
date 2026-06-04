@@ -28,6 +28,7 @@ const message: DisplayMessage = {
   confidence: 0.91,
   flaggedForReview: false,
   publishedAt: '2026-05-30T00:01:00Z',
+  submitterId: null,
 };
 
 const attempt: LinguisticAttempt = {
@@ -61,6 +62,7 @@ const recording: DisplayRecording = {
   transcriptionFailed: false,
   durationMs: 12000,
   sdrId: null,
+  uploaderId: null,
   automated: true,
   webCanonicalKey: 'k',
   wordTimestampsKey: null,

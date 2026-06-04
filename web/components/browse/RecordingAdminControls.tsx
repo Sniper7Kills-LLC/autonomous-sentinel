@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
-import { fetchCallerGroups, isModeratorOrAdmin } from '@/lib/auth/roles';
+import { fetchCallerGroups, isAdmin, isModeratorOrAdmin } from '@/lib/auth/roles';
 import { reprocessRecording } from '@/lib/uploads/reprocess';
 import { reparseRecording } from '@/lib/uploads/reparse';
+import { softDeleteRecording } from '@/lib/messages/admin';
 import styles from './MessageDetailView.module.css';
 
 interface RecordingAdminControlsProps {
@@ -15,6 +16,11 @@ interface RecordingAdminControlsProps {
    * there is nothing to re-parse (the server rejects it too).
    */
   hasTranscript: boolean;
+  /**
+   * Called after a successful admin soft-delete so the parent can drop
+   * this recording from the list (#721).
+   */
+  onDeleted?: () => void;
 }
 
 type Feedback = { tone: 'ok' | 'err'; text: string } | null;
@@ -49,9 +55,11 @@ type ReprocessBackend = (typeof REPROCESS_BACKENDS)[number]['value'];
 export function RecordingAdminControls({
   recordingId,
   hasTranscript,
+  onDeleted,
 }: RecordingAdminControlsProps) {
   const [visible, setVisible] = useState(false);
-  const [busy, setBusy] = useState<null | 'reprocess' | 'reparse'>(null);
+  const [admin, setAdmin] = useState(false);
+  const [busy, setBusy] = useState<null | 'reprocess' | 'reparse' | 'delete'>(null);
   const [feedback, setFeedback] = useState<Feedback>(null);
   // Which transcription backend the Reprocess control re-runs on (#592).
   const [backend, setBackend] = useState<ReprocessBackend>('whisper-local');
@@ -61,9 +69,15 @@ export function RecordingAdminControls({
     void (async () => {
       try {
         const groups = await fetchCallerGroups();
-        if (!cancelled) setVisible(isModeratorOrAdmin(groups));
+        if (!cancelled) {
+          setVisible(isModeratorOrAdmin(groups));
+          setAdmin(isAdmin(groups));
+        }
       } catch {
-        if (!cancelled) setVisible(false);
+        if (!cancelled) {
+          setVisible(false);
+          setAdmin(false);
+        }
       }
     })();
     return () => {
@@ -74,7 +88,7 @@ export function RecordingAdminControls({
   if (!visible) return null;
 
   async function run(
-    kind: 'reprocess' | 'reparse',
+    kind: 'reprocess' | 'reparse' | 'delete',
     action: () => Promise<void>,
     okText: string,
   ): Promise<void> {
@@ -141,6 +155,31 @@ export function RecordingAdminControls({
       >
         Re-run AI (re-parse transcript)
       </Button>
+      {admin && (
+        <Button
+          type="button"
+          variant="danger"
+          size="sm"
+          loading={busy === 'delete'}
+          disabled={busy !== null}
+          onClick={() => {
+            if (
+              !window.confirm(
+                'Soft-delete this recording? The audio file is removed (recoverable for 30 days).',
+              )
+            ) {
+              return;
+            }
+            void run(
+              'delete',
+              () => softDeleteRecording(recordingId).then(() => onDeleted?.()),
+              'Recording soft-deleted.',
+            );
+          }}
+        >
+          Delete recording
+        </Button>
+      )}
       {feedback && (
         <span
           className={feedback.tone === 'ok' ? styles.recAdminOk : styles.recAdminErr}

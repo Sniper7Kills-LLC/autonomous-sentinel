@@ -14,6 +14,7 @@ describe('toDisplayMessage', () => {
         confidence: 0.92,
         flaggedForReview: false,
         publishedAt: '2026-05-27T12:30:00Z',
+        submitterId: 'sub-witness-1',
       }),
     ).toEqual({
       id: 'm1',
@@ -25,7 +26,23 @@ describe('toDisplayMessage', () => {
       confidence: 0.92,
       flaggedForReview: false,
       publishedAt: '2026-05-27T12:30:00Z',
+      submitterId: 'sub-witness-1',
     });
+  });
+
+  it('nulls an absent submitterId (SDR-derived Message)', () => {
+    const row = toDisplayMessage({
+      id: 'm4',
+      type: 'SKYKING',
+      broadcastTs: '2026-05-27T12:00:00Z',
+      sender: null,
+      receiver: null,
+      body: null,
+      confidence: null,
+      flaggedForReview: false,
+      publishedAt: null,
+    });
+    expect(row.submitterId).toBeNull();
   });
 
   it('coerces unknown type to OTHER', () => {
