@@ -19,8 +19,10 @@ export function SiteChrome({ children }: { children: ReactNode }) {
         Skip to content
       </a>
       <div className={styles.banner} role="note" aria-label="Classification banner">
-        <span className={styles.bannerTop}>UNCLASSIFIED//FNOUO</span>
-        <span className={styles.bannerSub}>OSINT · EAM Archive · Public Release</span>
+        <div className={styles.bannerChip}>
+          <span className={styles.bannerTop}>UNCLASSIFIED//FNOUO</span>
+          <span className={styles.bannerSub}>OSINT · EAM Archive · Public Release</span>
+        </div>
       </div>
       <AmplifyConfigure />
       <SiteHeader />

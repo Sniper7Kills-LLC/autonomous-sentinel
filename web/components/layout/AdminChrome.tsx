@@ -68,8 +68,10 @@ export function AdminChrome({ children }: { children: ReactNode }) {
         role="note"
         aria-label="Classification banner"
       >
-        <span className={styles.bannerTop}>RESTRICTED//ADMIN CONSOLE</span>
-        <span className={styles.bannerSub}>OSINT · EAM Archive · Authorized Personnel</span>
+        <div className={styles.bannerChip}>
+          <span className={styles.bannerTop}>RESTRICTED//ADMIN CONSOLE</span>
+          <span className={styles.bannerSub}>OSINT · EAM Archive · Authorized Personnel</span>
+        </div>
       </div>
       <AmplifyConfigure />
       <SiteHeader />
