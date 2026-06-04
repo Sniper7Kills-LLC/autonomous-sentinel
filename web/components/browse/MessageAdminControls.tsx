@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { useCallerGroups } from '@/components/auth/AuthProvider';
 import { isAdmin, isModeratorOrAdmin } from '@/lib/auth/roles';
@@ -46,6 +46,12 @@ export function MessageAdminControls({
   // Guards against a state update after `onChanged('delete')` unmounts
   // this control (the parent swaps to the soft-deleted empty state).
   const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   if (!isModeratorOrAdmin(groups)) return null;
 

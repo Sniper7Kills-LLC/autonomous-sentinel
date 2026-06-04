@@ -85,7 +85,7 @@ describe('DebugDetailsPanel', () => {
     expect(screen.queryByText('Debug details')).not.toBeInTheDocument();
   });
 
-  it('is hidden while the group lookup is unresolved/failing', async () => {
+  it('is hidden for a caller with no groups (guest)', async () => {
     groupsMock.mockReturnValue([]);
     render(<DebugDetailsPanel message={message} recordings={[recording]} />);
     await waitFor(() => expect(groupsMock).toHaveBeenCalled());
