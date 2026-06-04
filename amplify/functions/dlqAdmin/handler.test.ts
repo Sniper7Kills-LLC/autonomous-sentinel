@@ -279,6 +279,47 @@ describe('dlqAdmin handler (#107)', () => {
       expect(audit).not.toHaveBeenCalled();
     });
 
+    it('drops the message anyway when the Recording row is gone (ConditionalCheckFailed) (#714)', async () => {
+      const send = vi.fn().mockResolvedValue({});
+      // Amplify auto-update conditions on attribute_exists(id); a missing row
+      // returns this error shape.
+      const update = vi.fn().mockResolvedValue({
+        data: null,
+        errors: [
+          {
+            errorType: 'DynamoDB:ConditionalCheckFailedException',
+            message: 'The conditional request failed',
+          },
+        ],
+      });
+      const audit = vi.fn().mockResolvedValue('audit-id');
+      __setDeps({
+        sqs: { send } as never,
+        dataClient: { models: { Recording: { update } } },
+        audit,
+        now: () => new Date('2026-06-02T00:00:00.000Z'),
+      });
+
+      const res = await handler(
+        event('dropDlqMessage', {
+          stage: 'linguistic',
+          receiptHandle: 'rh-d',
+          recordingId: 'rec-gone',
+        }),
+        context,
+        cb,
+      );
+
+      // Row absent → proceed: delete the DLQ message + audit, no throw.
+      expect(res).toEqual({ status: 'dropped' });
+      expect(update).toHaveBeenCalledTimes(1);
+      expect(send.mock.calls[0]![0]).toBeInstanceOf(DeleteMessageCommand);
+      expect(audit).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ action: 'DLQ_DROP', targetId: 'rec-gone' }),
+      );
+    });
+
     it('drops without a Recording update when no recordingId is known', async () => {
       const send = vi.fn().mockResolvedValue({});
       const update = vi.fn();
