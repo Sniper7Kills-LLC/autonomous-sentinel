@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { AbuseReportButton } from '@/components/abuse/AbuseReportButton';
 import { useSessionState } from '@/components/account/SessionGreeting';
-import { fetchCallerGroups, isModeratorOrAdmin } from '@/lib/auth/roles';
+import { isModeratorOrAdmin } from '@/lib/auth/roles';
+import { useCallerGroups } from '@/components/auth/AuthProvider';
 import {
   buildCommentTree,
   countComments,
@@ -66,7 +67,8 @@ export function CommentsSection({ messageId }: CommentsSectionProps) {
   const [comments, setComments] = useState<DisplayComment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isMod, setIsMod] = useState(false);
+  const { groups } = useCallerGroups();
+  const isMod = isModeratorOrAdmin(groups);
   const [composerBody, setComposerBody] = useState('');
   const [posting, setPosting] = useState(false);
 
@@ -93,21 +95,6 @@ export function CommentsSection({ messageId }: CommentsSectionProps) {
       cancelled = true;
     };
   }, [messageId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const groups = await fetchCallerGroups();
-        if (!cancelled) setIsMod(isModeratorOrAdmin(groups));
-      } catch {
-        if (!cancelled) setIsMod(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [session.signedIn]);
 
   const tree = buildCommentTree(comments);
   const total = countComments(tree);

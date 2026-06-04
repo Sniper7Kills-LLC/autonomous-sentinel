@@ -21,14 +21,11 @@ vi.mock('@/lib/comments/query', async (importActual) => {
   };
 });
 
-const groupsMock = vi.fn<() => Promise<string[]>>();
-vi.mock('@/lib/auth/roles', async (importActual) => {
-  const actual = await importActual<Record<string, unknown>>();
-  return {
-    ...actual,
-    fetchCallerGroups: () => groupsMock(),
-  };
-});
+const groupsMock = vi.fn<() => string[]>(() => []);
+vi.mock('@/components/auth/AuthProvider', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  useCallerGroups: () => ({ groups: groupsMock(), loading: false }),
+}));
 
 interface MockSession {
   loading: boolean;
@@ -79,7 +76,7 @@ describe('CommentsSection (#98)', () => {
       .mockReset()
       .mockResolvedValue(comment({ id: 'c1', deletedAt: new Date().toISOString() }));
     hideMock.mockReset().mockResolvedValue(comment({ id: 'c1', flagged: true }));
-    groupsMock.mockReset().mockResolvedValue(['member']);
+    groupsMock.mockReset().mockReturnValue([]);
     sessionMock.mockReset().mockReturnValue(signedIn);
   });
 
@@ -125,7 +122,7 @@ describe('CommentsSection (#98)', () => {
 
   it('lets a moderator see hidden content + a hide toggle', async () => {
     sessionMock.mockReturnValue(otherUser);
-    groupsMock.mockResolvedValue(['moderator']);
+    groupsMock.mockReturnValue(['moderator']);
     listMock.mockResolvedValue([comment({ id: 'c1', flagged: true })]);
     render(<CommentsSection messageId="m1" />);
     await waitFor(() => expect(screen.getByText('hello world')).toBeInTheDocument());

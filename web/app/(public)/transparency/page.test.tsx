@@ -2,13 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import TransparencyPage from './page';
 
-const { fetchCostSnapshots, fetchRevenueSnapshots, fetchCallerGroups, runCostSnapshotNow } =
-  vi.hoisted(() => ({
+const { fetchCostSnapshots, fetchRevenueSnapshots, callerGroups, runCostSnapshotNow } = vi.hoisted(
+  () => ({
     fetchCostSnapshots: vi.fn(),
     fetchRevenueSnapshots: vi.fn(),
-    fetchCallerGroups: vi.fn(),
+    callerGroups: vi.fn<() => string[]>(() => []),
     runCostSnapshotNow: vi.fn(),
-  }));
+  }),
+);
 
 vi.mock('@/lib/cost/transparency', async (importActual) => {
   const actual = await importActual<Record<string, unknown>>();
@@ -20,13 +21,11 @@ vi.mock('@/lib/cost/transparency', async (importActual) => {
   };
 });
 
-vi.mock('@/lib/auth/roles', async (importActual) => {
-  const actual = await importActual<Record<string, unknown>>();
-  return {
-    ...actual,
-    fetchCallerGroups,
-  };
-});
+// Caller groups now come from the root AuthProvider context (#728), not a
+// per-mount fetchCallerGroups() probe. Drive role-gating via the hook.
+vi.mock('@/components/auth/AuthProvider', () => ({
+  useCallerGroups: () => ({ groups: callerGroups(), loading: false }),
+}));
 
 // Recharts needs ResizeObserver / window sizing jsdom lacks — passthrough.
 vi.mock('recharts', () => ({
@@ -73,7 +72,7 @@ describe('TransparencyPage (#303)', () => {
     vi.clearAllMocks();
     fetchCostSnapshots.mockResolvedValue(COST_ROWS);
     fetchRevenueSnapshots.mockResolvedValue([]);
-    fetchCallerGroups.mockResolvedValue([]);
+    callerGroups.mockReturnValue([]);
   });
 
   it('renders the cost panel with the AWS total for everyone', async () => {
@@ -93,7 +92,7 @@ describe('TransparencyPage (#303)', () => {
   });
 
   it('shows the revenue panel (empty state) for an admin caller', async () => {
-    fetchCallerGroups.mockResolvedValue(['admin']);
+    callerGroups.mockReturnValue(['admin']);
     render(<TransparencyPage />);
     await waitFor(() => expect(screen.getByText(/Revenue \(admin/i)).toBeInTheDocument());
     expect(screen.getByText(/No revenue data yet/i)).toBeInTheDocument();
@@ -101,7 +100,7 @@ describe('TransparencyPage (#303)', () => {
   });
 
   it('renders revenue figures when an admin has revenue rows', async () => {
-    fetchCallerGroups.mockResolvedValue(['moderator']);
+    callerGroups.mockReturnValue(['moderator']);
     fetchRevenueSnapshots.mockResolvedValue([
       {
         snapshotDate: '2026-05-31',
@@ -124,14 +123,14 @@ describe('TransparencyPage (#303)', () => {
 
   describe('admin Sync now button (#644)', () => {
     it('hides the button for a non-admin (moderator) caller', async () => {
-      fetchCallerGroups.mockResolvedValue(['moderator']);
+      callerGroups.mockReturnValue(['moderator']);
       render(<TransparencyPage />);
       await waitFor(() => expect(screen.getByText(/Total: \$2\.50/)).toBeInTheDocument());
       expect(screen.queryByRole('button', { name: /Sync now/i })).not.toBeInTheDocument();
     });
 
     it('shows the button for an admin and queues a sync on click', async () => {
-      fetchCallerGroups.mockResolvedValue(['admin']);
+      callerGroups.mockReturnValue(['admin']);
       runCostSnapshotNow.mockResolvedValue({ status: 'queued' });
       render(<TransparencyPage />);
       const btn = await screen.findByRole('button', { name: /Sync now/i });
@@ -143,7 +142,7 @@ describe('TransparencyPage (#303)', () => {
     });
 
     it('surfaces a sync failure message', async () => {
-      fetchCallerGroups.mockResolvedValue(['admin']);
+      callerGroups.mockReturnValue(['admin']);
       runCostSnapshotNow.mockRejectedValue(new Error('Unauthorized'));
       render(<TransparencyPage />);
       const btn = await screen.findByRole('button', { name: /Sync now/i });

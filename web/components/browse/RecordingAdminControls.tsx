@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
-import { fetchCallerGroups, isAdmin, isModeratorOrAdmin } from '@/lib/auth/roles';
+import { useCallerGroups } from '@/components/auth/AuthProvider';
+import { isAdmin, isModeratorOrAdmin } from '@/lib/auth/roles';
 import { reprocessRecording } from '@/lib/uploads/reprocess';
 import { reparseRecording } from '@/lib/uploads/reparse';
 import { softDeleteRecording } from '@/lib/messages/admin';
@@ -49,7 +50,7 @@ type ReprocessBackend = (typeof REPROCESS_BACKENDS)[number]['value'];
  *     skipping preprocess + transcribe.
  *
  * Hidden entirely for members/guests; the gate mirrors the Debug panel
- * (`fetchCallerGroups` → `isModeratorOrAdmin`). The server enforces its
+ * (`useCallerGroups` → `isModeratorOrAdmin`). The server enforces its
  * own authz on each mutation — this only decides what to render.
  */
 export function RecordingAdminControls({
@@ -57,8 +58,9 @@ export function RecordingAdminControls({
   hasTranscript,
   onDeleted,
 }: RecordingAdminControlsProps) {
-  const [visible, setVisible] = useState(false);
-  const [admin, setAdmin] = useState(false);
+  const { groups } = useCallerGroups();
+  const visible = isModeratorOrAdmin(groups);
+  const admin = isAdmin(groups);
   const [busy, setBusy] = useState<null | 'reprocess' | 'reparse' | 'delete'>(null);
   const [feedback, setFeedback] = useState<Feedback>(null);
   // Which transcription backend the Reprocess control re-runs on (#592).
@@ -69,23 +71,7 @@ export function RecordingAdminControls({
 
   useEffect(() => {
     mounted.current = true;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const groups = await fetchCallerGroups();
-        if (!cancelled) {
-          setVisible(isModeratorOrAdmin(groups));
-          setAdmin(isAdmin(groups));
-        }
-      } catch {
-        if (!cancelled) {
-          setVisible(false);
-          setAdmin(false);
-        }
-      }
-    })();
     return () => {
-      cancelled = true;
       mounted.current = false;
     };
   }, []);

@@ -16,14 +16,11 @@ vi.mock('@/lib/revisions/query', () => ({
   acceptTranscriptRevision: (revisionId: string): Promise<unknown> => acceptMock(revisionId),
 }));
 
-const groupsMock = vi.fn<() => Promise<string[]>>();
-vi.mock('@/lib/auth/roles', async (importActual) => {
-  const actual = await importActual<Record<string, unknown>>();
-  return {
-    ...actual, // keep isModeratorOrAdmin / isAdmin real
-    fetchCallerGroups: (): Promise<string[]> => groupsMock(),
-  };
-});
+const groupsMock = vi.fn<() => string[]>(() => []);
+vi.mock('@/components/auth/AuthProvider', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  useCallerGroups: () => ({ groups: groupsMock(), loading: false }),
+}));
 
 const baseRow = {
   id: 'rev-1',
@@ -46,7 +43,7 @@ describe('RevisionPanel', () => {
     acceptMock.mockReset();
     acceptMock.mockResolvedValue({ ...baseRow, accepted: true });
     groupsMock.mockReset();
-    groupsMock.mockResolvedValue(['member']);
+    groupsMock.mockReturnValue([]);
     listMock.mockResolvedValue([baseRow]);
     vi.stubGlobal(
       'matchMedia',
@@ -164,7 +161,7 @@ describe('RevisionPanel', () => {
 
   describe('accept revision (#654)', () => {
     it('hides Accept for a member', async () => {
-      groupsMock.mockResolvedValue(['member']);
+      groupsMock.mockReturnValue(['member']);
       render(<RevisionPanel recordingId="rec-1" transcriptionFailed={false} signedIn={true} />);
       await waitFor(() => expect(screen.getByText('SKYKING PT3 14 AB')).toBeInTheDocument());
       expect(screen.queryByRole('button', { name: /accept/i })).toBeNull();
@@ -177,7 +174,7 @@ describe('RevisionPanel', () => {
     });
 
     it('shows Accept for a moderator on a live revision and accepts on click', async () => {
-      groupsMock.mockResolvedValue(['moderator']);
+      groupsMock.mockReturnValue(['moderator']);
       vi.stubGlobal('confirm', vi.fn().mockReturnValue(true));
       acceptMock.mockResolvedValueOnce({ ...baseRow, accepted: true });
       listMock.mockResolvedValueOnce([baseRow]); // initial
@@ -192,7 +189,7 @@ describe('RevisionPanel', () => {
     });
 
     it('does not show Accept on an already-accepted revision', async () => {
-      groupsMock.mockResolvedValue(['admin']);
+      groupsMock.mockReturnValue(['admin']);
       listMock.mockResolvedValue([{ ...baseRow, accepted: true }]);
       render(<RevisionPanel recordingId="rec-1" transcriptionFailed={false} signedIn={true} />);
       await waitFor(() => expect(screen.getByText('ACCEPTED')).toBeInTheDocument());

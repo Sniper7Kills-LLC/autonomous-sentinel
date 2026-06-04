@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { fetchCallerGroups, isModeratorOrAdmin } from '@/lib/auth/roles';
+import { useCallerGroups } from '@/components/auth/AuthProvider';
+import { isModeratorOrAdmin } from '@/lib/auth/roles';
 import { listRulesForType, type DisplayRule } from '@/lib/messages/rules';
 import type { DisplayRecording } from '@/lib/messages/recordings';
 import type { DisplayMessage } from '@/lib/messages/types';
@@ -19,29 +20,15 @@ interface DebugDetailsPanelProps {
  * attempts, the parsed Message fields as stored, and the LinguisticRules
  * for this message type — purely a debugging aid for "why did it parse
  * this way". Hidden entirely for members/guests; the gate mirrors the
- * recording-reprocess control (`fetchCallerGroups` → `isModeratorOrAdmin`).
+ * recording-reprocess control (`useCallerGroups` → `isModeratorOrAdmin`).
  * The server enforces its own authz on every read; this only decides
  * what to render.
  */
 export function DebugDetailsPanel({ message, recordings }: DebugDetailsPanelProps) {
-  const [visible, setVisible] = useState(false);
+  const { groups } = useCallerGroups();
+  const visible = isModeratorOrAdmin(groups);
   const [rules, setRules] = useState<DisplayRule[]>([]);
   const [rulesNote, setRulesNote] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const groups = await fetchCallerGroups();
-        if (!cancelled) setVisible(isModeratorOrAdmin(groups));
-      } catch {
-        if (!cancelled) setVisible(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (!visible) return;

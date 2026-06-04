@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { fetchCallerGroups, isModeratorOrAdmin, isAdmin } from '@/lib/auth/roles';
+import { useCallerGroups } from '@/components/auth/AuthProvider';
+import { isModeratorOrAdmin, isAdmin } from '@/lib/auth/roles';
 import {
   aggregateCost,
   aggregateRevenue,
@@ -21,17 +22,24 @@ const WINDOW_DAYS = 30;
 export default function TransparencyPage() {
   const [cost, setCost] = useState<CostAggregate | null>(null);
   const [revenue, setRevenue] = useState<RevenueAggregate | null>(null);
-  const [showRevenue, setShowRevenue] = useState(false);
-  const [admin, setAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
+  // Role-gated UI (revenue panel + admin "Sync now") reads the caller's
+  // groups from the root context (#728) instead of a per-mount Cognito
+  // probe. The server enforces the same authorization — this only decides
+  // what to render / which reads to attempt.
+  const { groups } = useCallerGroups();
+  const admin = isAdmin(groups);
+  const showRevenue = isModeratorOrAdmin(groups);
+
+  // Cost snapshots — public to no one in particular here; loaded for every
+  // visitor that can read the model.
   useEffect(() => {
     let cancelled = false;
     const fromDate = windowStartDate(new Date(), WINDOW_DAYS);
-
     void (async () => {
       try {
         const costRows = await fetchCostSnapshots(fromDate);
@@ -41,26 +49,30 @@ export default function TransparencyPage() {
       } finally {
         if (!cancelled) setLoading(false);
       }
-
-      // Revenue read + the admin "Sync now" control are role-gated. The
-      // server enforces this — this just avoids guaranteed authz errors
-      // (revenue) / hides admin-only controls for everyone else.
-      try {
-        const groups = await fetchCallerGroups();
-        if (!cancelled && isAdmin(groups)) setAdmin(true);
-        if (!isModeratorOrAdmin(groups)) return;
-        if (!cancelled) setShowRevenue(true);
-        const revRows = await fetchRevenueSnapshots(fromDate);
-        if (!cancelled) setRevenue(aggregateRevenue(revRows, fromDate));
-      } catch {
-        // Not signed in / not authorized — leave the panels hidden.
-      }
     })();
-
     return () => {
       cancelled = true;
     };
   }, []);
+
+  // Revenue snapshots — only attempted for mod/admin callers, so guests
+  // never trigger a guaranteed authz error.
+  useEffect(() => {
+    if (!showRevenue) return;
+    let cancelled = false;
+    const fromDate = windowStartDate(new Date(), WINDOW_DAYS);
+    void (async () => {
+      try {
+        const revRows = await fetchRevenueSnapshots(fromDate);
+        if (!cancelled) setRevenue(aggregateRevenue(revRows, fromDate));
+      } catch {
+        // Not authorized / transient — leave the revenue panel empty.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showRevenue]);
 
   async function handleSyncNow(): Promise<void> {
     setSyncing(true);

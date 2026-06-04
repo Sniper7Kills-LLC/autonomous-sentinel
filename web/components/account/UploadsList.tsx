@@ -11,7 +11,8 @@ import {
   type UploadStage,
 } from '@/lib/uploads/query';
 import { reprocessRecording } from '@/lib/uploads/reprocess';
-import { fetchCallerGroups, isModeratorOrAdmin } from '@/lib/auth/roles';
+import { isModeratorOrAdmin } from '@/lib/auth/roles';
+import { useCallerGroups } from '@/components/auth/AuthProvider';
 import styles from './UploadsList.module.css';
 
 interface UploadsListProps {
@@ -37,22 +38,8 @@ export function UploadsList({ uploaderId }: UploadsListProps) {
   // Moderators/admins get a per-row "Reprocess" control (#505). The
   // mutation is authz-gated server-side too — this only decides
   // whether to render the button.
-  const [canReprocess, setCanReprocess] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const groups = await fetchCallerGroups();
-        if (!cancelled) setCanReprocess(isModeratorOrAdmin(groups));
-      } catch {
-        if (!cancelled) setCanReprocess(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { groups } = useCallerGroups();
+  const canReprocess = isModeratorOrAdmin(groups);
 
   const handleReprocess = useCallback(async (recordingId: string) => {
     await reprocessRecording(recordingId);
