@@ -75,7 +75,8 @@ export async function getUserLabel(sub: string): Promise<UserLabel> {
 
   const promise = fetchUserLabel(trimmed);
   cache.set(trimmed, promise);
-  // Drop failed lookups from the cache so a transient error can retry.
+  // `fetchUserLabel` resolves to a fallback rather than rejecting, so this
+  // only fires on an unexpected throw — drop the entry so a retry can run.
   promise.catch(() => cache.delete(trimmed));
   return promise;
 }

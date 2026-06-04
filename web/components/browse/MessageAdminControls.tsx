@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { fetchCallerGroups, isAdmin, isModeratorOrAdmin } from '@/lib/auth/roles';
 import { clearMessageFlag } from '@/lib/admin/moderation';
@@ -42,8 +42,12 @@ export function MessageAdminControls({
   const [busy, setBusy] = useState<null | 'flag' | 'delete'>(null);
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [reason, setReason] = useState('');
+  // Guards against a state update after `onChanged('delete')` unmounts
+  // this control (the parent swaps to the soft-deleted empty state).
+  const mounted = useRef(true);
 
   useEffect(() => {
+    mounted.current = true;
     let cancelled = false;
     void (async () => {
       try {
@@ -55,6 +59,7 @@ export function MessageAdminControls({
     })();
     return () => {
       cancelled = true;
+      mounted.current = false;
     };
   }, []);
 
@@ -71,12 +76,14 @@ export function MessageAdminControls({
     setFeedback(null);
     try {
       await action();
-      setFeedback({ tone: 'ok', text: okText });
+      if (mounted.current) setFeedback({ tone: 'ok', text: okText });
       onChanged(kind);
     } catch (err) {
-      setFeedback({ tone: 'err', text: err instanceof Error ? err.message : String(err) });
+      if (mounted.current) {
+        setFeedback({ tone: 'err', text: err instanceof Error ? err.message : String(err) });
+      }
     } finally {
-      setBusy(null);
+      if (mounted.current) setBusy(null);
     }
   }
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { fetchCallerGroups, isAdmin, isModeratorOrAdmin } from '@/lib/auth/roles';
 import { reprocessRecording } from '@/lib/uploads/reprocess';
@@ -63,8 +63,12 @@ export function RecordingAdminControls({
   const [feedback, setFeedback] = useState<Feedback>(null);
   // Which transcription backend the Reprocess control re-runs on (#592).
   const [backend, setBackend] = useState<ReprocessBackend>('whisper-local');
+  // Guards against a state update after the delete-success callback
+  // unmounts this card (`onDeleted` drops the row from the parent list).
+  const mounted = useRef(true);
 
   useEffect(() => {
+    mounted.current = true;
     let cancelled = false;
     void (async () => {
       try {
@@ -82,6 +86,7 @@ export function RecordingAdminControls({
     })();
     return () => {
       cancelled = true;
+      mounted.current = false;
     };
   }, []);
 
@@ -96,11 +101,13 @@ export function RecordingAdminControls({
     setFeedback(null);
     try {
       await action();
-      setFeedback({ tone: 'ok', text: okText });
+      if (mounted.current) setFeedback({ tone: 'ok', text: okText });
     } catch (err) {
-      setFeedback({ tone: 'err', text: err instanceof Error ? err.message : String(err) });
+      if (mounted.current) {
+        setFeedback({ tone: 'err', text: err instanceof Error ? err.message : String(err) });
+      }
     } finally {
-      setBusy(null);
+      if (mounted.current) setBusy(null);
     }
   }
 
