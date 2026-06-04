@@ -92,7 +92,14 @@ export function SearchResults() {
     <div className={styles.wrap}>
       <Alert tone="info" title="Best-effort search">
         Search is best-effort and may be slow on rare terms — a faster index is coming (
-        <a href="https://github.com/Sniper7Kills-LLC/autonomous-sentinel/issues/182">#182</a>).
+        <a
+          href="https://github.com/Sniper7Kills-LLC/autonomous-sentinel/issues/182"
+          target="_blank"
+          rel="noreferrer"
+        >
+          #182
+        </a>
+        ).
       </Alert>
 
       <form className={styles.form} role="search" aria-label="Search messages" onSubmit={onSubmit}>
