@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { Field, Textarea } from '@/components/ui/Field';
 import {
@@ -404,8 +405,8 @@ function CorrectionAffordance({
   if (!signedIn) {
     return (
       <p className={styles.notice}>
-        Heard it differently? <a href="/sign-in">Sign in</a> to suggest a transcript correction for
-        community vote.
+        Heard it differently? <Link href="/sign-in">Sign in</Link> to suggest a transcript
+        correction for community vote.
       </p>
     );
   }

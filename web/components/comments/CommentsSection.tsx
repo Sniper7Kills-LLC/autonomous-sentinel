@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { AbuseReportButton } from '@/components/abuse/AbuseReportButton';
 import { useSessionState } from '@/components/account/SessionGreeting';
@@ -287,9 +288,12 @@ function CommentItem({ node, messageId, callerSub, signedIn, isMod, onChanged }:
         {isDeleted ? (
           <span className={styles.author}>—</span>
         ) : (
-          <a className={styles.author} href={`/users/view?id=${encodeURIComponent(node.authorId)}`}>
+          <Link
+            className={styles.author}
+            href={`/users/view?id=${encodeURIComponent(node.authorId)}`}
+          >
             {node.authorId.slice(0, 12)}
-          </a>
+          </Link>
         )}
         <span>{formatTs(node.createdAt)}</span>
         {!isDeleted && wasEdited(node) && (

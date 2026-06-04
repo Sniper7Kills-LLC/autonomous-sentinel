@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import styles from './Footer.module.css';
 
 /**
@@ -26,20 +27,27 @@ export function Footer({ buildId = BUILD_SHA }: FooterProps) {
 
       <nav className={styles.col} aria-label="Footer navigation">
         <div className={styles.heading}>Site</div>
-        <a href="#messages">Messages</a>
-        <a href="#skykings">Skykings</a>
-        <a href="#skybird">Skybird</a>
-        <a href="#map">Propagation map</a>
-        <a href="/donate">Donate</a>
-        <a href="/support">Supporter tiers</a>
-        <a href="/transparency">Cost transparency</a>
+        <Link href="/messages">Messages</Link>
+        <Link href="/skykings">Skykings</Link>
+        <Link href="/skybird">Skybird</Link>
+        <Link href="/map">Propagation map</Link>
+        <Link href="/donate">Donate</Link>
+        <Link href="/support">Supporter tiers</Link>
+        <Link href="/transparency">Cost transparency</Link>
       </nav>
 
       <nav className={styles.col} aria-label="Footer resources">
         <div className={styles.heading}>Resources</div>
+        {/* REST API + RSS feed routes are not built yet — placeholders. */}
         <a href="#">REST API</a>
         <a href="#">RSS feed</a>
-        <a href="#">GitHub</a>
+        <a
+          href="https://github.com/Sniper7Kills-LLC/autonomous-sentinel"
+          target="_blank"
+          rel="noreferrer"
+        >
+          GitHub
+        </a>
       </nav>
 
       <div className={styles.col}>
