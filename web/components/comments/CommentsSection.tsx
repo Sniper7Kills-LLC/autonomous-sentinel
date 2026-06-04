@@ -225,7 +225,11 @@ function CommentItem({ node, messageId, callerSub, signedIn, isMod, onChanged }:
   const isOwn = callerSub != null && node.authorId === callerSub;
   const isDeleted = node.deletedAt != null;
   const isHidden = node.flagged && !isOwn && !isMod;
-  const now = Date.now();
+  // Snapshot "now" once at mount via a lazy state initializer rather than
+  // calling Date.now() during render — render must stay pure for React
+  // Compiler (react-hooks/purity). The edit window is minutes-long, so a
+  // mount-time snapshot is sufficient for gating the edit affordance.
+  const [now] = useState(() => Date.now());
   const canEdit = isOwn && !isDeleted && isWithinEditWindow(node.createdAt, now);
 
   const doReply = useCallback(async () => {

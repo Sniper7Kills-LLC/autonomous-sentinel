@@ -1,16 +1,54 @@
 // @ts-check
 import nextPlugin from '@next/eslint-plugin-next';
-import reactPlugin from 'eslint-plugin-react';
+import eslintReact from '@eslint-react/eslint-plugin';
 import reactHooksPlugin from 'eslint-plugin-react-hooks';
 import baseConfig from '../eslint.config.mjs';
 
 export default [
   ...baseConfig,
+  // React component/JSX rules via @eslint-react (#696). Replaces
+  // eslint-plugin-react, which has no ESLint 10-compatible release —
+  // @eslint-react@5 declares `eslint ^10.3.0`. Use the non-type-checked
+  // `recommended` preset for parity with the old eslint-plugin-react
+  // `configs.recommended` (also non-type-aware) and to avoid the very
+  // slow per-file re-typecheck the `recommended-typescript` preset incurs
+  // on top of the base config's `recommendedTypeChecked`.
+  {
+    files: ['**/*.{ts,tsx}'],
+    ...eslintReact.configs.recommended,
+  },
+  // @eslint-react duplicates several eslint-plugin-react-hooks rules
+  // (e.g. set-state-in-effect). Defer to eslint-plugin-react-hooks as the
+  // canonical hooks linter and turn off @eslint-react's overlapping copies.
+  {
+    files: ['**/*.{ts,tsx}'],
+    ...eslintReact.configs['disable-conflict-eslint-plugin-react-hooks'],
+  },
+  {
+    // Deferred @eslint-react rules (#710): these fire against existing code
+    // and, under the lint script's --max-warnings=0, would block the ESLint
+    // 10 migration (#696). Turned off here to land the toolchain; #710 tracks
+    // re-enabling each + fixing the violations. The 2 real errors
+    // (react-hooks/purity Date.now-in-render, @eslint-react/unsupported-syntax
+    // IIFE-in-JSX) were fixed in this change; unsupported-syntax stays on.
+    files: ['**/*.{ts,tsx}'],
+    rules: {
+      '@eslint-react/no-array-index-key': 'off',
+      '@eslint-react/set-state-in-effect': 'off',
+      '@eslint-react/jsx-no-leaked-dollar': 'off',
+      '@eslint-react/use-state': 'off',
+      '@eslint-react/purity': 'off',
+      '@eslint-react/dom-no-dangerously-set-innerhtml': 'off',
+      '@eslint-react/no-use-context': 'off',
+      '@eslint-react/no-unnecessary-use-prefix': 'off',
+      '@eslint-react/naming-convention-ref-name': 'off',
+      '@eslint-react/naming-convention-context-name': 'off',
+    },
+  },
   {
     files: ['**/*.{ts,tsx}'],
     plugins: {
       '@next/next': nextPlugin,
-      react: reactPlugin,
       'react-hooks': reactHooksPlugin,
     },
     languageOptions: {
@@ -19,16 +57,18 @@ export default [
         tsconfigRootDir: import.meta.dirname,
       },
     },
-    settings: {
-      react: { version: 'detect' },
-    },
     rules: {
       ...nextPlugin.configs.recommended.rules,
       ...nextPlugin.configs['core-web-vitals'].rules,
-      ...reactPlugin.configs.recommended.rules,
       ...reactHooksPlugin.configs.recommended.rules,
-      'react/react-in-jsx-scope': 'off',
-      'react/prop-types': 'off',
+      // react-hooks@7 ships two new opinionated rules in its recommended
+      // preset (`set-state-in-effect`, `refs`) that fire broadly against the
+      // existing component code. Turn them OFF so the toolchain upgrade lands
+      // without a mass behavioural refactor (the lint script runs
+      // --max-warnings=0, so 'warn' would fail). Adopting them as errors +
+      // fixing the call sites is tracked as a follow-up (#710).
+      'react-hooks/set-state-in-effect': 'off',
+      'react-hooks/refs': 'off',
     },
   },
   {
