@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import Link from 'next/link';
-import { fetchCallerGroups, isAdmin } from '@/lib/auth/roles';
+import { useCallerGroups } from '@/components/auth/AuthProvider';
+import { isAdmin } from '@/lib/auth/roles';
 import styles from './AdminLinguistic.module.css';
 
 type GateState = 'checking' | 'allowed' | 'denied';
@@ -26,24 +27,14 @@ interface AdminGateProps {
  * notice; the underlying AppSync models enforce the same authorization
  * server-side, so this only decides what to render. Errors fetching the
  * session are treated as denied.
+ *
+ * Caller groups come from the root {@link useCallerGroups} context (#726)
+ * — identity is resolved once per session, so navigating between admin
+ * pages no longer re-probes Cognito and flashes "Checking your access…".
  */
 export function AdminGate({ children, description }: AdminGateProps) {
-  const [state, setState] = useState<GateState>('checking');
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const groups = await fetchCallerGroups();
-        if (!cancelled) setState(isAdmin(groups) ? 'allowed' : 'denied');
-      } catch {
-        if (!cancelled) setState('denied');
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { groups, loading } = useCallerGroups();
+  const state: GateState = loading ? 'checking' : isAdmin(groups) ? 'allowed' : 'denied';
 
   if (state === 'checking') {
     return (

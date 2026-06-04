@@ -43,6 +43,45 @@
   border: 1px solid var(--class-fg);
 }
 
+/*
+ * Two-line classification banner (#726). The public banner uses the US
+ * government UNCLASSIFIED green (#007a33); the admin/moderator area adds
+ * `.bannerRestricted` for the classified/restricted red (#c8102e). Both
+ * carry white text — contrast ≥ 4.5:1 against either fill (WCAG 2.1 AA).
+ */
+.banner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 4px 0 5px;
+  background: #007a33;
+  color: #ffffff;
+  font-family: var(--font-mono);
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.bannerRestricted {
+  background: #c8102e;
+}
+
+.bannerTop {
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.32em;
+  /* Offset the trailing letter-spacing so the line reads optically centred. */
+  padding-left: 0.32em;
+}
+
+.bannerSub {
+  font-weight: 500;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  padding-left: 0.2em;
+  opacity: 0.94;
+}
+
 /* Skip-to-content link — visually hidden until focused (WCAG 2.1 AA, #73). */
 .skipLink {
   position: absolute;

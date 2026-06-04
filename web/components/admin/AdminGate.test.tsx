@@ -1,62 +1,63 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { AdminGate } from './AdminGate';
 
-const groupsMock = vi.fn<() => Promise<string[]>>();
-vi.mock('@/lib/auth/roles', async (importActual) => {
-  const actual = await importActual<Record<string, unknown>>();
-  return {
-    ...actual,
-    fetchCallerGroups: (): Promise<string[]> => groupsMock(),
-  };
-});
+// AdminGate now reads caller groups from the root AuthProvider context
+// (#726) rather than probing Cognito per mount. Drive the gate by
+// stubbing the context hook.
+const callerGroups = vi.fn<() => { groups: string[]; loading: boolean }>();
+vi.mock('@/components/auth/AuthProvider', () => ({
+  useCallerGroups: () => callerGroups(),
+}));
 
 beforeEach(() => {
-  groupsMock.mockReset();
+  callerGroups.mockReset();
 });
 
 describe('AdminGate', () => {
-  it('renders children for an admin', async () => {
-    groupsMock.mockResolvedValue(['admin']);
+  it('renders children synchronously for an admin (no checking flash)', () => {
+    callerGroups.mockReturnValue({ groups: ['admin'], loading: false });
     render(
       <AdminGate>
         <div data-testid="protected">secret</div>
       </AdminGate>,
     );
-    await waitFor(() => expect(screen.getByTestId('protected')).toBeInTheDocument());
+    // Resolved from context on first render — never shows the access check.
+    expect(screen.queryByText(/checking your access/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId('protected')).toBeInTheDocument();
     expect(screen.queryByTestId('admin-denied')).not.toBeInTheDocument();
   });
 
-  it('hides children and shows the denied notice for a moderator', async () => {
-    groupsMock.mockResolvedValue(['moderator']);
+  it('shows the checking notice while the session is still loading', () => {
+    callerGroups.mockReturnValue({ groups: [], loading: true });
     render(
       <AdminGate>
         <div data-testid="protected">secret</div>
       </AdminGate>,
     );
-    await waitFor(() => expect(screen.getByTestId('admin-denied')).toBeInTheDocument());
+    expect(screen.getByText(/checking your access/i)).toBeInTheDocument();
     expect(screen.queryByTestId('protected')).not.toBeInTheDocument();
   });
 
-  it('hides children for a guest / member', async () => {
-    groupsMock.mockResolvedValue([]);
+  it('hides children and shows the denied notice for a moderator', () => {
+    callerGroups.mockReturnValue({ groups: ['moderator'], loading: false });
     render(
       <AdminGate>
         <div data-testid="protected">secret</div>
       </AdminGate>,
     );
-    await waitFor(() => expect(screen.getByTestId('admin-denied')).toBeInTheDocument());
+    expect(screen.getByTestId('admin-denied')).toBeInTheDocument();
     expect(screen.queryByTestId('protected')).not.toBeInTheDocument();
   });
 
-  it('denies when the session lookup throws', async () => {
-    groupsMock.mockRejectedValue(new Error('no session'));
+  it('hides children for a guest / member', () => {
+    callerGroups.mockReturnValue({ groups: [], loading: false });
     render(
       <AdminGate>
         <div data-testid="protected">secret</div>
       </AdminGate>,
     );
-    await waitFor(() => expect(screen.getByTestId('admin-denied')).toBeInTheDocument());
+    expect(screen.getByTestId('admin-denied')).toBeInTheDocument();
     expect(screen.queryByTestId('protected')).not.toBeInTheDocument();
   });
 });

@@ -18,10 +18,9 @@ export function SiteChrome({ children }: { children: ReactNode }) {
       <a href="#main-content" className={styles.skipLink}>
         Skip to content
       </a>
-      <div className={styles.classification}>
-        <span className={styles.classText}>
-          {'// PUBLIC RELEASE · EAM ARCHIVE · OSINT · UNCLASSIFIED //'}
-        </span>
+      <div className={styles.banner} role="note" aria-label="Classification banner">
+        <span className={styles.bannerTop}>UNCLASSIFIED//FNOUO</span>
+        <span className={styles.bannerSub}>OSINT · EAM Archive · Public Release</span>
       </div>
       <AmplifyConfigure />
       <SiteHeader />
