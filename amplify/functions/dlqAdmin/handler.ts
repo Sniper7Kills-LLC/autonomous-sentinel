@@ -133,6 +133,31 @@ async function getDefaultDataClient(): Promise<DlqRecordingClient> {
 
 // --- helpers ------------------------------------------------------------
 
+/**
+ * True when an Amplify Data `errors` payload represents a DynamoDB
+ * conditional-check failure — i.e. the target row does not exist (Amplify's
+ * auto-generated update conditions on `attribute_exists(id)`). Matched on the
+ * AppSync `errorType` (`DynamoDB:ConditionalCheckFailedException`) with a
+ * message fallback so a transport that only carries the human string still
+ * resolves. Used by dropDlqMessage to distinguish "row gone" (proceed) from a
+ * transient update failure (keep the message) — #714.
+ */
+function isConditionalCheckFailed(errors: unknown): boolean {
+  if (!Array.isArray(errors)) return false;
+  return errors.some((e) => {
+    if (!e || typeof e !== 'object') return false;
+    const { errorType, message } = e as { errorType?: unknown; message?: unknown };
+    // Prefer the AppSync `errorType` (`DynamoDB:ConditionalCheckFailedException`);
+    // fall back to the human message for transports that omit errorType. Match
+    // only these two fields — not the whole serialised error — so an unrelated
+    // field (path/locations) can't false-positive.
+    return (
+      (typeof errorType === 'string' && errorType.includes('ConditionalCheckFailed')) ||
+      (typeof message === 'string' && message.includes('ConditionalCheckFailed'))
+    );
+  });
+}
+
 function isAdmin(identity: unknown): boolean {
   if (!identity || typeof identity !== 'object') return false;
   const groups = (identity as { groups?: unknown }).groups;
@@ -314,10 +339,15 @@ async function dispatchDrop(
   const reason = typeof event.arguments.reason === 'string' ? event.arguments.reason : null;
 
   // Mark the Recording terminally FAILED FIRST, then delete from the DLQ.
-  // Ordering matters for failure safety: if the Recording.update throws,
-  // the message stays on the DLQ (nothing lost — the admin can re-drop).
-  // Deleting first would risk losing the message while leaving the
-  // recording un-FAILED on an update error.
+  // Ordering matters for failure safety: a TRANSIENT Recording.update error
+  // rethrows so the message stays on the DLQ (nothing lost — the admin can
+  // re-drop). A MISSING row is the exception: Amplify's auto-update conditions
+  // on `attribute_exists(id)`, so a recordingId that no longer exists (deleted)
+  // or never existed (the failed message's stage hadn't created a Recording,
+  // or the body's id isn't a real Recording id) throws
+  // ConditionalCheckFailedException. There is then no Recording to leave
+  // un-FAILED, so we log + proceed with the drop rather than wedging the
+  // message on the DLQ forever (#714).
   if (recordingId) {
     const client = await deps.getClient();
     const now = deps.now().toISOString();
@@ -329,9 +359,16 @@ async function dispatchDrop(
       failedReason: reason ?? `Dropped from ${stage} DLQ by admin`,
     });
     if (updated.errors) {
-      throw new Error(
-        `dropDlqMessage: Recording.update returned errors: ${JSON.stringify(updated.errors)}`,
-      );
+      if (isConditionalCheckFailed(updated.errors)) {
+        console.warn(
+          'dropDlqMessage: Recording row not found (deleted / never created); dropping the DLQ message anyway',
+          { recordingId, stage },
+        );
+      } else {
+        throw new Error(
+          `dropDlqMessage: Recording.update returned errors: ${JSON.stringify(updated.errors)}`,
+        );
+      }
     }
   }
 
