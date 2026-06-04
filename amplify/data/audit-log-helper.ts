@@ -138,11 +138,16 @@ export interface AuditDataClient {
  * `amplify/data/models/audit-log.ts` exactly.
  */
 export interface AuditLogCreateInput {
-  actorId: string | null;
+  // `actorId` + `targetMessageId` are GSI partition keys (`i('actorId')` and
+  // `gsi-Message.auditEntries` from `Message.auditEntries`). DynamoDB rejects a
+  // NULL-typed value for a GSI key ("Type mismatch … Expected: S Actual: NULL"),
+  // so they must be OMITTED (sparse index) rather than set to null — hence
+  // optional, not nullable (#718).
+  actorId?: string;
   action: AuditAction;
   targetType: string;
   targetId: string;
-  targetMessageId: string | null;
+  targetMessageId?: string;
   // Serialized to a JSON string for the `diff: a.json()` (AWSJSON)
   // field. AppSync's AWSJSON scalar rejects a raw object variable
   // ("Variable 'diff' has an invalid value"); a JSON string is the
@@ -247,17 +252,21 @@ export async function audit(
   const diff = diffObj === null ? null : JSON.stringify(diffObj);
 
   const input: AuditLogCreateInput = {
-    actorId,
     action: opts.action,
     targetType: opts.targetType,
     targetId: opts.targetId,
-    targetMessageId: opts.targetType === 'Message' ? opts.targetId : null,
     diff,
     reason: opts.reason ?? null,
     ipAddress,
     userAgent,
     claimId: opts.claimId ?? null,
   };
+  // Set the GSI-key fields ONLY when present — a null would be written as a
+  // NULL-typed DDB attribute and rejected by the GSI (#718). Omitting leaves
+  // the entry out of the sparse index, which is the intended behaviour for
+  // system-emitted entries (no actor) and non-Message targets.
+  if (actorId) input.actorId = actorId;
+  if (opts.targetType === 'Message') input.targetMessageId = opts.targetId;
 
   const client = deps.client ?? (await getDefaultClient());
   const result = await client.models.AuditLog.create(input);
