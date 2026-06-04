@@ -5,7 +5,7 @@ import HomePage from './page';
 // `<Authenticator>` from @aws-amplify/ui-react reaches for Amplify
 // Hub + Auth on mount, which we don't want to spin up in unit tests.
 // Replace it with a passthrough that renders children with a stub
-// `user` / `signOut`, exercising the portal UI underneath.
+// `user` / `signOut`, exercising the portal guest path underneath.
 vi.mock('@aws-amplify/ui-react', () => ({
   Authenticator: ({
     children,
@@ -16,6 +16,29 @@ vi.mock('@aws-amplify/ui-react', () => ({
       signOut: () => {},
       user: { username: 'test-user', signInDetails: { loginId: 'test@example.com' } },
     }),
+}));
+
+// The portal short-circuits the Authenticator for already-signed-in
+// callers (#726): identity comes from the root AuthProvider context.
+// Default the stub to a signed-in caller so the upload flow renders
+// without mounting the Authenticator.
+const authState = vi.fn<
+  () => {
+    loading: boolean;
+    signedIn: boolean;
+    username: string | null;
+    sub: string | null;
+    groups: string[];
+  }
+>(() => ({
+  loading: false,
+  signedIn: true,
+  username: 'test@example.com',
+  sub: 'sub-1',
+  groups: [],
+}));
+vi.mock('@/components/auth/AuthProvider', () => ({
+  useAuth: () => authState(),
 }));
 
 // Skip the Amplify SDK calls during render — the AmplifyConfigure
@@ -39,6 +62,13 @@ vi.mock('@/components/theme/ThemeToggle', () => ({
 
 describe('HomePage (testing portal)', () => {
   beforeEach(() => {
+    authState.mockReturnValue({
+      loading: false,
+      signedIn: true,
+      username: 'test@example.com',
+      sub: 'sub-1',
+      groups: [],
+    });
     vi.stubGlobal(
       'matchMedia',
       vi.fn().mockReturnValue({
@@ -66,8 +96,35 @@ describe('HomePage (testing portal)', () => {
     ).toBeInTheDocument();
   });
 
-  it('mounts the upload flow when authenticated', () => {
+  it('mounts the upload flow when authenticated (no Authenticator flash)', () => {
     render(<HomePage />);
+    expect(screen.getByTestId('upload-flow')).toBeInTheDocument();
+    expect(screen.queryByText(/checking your session/i)).not.toBeInTheDocument();
+  });
+
+  it('shows a session-check status without the upload flow while auth is loading', () => {
+    authState.mockReturnValue({
+      loading: true,
+      signedIn: false,
+      username: null,
+      sub: null,
+      groups: [],
+    });
+    render(<HomePage />);
+    expect(screen.getByText(/checking your session/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('upload-flow')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the Authenticator sign-in flow for guests', () => {
+    authState.mockReturnValue({
+      loading: false,
+      signedIn: false,
+      username: null,
+      sub: null,
+      groups: [],
+    });
+    render(<HomePage />);
+    // The mocked Authenticator passes through to the upload UI.
     expect(screen.getByTestId('upload-flow')).toBeInTheDocument();
   });
 });

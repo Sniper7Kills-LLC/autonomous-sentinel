@@ -63,8 +63,13 @@ export function AdminChrome({ children }: { children: ReactNode }) {
       <a href="#main-content" className={styles.skipLink}>
         Skip to content
       </a>
-      <div className={styles.classification}>
-        <span className={styles.classText}>{'// RESTRICTED · ADMIN CONSOLE //'}</span>
+      <div
+        className={`${styles.banner} ${styles.bannerRestricted}`}
+        role="note"
+        aria-label="Classification banner"
+      >
+        <span className={styles.bannerTop}>RESTRICTED//ADMIN CONSOLE</span>
+        <span className={styles.bannerSub}>OSINT · EAM Archive · Authorized Personnel</span>
       </div>
       <AmplifyConfigure />
       <SiteHeader />

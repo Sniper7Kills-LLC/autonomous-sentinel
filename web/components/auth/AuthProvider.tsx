@@ -102,6 +102,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             break;
           case 'signedOut':
             setState(SIGNED_OUT_STATE);
+            // Drop the session-scoped stats cache so the next visitor
+            // re-fetches rather than seeing the prior session's payload.
+            void import('@/components/charts/StatsLoader').then((m) => m.clearStatsCache());
             break;
           default:
             break;

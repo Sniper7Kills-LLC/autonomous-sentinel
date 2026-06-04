@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useState, type JSX } from 'react';
 import { Authenticator } from '@aws-amplify/ui-react';
 import '@aws-amplify/ui-react/styles.css';
 import { Alert } from '@/components/ui/Alert';
@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { UploadFlow } from '@/components/portal/UploadFlow';
 import { RawLog, type LogEntry } from '@/components/portal/RawLog';
+import { useAuth } from '@/components/auth/AuthProvider';
 import styles from './page.module.css';
 
 export default function HomePage() {
@@ -53,6 +54,36 @@ function PortalPanel() {
   const onLog = useCallback((entry: LogEntry) => {
     setLog((prev) => [...prev, entry]);
   }, []);
+  const { loading, signedIn, username } = useAuth();
+
+  // Sign-out via the lazily-imported SDK so the fast path never pulls
+  // `aws-amplify/auth` into the initial portal chunk.
+  const handleSignOut = useCallback(async () => {
+    const { signOut } = await import('aws-amplify/auth');
+    await signOut();
+  }, []);
+
+  // The authenticated upload UI, shared between the context fast-path
+  // (already-signed-in callers) and the Authenticator guest path.
+  const uploadUi = (signOut: () => void, displayName: string | null): JSX.Element => (
+    <div className={styles.authShell}>
+      <div className={styles.userBar}>
+        <span className={styles.userTag}>
+          Signed in as <code>{displayName}</code>
+        </span>
+        <Button variant="ghost" size="sm" onClick={signOut}>
+          Sign out
+        </Button>
+      </div>
+      <UploadFlow onLog={onLog} />
+      <RawLog entries={log} />
+      <Alert tone="info" title="Heads-up">
+        The pipeline is itself in flight. If a stage hangs or fails, the raw log above tells you
+        which Lambda or AppSync call was last to respond — please paste it into a GitHub issue with
+        the recording id rather than reporting the symptom.
+      </Alert>
+    </div>
+  );
 
   return (
     <section className={styles.panel}>
@@ -67,27 +98,23 @@ function PortalPanel() {
           for live status updates.
         </p>
       </div>
-      <Authenticator>
-        {({ signOut, user }) => (
-          <div className={styles.authShell}>
-            <div className={styles.userBar}>
-              <span className={styles.userTag}>
-                Signed in as <code>{user?.signInDetails?.loginId ?? user?.username}</code>
-              </span>
-              <Button variant="ghost" size="sm" onClick={signOut}>
-                Sign out
-              </Button>
-            </div>
-            <UploadFlow onLog={onLog} />
-            <RawLog entries={log} />
-            <Alert tone="info" title="Heads-up">
-              The pipeline is itself in flight. If a stage hangs or fails, the raw log above tells
-              you which Lambda or AppSync call was last to respond — please paste it into a GitHub
-              issue with the recording id rather than reporting the symptom.
-            </Alert>
-          </div>
-        )}
-      </Authenticator>
+      {loading ? (
+        // Identity is resolved once at the root (#726); while that first
+        // resolution is in flight show a status line rather than mounting
+        // the Authenticator, so already-signed-in callers never see its
+        // re-check flash on navigation.
+        <p className={styles.userTag} role="status">
+          Checking your session…
+        </p>
+      ) : signedIn ? (
+        uploadUi(() => void handleSignOut(), username)
+      ) : (
+        <Authenticator>
+          {({ signOut, user }) =>
+            uploadUi(signOut ?? (() => {}), user?.signInDetails?.loginId ?? user?.username ?? null)
+          }
+        </Authenticator>
+      )}
     </section>
   );
 }
