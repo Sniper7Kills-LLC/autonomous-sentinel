@@ -11,14 +11,11 @@ vi.mock('@/lib/uploads/query', async (importActual) => {
   };
 });
 
-const groupsMock = vi.fn<() => Promise<string[]>>();
-vi.mock('@/lib/auth/roles', async (importActual) => {
-  const actual = await importActual<Record<string, unknown>>();
-  return {
-    ...actual,
-    fetchCallerGroups: (): Promise<string[]> => groupsMock(),
-  };
-});
+const groupsMock = vi.fn<() => string[]>(() => []);
+vi.mock('@/components/auth/AuthProvider', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  useCallerGroups: () => ({ groups: groupsMock(), loading: false }),
+}));
 
 const reprocessMock = vi.fn<(id: string) => Promise<void>>();
 vi.mock('@/lib/uploads/reprocess', () => ({
@@ -51,7 +48,7 @@ describe('UploadsList', () => {
   beforeEach(() => {
     listMock.mockReset();
     groupsMock.mockReset();
-    groupsMock.mockResolvedValue([]);
+    groupsMock.mockReturnValue([]);
     reprocessMock.mockReset();
     reprocessMock.mockResolvedValue(undefined);
     vi.stubGlobal(
@@ -149,7 +146,7 @@ describe('UploadsList', () => {
   });
 
   it('hides the Reprocess button for a non-mod/admin member (#505)', async () => {
-    groupsMock.mockResolvedValue(['member']);
+    groupsMock.mockReturnValue(['member']);
     listMock.mockResolvedValue({ items: [failedRow], nextToken: null });
     render(<UploadsList uploaderId="sub-1" />);
     await waitFor(() => expect(screen.getByText('whisper.cpp exit 1')).toBeInTheDocument());
@@ -157,7 +154,7 @@ describe('UploadsList', () => {
   });
 
   it('shows Reprocess for a moderator/admin and calls the mutation, flipping the row to queued (#505)', async () => {
-    groupsMock.mockResolvedValue(['admin']);
+    groupsMock.mockReturnValue(['admin']);
     listMock.mockResolvedValue({ items: [failedRow], nextToken: null });
     render(<UploadsList uploaderId="sub-1" />);
 
@@ -171,7 +168,7 @@ describe('UploadsList', () => {
   });
 
   it('hides Reprocess for a recording-less row (no originalKey) even for admins (#505)', async () => {
-    groupsMock.mockResolvedValue(['admin']);
+    groupsMock.mockReturnValue(['admin']);
     listMock.mockResolvedValue({
       items: [{ ...failedRow, originalKey: null }],
       nextToken: null,

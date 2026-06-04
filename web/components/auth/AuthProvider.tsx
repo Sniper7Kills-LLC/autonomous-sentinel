@@ -105,6 +105,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // Drop the session-scoped stats cache so the next visitor
             // re-fetches rather than seeing the prior session's payload.
             void import('@/components/charts/StatsLoader').then((m) => m.clearStatsCache());
+            // Reset the cached AppSync auth mode so post-sign-out data
+            // calls fall back to the guest (identityPool) path instead of
+            // re-using the userPool mode resolved for the signed-in session.
+            void import('@/lib/auth/mode').then((m) => m.clearAuthModeCache());
             break;
           default:
             break;

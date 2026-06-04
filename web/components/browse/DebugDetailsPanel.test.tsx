@@ -4,14 +4,11 @@ import { DebugDetailsPanel } from './DebugDetailsPanel';
 import type { DisplayMessage } from '@/lib/messages/types';
 import type { DisplayRecording, LinguisticAttempt } from '@/lib/messages/recordings';
 
-const groupsMock = vi.fn<() => Promise<string[]>>();
-vi.mock('@/lib/auth/roles', async (importActual) => {
-  const actual = await importActual<Record<string, unknown>>();
-  return {
-    ...actual,
-    fetchCallerGroups: (): Promise<string[]> => groupsMock(),
-  };
-});
+const groupsMock = vi.fn<() => string[]>(() => []);
+vi.mock('@/components/auth/AuthProvider', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  useCallerGroups: () => ({ groups: groupsMock(), loading: false }),
+}));
 
 const rulesMock = vi.fn<() => Promise<unknown>>();
 vi.mock('@/lib/messages/rules', () => ({
@@ -74,12 +71,13 @@ const recording: DisplayRecording = {
 describe('DebugDetailsPanel', () => {
   beforeEach(() => {
     groupsMock.mockReset();
+    groupsMock.mockReturnValue([]);
     rulesMock.mockReset();
     rulesMock.mockResolvedValue([]);
   });
 
   it('is hidden for a non-admin / non-moderator session', async () => {
-    groupsMock.mockResolvedValue(['member']);
+    groupsMock.mockReturnValue(['member']);
     render(<DebugDetailsPanel message={message} recordings={[recording]} />);
     // Give the gate effect a chance to run, then assert nothing rendered.
     await waitFor(() => expect(groupsMock).toHaveBeenCalled());
@@ -88,14 +86,14 @@ describe('DebugDetailsPanel', () => {
   });
 
   it('is hidden while the group lookup is unresolved/failing', async () => {
-    groupsMock.mockRejectedValue(new Error('no session'));
+    groupsMock.mockReturnValue([]);
     render(<DebugDetailsPanel message={message} recordings={[recording]} />);
     await waitFor(() => expect(groupsMock).toHaveBeenCalled());
     expect(screen.queryByTestId('debug-details')).not.toBeInTheDocument();
   });
 
   it('renders transcript + attempts + parsed fields for an admin session', async () => {
-    groupsMock.mockResolvedValue(['admin']);
+    groupsMock.mockReturnValue(['admin']);
     rulesMock.mockResolvedValue([
       {
         id: 'rule-1',
@@ -138,13 +136,13 @@ describe('DebugDetailsPanel', () => {
   });
 
   it('shows the panel for moderators too', async () => {
-    groupsMock.mockResolvedValue(['moderator']);
+    groupsMock.mockReturnValue(['moderator']);
     render(<DebugDetailsPanel message={message} recordings={[recording]} />);
     await waitFor(() => expect(screen.getByTestId('debug-details')).toBeInTheDocument());
   });
 
   it('renders a fallback note when rule loading fails', async () => {
-    groupsMock.mockResolvedValue(['admin']);
+    groupsMock.mockReturnValue(['admin']);
     rulesMock.mockRejectedValue(new Error('not authorized'));
     render(<DebugDetailsPanel message={message} recordings={[recording]} />);
     await waitFor(() => expect(screen.getByTestId('debug-details')).toBeInTheDocument());

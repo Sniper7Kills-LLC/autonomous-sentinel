@@ -2,14 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { RecordingAdminControls } from './RecordingAdminControls';
 
-const groupsMock = vi.fn<() => Promise<string[]>>();
-vi.mock('@/lib/auth/roles', async (importActual) => {
-  const actual = await importActual<Record<string, unknown>>();
-  return {
-    ...actual,
-    fetchCallerGroups: (): Promise<string[]> => groupsMock(),
-  };
-});
+const groupsMock = vi.fn<() => string[]>(() => []);
+vi.mock('@/components/auth/AuthProvider', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  useCallerGroups: () => ({ groups: groupsMock(), loading: false }),
+}));
 
 const reprocessMock = vi.fn<(id: string, backend?: string) => Promise<void>>();
 vi.mock('@/lib/uploads/reprocess', () => ({
@@ -29,6 +26,7 @@ vi.mock('@/lib/messages/admin', () => ({
 describe('RecordingAdminControls (#566)', () => {
   beforeEach(() => {
     groupsMock.mockReset();
+    groupsMock.mockReturnValue([]);
     reprocessMock.mockReset();
     reprocessMock.mockResolvedValue();
     reparseMock.mockReset();
@@ -42,21 +40,21 @@ describe('RecordingAdminControls (#566)', () => {
   });
 
   it('is hidden for a member session', async () => {
-    groupsMock.mockResolvedValue(['member']);
+    groupsMock.mockReturnValue(['member']);
     render(<RecordingAdminControls recordingId="rec-1" hasTranscript />);
     await waitFor(() => expect(groupsMock).toHaveBeenCalled());
     expect(screen.queryByTestId('recording-admin-controls')).not.toBeInTheDocument();
   });
 
-  it('is hidden when the group lookup fails (guest / no session)', async () => {
-    groupsMock.mockRejectedValue(new Error('no session'));
+  it('is hidden when there are no caller groups (guest / no session)', async () => {
+    groupsMock.mockReturnValue([]);
     render(<RecordingAdminControls recordingId="rec-1" hasTranscript />);
     await waitFor(() => expect(groupsMock).toHaveBeenCalled());
     expect(screen.queryByTestId('recording-admin-controls')).not.toBeInTheDocument();
   });
 
   it('shows both buttons for an admin', async () => {
-    groupsMock.mockResolvedValue(['admin']);
+    groupsMock.mockReturnValue(['admin']);
     render(<RecordingAdminControls recordingId="rec-1" hasTranscript />);
     await waitFor(() => expect(screen.getByTestId('recording-admin-controls')).toBeInTheDocument());
     expect(screen.getByRole('button', { name: /re-transcribe \+ parse/i })).toBeInTheDocument();
@@ -64,13 +62,13 @@ describe('RecordingAdminControls (#566)', () => {
   });
 
   it('shows both buttons for a moderator', async () => {
-    groupsMock.mockResolvedValue(['moderator']);
+    groupsMock.mockReturnValue(['moderator']);
     render(<RecordingAdminControls recordingId="rec-1" hasTranscript />);
     await waitFor(() => expect(screen.getByTestId('recording-admin-controls')).toBeInTheDocument());
   });
 
   it('invokes reprocessRecording and shows success feedback', async () => {
-    groupsMock.mockResolvedValue(['admin']);
+    groupsMock.mockReturnValue(['admin']);
 
     render(<RecordingAdminControls recordingId="rec-7" hasTranscript />);
     await waitFor(() => expect(screen.getByTestId('recording-admin-controls')).toBeInTheDocument());
@@ -82,7 +80,7 @@ describe('RecordingAdminControls (#566)', () => {
   });
 
   it('passes the chosen backend to reprocessRecording (#592)', async () => {
-    groupsMock.mockResolvedValue(['admin']);
+    groupsMock.mockReturnValue(['admin']);
 
     render(<RecordingAdminControls recordingId="rec-amz" hasTranscript />);
     await waitFor(() => expect(screen.getByTestId('recording-admin-controls')).toBeInTheDocument());
@@ -95,7 +93,7 @@ describe('RecordingAdminControls (#566)', () => {
   });
 
   it('offers only the two built backends in the picker (#592)', async () => {
-    groupsMock.mockResolvedValue(['admin']);
+    groupsMock.mockReturnValue(['admin']);
     render(<RecordingAdminControls recordingId="rec-1" hasTranscript />);
     await waitFor(() => expect(screen.getByTestId('recording-admin-controls')).toBeInTheDocument());
     const select = screen.getByTestId('reprocess-backend-select');
@@ -104,7 +102,7 @@ describe('RecordingAdminControls (#566)', () => {
   });
 
   it('invokes reparseRecording and shows success feedback', async () => {
-    groupsMock.mockResolvedValue(['moderator']);
+    groupsMock.mockReturnValue(['moderator']);
 
     render(<RecordingAdminControls recordingId="rec-9" hasTranscript />);
     await waitFor(() => expect(screen.getByTestId('recording-admin-controls')).toBeInTheDocument());
@@ -117,7 +115,7 @@ describe('RecordingAdminControls (#566)', () => {
   });
 
   it('surfaces an error from the mutation', async () => {
-    groupsMock.mockResolvedValue(['admin']);
+    groupsMock.mockReturnValue(['admin']);
     reparseMock.mockRejectedValue(new Error('reparseRecording failed: boom'));
 
     render(<RecordingAdminControls recordingId="rec-x" hasTranscript />);
@@ -127,7 +125,7 @@ describe('RecordingAdminControls (#566)', () => {
   });
 
   it('disables Re-run AI when there is no stored transcript', async () => {
-    groupsMock.mockResolvedValue(['admin']);
+    groupsMock.mockReturnValue(['admin']);
     render(<RecordingAdminControls recordingId="rec-1" hasTranscript={false} />);
     await waitFor(() => expect(screen.getByTestId('recording-admin-controls')).toBeInTheDocument());
     expect(screen.getByRole('button', { name: /re-parse transcript/i })).toBeDisabled();
@@ -136,14 +134,14 @@ describe('RecordingAdminControls (#566)', () => {
   });
 
   it('hides Delete recording for a moderator (admin-only #721)', async () => {
-    groupsMock.mockResolvedValue(['moderator']);
+    groupsMock.mockReturnValue(['moderator']);
     render(<RecordingAdminControls recordingId="rec-1" hasTranscript />);
     await waitFor(() => expect(screen.getByTestId('recording-admin-controls')).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: /delete recording/i })).not.toBeInTheDocument();
   });
 
   it('soft-deletes a recording after confirm and notifies the parent (#721)', async () => {
-    groupsMock.mockResolvedValue(['admin']);
+    groupsMock.mockReturnValue(['admin']);
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     const onDeleted = vi.fn();
     render(<RecordingAdminControls recordingId="rec-del" hasTranscript onDeleted={onDeleted} />);
@@ -154,7 +152,7 @@ describe('RecordingAdminControls (#566)', () => {
   });
 
   it('does not soft-delete when the confirm is cancelled (#721)', async () => {
-    groupsMock.mockResolvedValue(['admin']);
+    groupsMock.mockReturnValue(['admin']);
     vi.spyOn(window, 'confirm').mockReturnValue(false);
     const onDeleted = vi.fn();
     render(<RecordingAdminControls recordingId="rec-del" hasTranscript onDeleted={onDeleted} />);

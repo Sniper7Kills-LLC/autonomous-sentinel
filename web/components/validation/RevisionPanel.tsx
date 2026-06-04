@@ -11,7 +11,8 @@ import {
   type DisplayRevision,
   type RevisionVoteValue,
 } from '@/lib/revisions/query';
-import { fetchCallerGroups, isModeratorOrAdmin } from '@/lib/auth/roles';
+import { isModeratorOrAdmin } from '@/lib/auth/roles';
+import { useCallerGroups } from '@/components/auth/AuthProvider';
 import { diffTranscript, hasChanges, type DiffSegment } from '@/lib/revisions/diff';
 import { containsProfanity } from '@/lib/moderation/profanity';
 import styles from './RevisionPanel.module.css';
@@ -60,26 +61,8 @@ export function RevisionPanel({
   // Moderator/admin gate for the Accept control. Server enforces the
   // same authorization on `acceptTranscriptRevision`; this only decides
   // what to render (#654, mirrors the #505 reprocess-button pattern).
-  const [canAccept, setCanAccept] = useState(false);
-
-  useEffect(() => {
-    if (!signedIn) {
-      setCanAccept(false);
-      return;
-    }
-    let active = true;
-    void (async () => {
-      try {
-        const groups = await fetchCallerGroups();
-        if (active) setCanAccept(isModeratorOrAdmin(groups));
-      } catch {
-        if (active) setCanAccept(false);
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [signedIn]);
+  const { groups } = useCallerGroups();
+  const canAccept = isModeratorOrAdmin(groups);
 
   const refresh = useCallback(async () => {
     try {

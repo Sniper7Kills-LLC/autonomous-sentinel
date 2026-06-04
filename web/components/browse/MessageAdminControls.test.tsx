@@ -2,14 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MessageAdminControls } from './MessageAdminControls';
 
-const groupsMock = vi.fn<() => Promise<string[]>>();
-vi.mock('@/lib/auth/roles', async (importActual) => {
-  const actual = await importActual<Record<string, unknown>>();
-  return {
-    ...actual,
-    fetchCallerGroups: (): Promise<string[]> => groupsMock(),
-  };
-});
+const groupsMock = vi.fn<() => string[]>(() => []);
+vi.mock('@/components/auth/AuthProvider', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  useCallerGroups: () => ({ groups: groupsMock(), loading: false }),
+}));
 
 const clearFlagMock = vi.fn<(id: string) => Promise<void>>();
 vi.mock('@/lib/admin/moderation', () => ({
@@ -24,6 +21,7 @@ vi.mock('@/lib/messages/admin', () => ({
 describe('MessageAdminControls (#721)', () => {
   beforeEach(() => {
     groupsMock.mockReset();
+    groupsMock.mockReturnValue([]);
     clearFlagMock.mockReset();
     clearFlagMock.mockResolvedValue();
     softDeleteMock.mockReset();
@@ -35,14 +33,14 @@ describe('MessageAdminControls (#721)', () => {
   });
 
   it('is hidden for a member session', async () => {
-    groupsMock.mockResolvedValue(['member']);
+    groupsMock.mockReturnValue(['member']);
     render(<MessageAdminControls messageId="m1" flaggedForReview onChanged={vi.fn()} />);
     await waitFor(() => expect(groupsMock).toHaveBeenCalled());
     expect(screen.queryByTestId('message-admin-controls')).not.toBeInTheDocument();
   });
 
   it('shows clear-flag for a moderator but not delete', async () => {
-    groupsMock.mockResolvedValue(['moderator']);
+    groupsMock.mockReturnValue(['moderator']);
     render(<MessageAdminControls messageId="m1" flaggedForReview onChanged={vi.fn()} />);
     await waitFor(() => expect(screen.getByTestId('message-admin-controls')).toBeInTheDocument());
     expect(screen.getByRole('button', { name: /clear review flag/i })).toBeInTheDocument();
@@ -50,14 +48,14 @@ describe('MessageAdminControls (#721)', () => {
   });
 
   it('hides clear-flag when the message is not flagged', async () => {
-    groupsMock.mockResolvedValue(['moderator']);
+    groupsMock.mockReturnValue(['moderator']);
     render(<MessageAdminControls messageId="m1" flaggedForReview={false} onChanged={vi.fn()} />);
     await waitFor(() => expect(screen.getByTestId('message-admin-controls')).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: /clear review flag/i })).not.toBeInTheDocument();
   });
 
   it('clears the flag and notifies the parent', async () => {
-    groupsMock.mockResolvedValue(['moderator']);
+    groupsMock.mockReturnValue(['moderator']);
     const onChanged = vi.fn();
     render(<MessageAdminControls messageId="m7" flaggedForReview onChanged={onChanged} />);
     await waitFor(() => expect(screen.getByTestId('message-admin-controls')).toBeInTheDocument());
@@ -67,7 +65,7 @@ describe('MessageAdminControls (#721)', () => {
   });
 
   it('shows delete for an admin and soft-deletes after confirm', async () => {
-    groupsMock.mockResolvedValue(['admin']);
+    groupsMock.mockReturnValue(['admin']);
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     const onChanged = vi.fn();
     render(<MessageAdminControls messageId="m9" flaggedForReview={false} onChanged={onChanged} />);
@@ -79,7 +77,7 @@ describe('MessageAdminControls (#721)', () => {
   });
 
   it('does not delete when the confirm is cancelled', async () => {
-    groupsMock.mockResolvedValue(['admin']);
+    groupsMock.mockReturnValue(['admin']);
     vi.spyOn(window, 'confirm').mockReturnValue(false);
     render(<MessageAdminControls messageId="m9" flaggedForReview={false} onChanged={vi.fn()} />);
     await waitFor(() => expect(screen.getByTestId('message-admin-controls')).toBeInTheDocument());
@@ -88,7 +86,7 @@ describe('MessageAdminControls (#721)', () => {
   });
 
   it('surfaces a mutation error', async () => {
-    groupsMock.mockResolvedValue(['moderator']);
+    groupsMock.mockReturnValue(['moderator']);
     clearFlagMock.mockRejectedValue(new Error('clearMessageFlag failed: boom'));
     render(<MessageAdminControls messageId="m1" flaggedForReview onChanged={vi.fn()} />);
     await waitFor(() => expect(screen.getByTestId('message-admin-controls')).toBeInTheDocument());

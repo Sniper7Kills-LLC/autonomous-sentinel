@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
-import { fetchCallerGroups, isAdmin, isModeratorOrAdmin } from '@/lib/auth/roles';
+import { useCallerGroups } from '@/components/auth/AuthProvider';
+import { isAdmin, isModeratorOrAdmin } from '@/lib/auth/roles';
 import { clearMessageFlag } from '@/lib/admin/moderation';
 import { softDeleteMessage } from '@/lib/messages/admin';
 import styles from './MessageDetailView.module.css';
@@ -29,7 +30,7 @@ type Feedback = { tone: 'ok' | 'err'; text: string } | null;
  *     confirm with an optional audit reason.
  *
  * Hidden entirely for members/guests; the gate mirrors
- * `RecordingAdminControls` (`fetchCallerGroups` → role check). The server
+ * `RecordingAdminControls` (`useCallerGroups` → role check). The server
  * enforces its own authorization on each mutation — this only decides
  * what to render.
  */
@@ -38,7 +39,7 @@ export function MessageAdminControls({
   flaggedForReview,
   onChanged,
 }: MessageAdminControlsProps) {
-  const [groups, setGroups] = useState<string[] | null>(null);
+  const { groups } = useCallerGroups();
   const [busy, setBusy] = useState<null | 'flag' | 'delete'>(null);
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [reason, setReason] = useState('');
@@ -46,24 +47,7 @@ export function MessageAdminControls({
   // this control (the parent swaps to the soft-deleted empty state).
   const mounted = useRef(true);
 
-  useEffect(() => {
-    mounted.current = true;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const g = await fetchCallerGroups();
-        if (!cancelled) setGroups(g);
-      } catch {
-        if (!cancelled) setGroups([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-      mounted.current = false;
-    };
-  }, []);
-
-  if (!groups || !isModeratorOrAdmin(groups)) return null;
+  if (!isModeratorOrAdmin(groups)) return null;
 
   const admin = isAdmin(groups);
 
