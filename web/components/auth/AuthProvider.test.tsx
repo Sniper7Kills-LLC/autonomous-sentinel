@@ -108,4 +108,26 @@ describe('AuthProvider', () => {
     await waitFor(() => expect(screen.getByTestId('signedIn')).toHaveTextContent('true'));
     expect(getCurrentUser).toHaveBeenCalledTimes(2);
   });
+
+  it('unsubscribes from Hub and ignores events after unmount', async () => {
+    getCurrentUser.mockResolvedValue(signedInUser);
+    fetchAuthSession.mockResolvedValue(sessionWithGroups([]));
+
+    const { unmount } = render(
+      <AuthProvider>
+        <Probe />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('signedIn')).toHaveTextContent('true'));
+    await waitFor(() => expect(hubCallback).not.toBeNull());
+
+    unmount();
+    expect(hubUnsubscribe).toHaveBeenCalledTimes(1);
+
+    // A late event must not trigger another session fetch once unmounted.
+    getCurrentUser.mockClear();
+    act(() => hubCallback!({ payload: { event: 'signedIn' } }));
+    expect(getCurrentUser).not.toHaveBeenCalled();
+  });
 });

@@ -94,13 +94,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void (async () => {
       const { Hub } = await import('aws-amplify/utils');
       const stop = Hub.listen('auth', ({ payload }) => {
+        if (cancelled) return;
         switch (payload.event) {
           case 'signedIn':
           case 'tokenRefresh':
             void load();
             break;
           case 'signedOut':
-            if (!cancelled) setState(SIGNED_OUT_STATE);
+            setState(SIGNED_OUT_STATE);
             break;
           default:
             break;
