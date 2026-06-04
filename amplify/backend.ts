@@ -252,8 +252,9 @@ listSdrPublicLambdaFn.addToRolePolicy(
 //      policy stays at the AWS default (root-account access only);
 //      the handler's IAM role is granted Encrypt + Decrypt by the
 //      `grantEncryptDecrypt` call below.
-//   2. DDB GetItem + UpdateItem on the NotificationPreference table
-//      (upsert; lazy-creates the row on first owner read).
+//   2. DDB GetItem + UpdateItem + PutItem on the NotificationPreference
+//      table (upsert via UpdateItem; PutItem lazy-creates the default row
+//      on first owner read — #716).
 //
 // `NOTIFICATION_PREFERENCE_TABLE_NAME` is already populated for the
 // legacy-claim worker (it fans out the same table). Re-read it from
@@ -287,7 +288,11 @@ notificationPrefLambda.addEnvironment(
 notificationPrefLambda.addEnvironment('KMS_KEY_ID', notificationPrefKey.keyId);
 notificationPrefLambda.addToRolePolicy(
   new PolicyStatement({
-    actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'],
+    // PutItem is required for the first-read lazy-create path
+    // (createDefaultRowIfMissing): the handler conditionally Puts a default
+    // row (attribute_not_exists(userId)) when a user has no preference row
+    // yet. Without it, the first load 403s (#716).
+    actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem', 'dynamodb:PutItem'],
     resources: [notificationPreferenceTable.tableArn],
   }),
 );
