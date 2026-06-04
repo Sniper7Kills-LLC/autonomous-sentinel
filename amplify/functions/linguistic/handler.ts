@@ -459,7 +459,10 @@ export async function classifyWithRules(
   transcript: string,
   engine: RulesMatcher,
 ): Promise<ClassifyResult> {
-  let match: RuleMatch | null = null;
+  // No `= null` initialiser: the try below assigns it and the catch returns,
+  // so it is always assigned before the read at `if (!match ...)` — an
+  // initialiser is dead per eslint 10's `no-useless-assignment`.
+  let match: RuleMatch | null;
   try {
     match = await engine.tryMatch(transcript);
   } catch (err) {

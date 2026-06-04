@@ -156,6 +156,26 @@ export function AudioPlayer({
     }
   }, []);
 
+  // Resolve a fresh signed URL on each click instead of baking the initial
+  // `assets.audioUrl` into the href — the initial URL TTL can lapse on a
+  // long-lived page before a user clicks Download. Extracted to a handler
+  // (vs an inline IIFE in JSX) so React Compiler can optimise the render
+  // (@eslint-react/unsupported-syntax).
+  const handleDownload = useCallback(async () => {
+    try {
+      const fresh = await getRecordingAssetUrl(webCanonicalKey);
+      const a = document.createElement('a');
+      a.href = fresh;
+      a.download = `${recordingId}.opus`;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [webCanonicalKey, recordingId]);
+
   const activeWordIdx = useMemo(
     () => (assets ? findActiveWord(assets.words, currentTime) : -1),
     [assets, currentTime],
@@ -190,30 +210,7 @@ export function AudioPlayer({
         </span>
         <span className={styles.spacer} />
         {assets && (
-          <button
-            type="button"
-            // Resolve a fresh signed URL on each click instead of
-            // baking the initial `assets.audioUrl` into the href —
-            // the initial URL TTL can lapse on a long-lived page
-            // before a user clicks Download.
-            onClick={() => {
-              void (async () => {
-                try {
-                  const fresh = await getRecordingAssetUrl(webCanonicalKey);
-                  const a = document.createElement('a');
-                  a.href = fresh;
-                  a.download = `${recordingId}.opus`;
-                  a.rel = 'noopener';
-                  document.body.appendChild(a);
-                  a.click();
-                  a.remove();
-                } catch (err) {
-                  setError(err instanceof Error ? err.message : String(err));
-                }
-              })();
-            }}
-            className={styles.dlLink}
-          >
+          <button type="button" onClick={() => void handleDownload()} className={styles.dlLink}>
             Download .opus
           </button>
         )}

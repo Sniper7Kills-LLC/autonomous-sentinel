@@ -425,8 +425,11 @@ export async function tryBedrockFallback(
   const initialMessages: BedrockMessage[] = [{ role: 'user', content: [{ text: userPrompt }] }];
 
   let retried = false;
-  let parsed: unknown = null;
-  let firstResponse: ConverseCommandOutput | null = null;
+  // No `= null` initialisers: both are unconditionally assigned before any
+  // read (every path through the try/catch below either assigns or returns),
+  // so an initialiser is dead per eslint 10's `no-useless-assignment`.
+  let parsed: unknown;
+  let firstResponse: ConverseCommandOutput | null;
 
   // First attempt, with ONE retry on a transient Converse throw (#577).
   // Bedrock intermittently throws "Bedrock is unable to process your
