@@ -29,12 +29,14 @@ import {
  * schema-level `allow.group('admin')` authz.
  *
  * SQS receipt-handle caveat: handles returned by `listDlqMessages` come
- * from a zero-visibility-timeout peek, so the same message stays
- * immediately visible to a concurrent peek. A handle is still valid for
- * a `DeleteMessage` until the message is redriven/expired; for the
- * low-volume admin triage surface this best-effort model is acceptable.
- * If a handle has gone stale the SQS delete is a no-op (the message was
- * already actioned) — surfaced to the caller as a benign success.
+ * from a zero-visibility-timeout peek and go stale as soon as the message
+ * is received again (the UI re-polls every 30s). SQS only honours
+ * `DeleteMessage` for the most-recently-received handle, so deleting with a
+ * peeked handle "succeeds" without removing the message — it reappears
+ * (#731). `requeue` / `drop` therefore take a `messageId` and re-receive a
+ * fresh handle (`receiveFreshHandle`) immediately before deleting; the
+ * peeked `receiptHandle` is only a legacy fallback when no `messageId` is
+ * supplied.
  */
 
 export type PipelineStage = 'preprocess' | 'transcribe' | 'linguistic';
@@ -217,6 +219,74 @@ function parseBody(body: string): { recordingId: string | null; errorReason: str
   }
 }
 
+/**
+ * Re-receive from a DLQ to obtain a CURRENT receipt handle for `messageId`.
+ *
+ * SQS honours `DeleteMessage` only for the most-recently-received receipt
+ * handle of a message; an older handle (e.g. one peeked by `listDlqMessages`
+ * with `VisibilityTimeout: 0`, then superseded by the UI's 30s re-poll)
+ * makes the delete "succeed" without removing the message — so dropped /
+ * requeued messages reappear (#731). Fix: fetch a fresh handle here, then
+ * delete with it immediately.
+ *
+ * SQS can't fetch a specific MessageId, so we page through the queue:
+ * incidental non-target messages are received with a short visibility
+ * timeout (briefly hidden) so successive rounds advance instead of
+ * re-reading the same items. A message the function itself receives and
+ * matches is returned immediately (before its hide matters), so the scan
+ * can never hide its own target. These are dead-letter queues with no
+ * other consumer, so nothing else hides messages concurrently — when this
+ * runs, every stuck message is visible.
+ *
+ * Returns the fresh handle, or `null` when the message isn't on the queue
+ * (already actioned). Bounded at `maxRounds × 10` messages scanned; a DLQ
+ * larger than that logs a warning rather than silently reporting "gone".
+ */
+async function receiveFreshHandle(
+  sqs: SQSClient,
+  queueUrl: string,
+  messageId: string,
+  maxRounds = 8,
+): Promise<string | null> {
+  const seen = new Set<string>();
+  for (let round = 0; round < maxRounds; round += 1) {
+    const res = await sqs.send(
+      new ReceiveMessageCommand({
+        QueueUrl: queueUrl,
+        MaxNumberOfMessages: 10,
+        // Briefly hide incidental non-target messages so paging advances;
+        // short enough that they return to the queue right after triage.
+        VisibilityTimeout: 10,
+        WaitTimeSeconds: 1,
+        AttributeNames: ['All'],
+      }),
+    );
+    const batch = res.Messages ?? [];
+    // Empty batch / only-already-seen batch → the queue holds nothing new;
+    // the target genuinely isn't here.
+    if (batch.length === 0) return null;
+    let progressed = false;
+    for (const m of batch) {
+      if (!m.MessageId || !m.ReceiptHandle) continue;
+      if (m.MessageId === messageId) return m.ReceiptHandle;
+      if (!seen.has(m.MessageId)) {
+        seen.add(m.MessageId);
+        progressed = true;
+      }
+    }
+    if (!progressed) return null;
+  }
+  // Fell through every round still finding new messages → the DLQ is larger
+  // than the scan budget and the target may lie beyond it. Surface it rather
+  // than report a false "gone" (which would no-op the drop / abort requeue).
+  console.warn('receiveFreshHandle: scan budget exhausted before finding the target message', {
+    messageId,
+    queueUrl,
+    scanned: maxRounds * 10,
+  });
+  return null;
+}
+
 // --- dispatch handlers --------------------------------------------------
 
 async function dispatchList(
@@ -293,15 +363,33 @@ async function dispatchRequeue(
   }
   const recordingId =
     typeof event.arguments.recordingId === 'string' ? event.arguments.recordingId : null;
+  const messageId =
+    typeof event.arguments.messageId === 'string' ? event.arguments.messageId : null;
 
   const mainUrl = envUrl(MAIN_QUEUE_ENV[stage]);
   const dlqUrl = envUrl(DLQ_QUEUE_ENV[stage]);
+
+  // Resolve the receipt handle to delete with. Prefer a freshly re-received
+  // handle keyed off messageId — the UI-supplied handle is a stale peek and
+  // would make the DeleteMessage a silent no-op (#731). If the message is no
+  // longer on the DLQ, abort BEFORE sending to the primary queue so we never
+  // half-requeue (send-without-delete = duplicate redrive).
+  let deleteHandle = receiptHandle;
+  if (messageId) {
+    const fresh = await receiveFreshHandle(deps.sqs, dlqUrl, messageId);
+    if (!fresh) {
+      throw new Error(
+        `requeueDlqMessage: message ${messageId} is no longer on the DLQ (already actioned)`,
+      );
+    }
+    deleteHandle = fresh;
+  }
 
   // Send back onto the primary queue FIRST, then remove from the DLQ.
   // If the delete fails the message is still on the DLQ (will redrive
   // again) — at-least-once, never a silent loss.
   await deps.sqs.send(new SendMessageCommand({ QueueUrl: mainUrl, MessageBody: body }));
-  await deps.sqs.send(new DeleteMessageCommand({ QueueUrl: dlqUrl, ReceiptHandle: receiptHandle }));
+  await deps.sqs.send(new DeleteMessageCommand({ QueueUrl: dlqUrl, ReceiptHandle: deleteHandle }));
 
   await deps.audit(auditContextFrom(event), {
     action: 'DLQ_REQUEUE',
@@ -337,6 +425,8 @@ async function dispatchDrop(
   const recordingId =
     typeof event.arguments.recordingId === 'string' ? event.arguments.recordingId : null;
   const reason = typeof event.arguments.reason === 'string' ? event.arguments.reason : null;
+  const messageId =
+    typeof event.arguments.messageId === 'string' ? event.arguments.messageId : null;
 
   // Mark the Recording terminally FAILED FIRST, then delete from the DLQ.
   // Ordering matters for failure safety: a TRANSIENT Recording.update error
@@ -373,7 +463,25 @@ async function dispatchDrop(
   }
 
   const dlqUrl = envUrl(DLQ_QUEUE_ENV[stage]);
-  await deps.sqs.send(new DeleteMessageCommand({ QueueUrl: dlqUrl, ReceiptHandle: receiptHandle }));
+  // Prefer a freshly re-received handle (the UI-supplied one is a stale peek
+  // and would make DeleteMessage a silent no-op → the message reappears,
+  // #731). When messageId resolves to nothing, the message is already off the
+  // DLQ — record the drop intent without a redundant delete.
+  if (messageId) {
+    const fresh = await receiveFreshHandle(deps.sqs, dlqUrl, messageId);
+    if (fresh) {
+      await deps.sqs.send(new DeleteMessageCommand({ QueueUrl: dlqUrl, ReceiptHandle: fresh }));
+    } else {
+      console.warn('dropDlqMessage: message already gone from the DLQ; nothing to delete', {
+        messageId,
+        stage,
+      });
+    }
+  } else {
+    await deps.sqs.send(
+      new DeleteMessageCommand({ QueueUrl: dlqUrl, ReceiptHandle: receiptHandle }),
+    );
+  }
 
   await deps.audit(auditContextFrom(event), {
     action: 'DLQ_DROP',

@@ -108,7 +108,13 @@ export async function requeueDlqMessage(msg: DlqMessageView): Promise<void> {
   const mutateFn = (
     client.mutations as unknown as {
       requeueDlqMessage: (
-        input: { stage: string; receiptHandle: string; body: string; recordingId?: string },
+        input: {
+          stage: string;
+          receiptHandle: string;
+          body: string;
+          recordingId?: string;
+          messageId: string;
+        },
         opts: { authMode: 'userPool' },
       ) => Promise<RawResult>;
     }
@@ -118,6 +124,7 @@ export async function requeueDlqMessage(msg: DlqMessageView): Promise<void> {
       stage: msg.stage,
       receiptHandle: msg.receiptHandle,
       body: msg.body,
+      messageId: msg.messageId,
       ...(msg.recordingId ? { recordingId: msg.recordingId } : {}),
     },
     { authMode: 'userPool' },
@@ -131,7 +138,7 @@ export async function dropDlqMessage(msg: DlqMessageView): Promise<void> {
   const mutateFn = (
     client.mutations as unknown as {
       dropDlqMessage: (
-        input: { stage: string; receiptHandle: string; recordingId?: string },
+        input: { stage: string; receiptHandle: string; recordingId?: string; messageId: string },
         opts: { authMode: 'userPool' },
       ) => Promise<RawResult>;
     }
@@ -140,6 +147,7 @@ export async function dropDlqMessage(msg: DlqMessageView): Promise<void> {
     {
       stage: msg.stage,
       receiptHandle: msg.receiptHandle,
+      messageId: msg.messageId,
       ...(msg.recordingId ? { recordingId: msg.recordingId } : {}),
     },
     { authMode: 'userPool' },

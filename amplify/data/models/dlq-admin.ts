@@ -35,6 +35,9 @@ export const requeueDlqMessage = a
     receiptHandle: a.string().required(),
     body: a.string().required(),
     recordingId: a.string(),
+    // Re-received server-side to get a fresh delete handle (#731); the
+    // peeked receiptHandle alone goes stale and no-ops the delete.
+    messageId: a.string(),
   })
   .returns(a.json())
   .authorization((allow) => allow.group('admin'))
@@ -47,6 +50,9 @@ export const dropDlqMessage = a
     receiptHandle: a.string().required(),
     recordingId: a.string(),
     reason: a.string(),
+    // Re-received server-side to get a fresh delete handle (#731); the
+    // peeked receiptHandle alone goes stale and no-ops the delete.
+    messageId: a.string(),
   })
   .returns(a.json())
   .authorization((allow) => allow.group('admin'))
