@@ -393,6 +393,32 @@ describe('linguistic — handler happy path', () => {
     );
   });
 
+  it('skips entirely (no re-parse, no status write) when the recording is already terminal (#741)', async () => {
+    const { client, createSpy, updateSpy, getSpy } = makeDataStub();
+    getSpy.mockResolvedValue({
+      data: { id: 'rec', transcriptionStatus: 'PUBLISHED' },
+      errors: null,
+    });
+    const bedrockFallback = bedrockOk({ type: 'SKYKING', body: 'x' });
+    __setDeps({
+      dataClient: client,
+      bedrockFallback,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-uuid-1',
+    });
+    const event = makeEvent({
+      recordingId: 'rec-dup',
+      transcript: 'Skyking, Skyking, do not answer',
+      enqueuedAt: '2026-05-24T17:55:00Z',
+    });
+    await handler(event, {} as never, () => undefined);
+
+    // No re-parse, no Message, no status write — the terminal recording is left untouched.
+    expect(bedrockFallback).not.toHaveBeenCalled();
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(updateSpy).not.toHaveBeenCalled();
+  });
+
   it('recomputes the uploader reputation after publishing (#480)', async () => {
     const { client, updateSpy } = makeDataStub();
     // Recording.update returns the full row incl. uploaderId on publish.
