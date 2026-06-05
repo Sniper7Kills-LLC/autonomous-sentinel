@@ -219,6 +219,9 @@ export interface LinguisticDataClient {
       get: (input: { id: string }) => Promise<{
         data: {
           id: string;
+          // Current pipeline status — read to skip the cosmetic PARSING
+          // write when the recording is already terminal (#433).
+          transcriptionStatus?: string | null;
           broadcastedAt?: string | null;
           messageId?: string | null;
           // Source media for the low-confidence Amazon Transcribe escalation
@@ -388,6 +391,25 @@ async function dataClient(): Promise<LinguisticDataClient> {
 
 function nowDate(): Date {
   return (injected.now ?? (() => new Date()))();
+}
+
+/**
+ * Terminal Recording statuses — once a recording reaches one of these the
+ * cosmetic intermediate badge writes (PARSING) are skipped so a stray /
+ * duplicate SQS delivery can't flip a finished recording back to
+ * in-progress (#433). The authoritative terminal write itself remains
+ * unguarded; full pipeline-wide status-regression protection is tracked
+ * separately.
+ */
+const TERMINAL_STATUSES = new Set([
+  'PUBLISHED',
+  'PARSE_FAILED',
+  'TRANSCRIBE_FAILED',
+  'PREPROCESS_FAILED',
+  'FAILED',
+]);
+function isTerminalStatus(status: unknown): boolean {
+  return typeof status === 'string' && TERMINAL_STATUSES.has(status);
 }
 
 /**
@@ -1212,22 +1234,6 @@ export function parseMessage(body: string): LinguisticQueueMessage {
 async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   const client = await dataClient();
 
-  // Advance TRANSCRIBING → PARSING while the transcript is classified, so
-  // the My Uploads badge reflects this step (#433 status ladder).
-  // Best-effort: the authoritative terminal write (PUBLISHED / PARSE_FAILED)
-  // happens below, so a failure here is cosmetic — log rather than throw.
-  const parsingUpdate = await client.models.Recording.update({
-    id: msg.recordingId,
-    transcriptionStatus: 'PARSING',
-    transcriptionStatusUpdatedAt: nowDate().toISOString(),
-  });
-  if (parsingUpdate.errors) {
-    console.warn('linguistic: failed to mark Recording PARSING (continuing)', {
-      recordingId: msg.recordingId,
-      errors: parsingUpdate.errors,
-    });
-  }
-
   // Per-type confidence threshold (#65) — admin-tunable via the
   // CONFIDENCE_THRESHOLDS LinguisticConfig row; falls back to 0.8.
   const confidenceConfig = await loadConfidenceConfig(client);
@@ -1236,6 +1242,26 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   // the paid Bedrock call below, and `broadcastedAt` drives the dedup
   // window. Falls back to enqueuedAt when absent (testing-portal upload).
   const rec = await client.models.Recording.get({ id: msg.recordingId });
+
+  // Advance → PARSING while the transcript is classified, so the My Uploads
+  // badge reflects this step (#433 status ladder). Skip when the recording
+  // is already terminal so a stray/duplicate delivery doesn't flip a
+  // finished recording back to in-progress. Best-effort: the authoritative
+  // terminal write (PUBLISHED / PARSE_FAILED) happens below, so a failure
+  // here is cosmetic — log rather than throw.
+  if (!isTerminalStatus(rec.data?.transcriptionStatus)) {
+    const parsingUpdate = await client.models.Recording.update({
+      id: msg.recordingId,
+      transcriptionStatus: 'PARSING',
+      transcriptionStatusUpdatedAt: nowDate().toISOString(),
+    });
+    if (parsingUpdate.errors) {
+      console.warn('linguistic: failed to mark Recording PARSING (continuing)', {
+        recordingId: msg.recordingId,
+        errors: parsingUpdate.errors,
+      });
+    }
+  }
   // Stable broadcast time (#556): persisted on the FIRST pipeline run and
   // reused on every re-run, so the deterministic id + dedup window don't
   // shift when a testing-portal re-run carries a fresh `enqueuedAt`. When
