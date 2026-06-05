@@ -13,6 +13,12 @@ vi.mock('aws-amplify/auth', () => ({
   getCurrentUser: () => getCurrentUser(),
   fetchAuthSession: () => fetchAuthSession(),
 }));
+// The `signedOut` handler fire-and-forgets `import('@/components/charts/StatsLoader')`
+// and `import('@/lib/auth/mode')`. Stub both so those dynamic imports resolve to
+// dependency-free mocks — otherwise the StatsLoader → messages/query → filters → zod
+// chain can load after the test env tears down (EnvironmentTeardownError in CI).
+vi.mock('@/components/charts/StatsLoader', () => ({ clearStatsCache: vi.fn() }));
+vi.mock('@/lib/auth/mode', () => ({ clearAuthModeCache: vi.fn() }));
 vi.mock('aws-amplify/utils', () => ({
   Hub: {
     listen: (_channel: string, cb: (data: { payload: { event: string } }) => void) => {

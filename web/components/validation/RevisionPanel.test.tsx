@@ -22,6 +22,13 @@ vi.mock('@/components/auth/AuthProvider', async (orig) => ({
   useCallerGroups: () => ({ groups: groupsMock(), loading: false }),
 }));
 
+// UserNameLink (revision proposer) resolves the sub via getUserLabel. Stub it so
+// the render is synchronous and no dynamic-import promise dangles past teardown.
+vi.mock('@/lib/users/label', async (importActual) => ({
+  ...(await importActual<Record<string, unknown>>()),
+  getUserLabel: (sub: string) => Promise.resolve({ sub, label: sub, piiBlanked: false }),
+}));
+
 const baseRow = {
   id: 'rev-1',
   recordingId: 'rec-1',

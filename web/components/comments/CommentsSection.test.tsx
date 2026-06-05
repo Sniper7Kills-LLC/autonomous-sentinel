@@ -38,6 +38,13 @@ vi.mock('@/components/account/SessionGreeting', () => ({
   useSessionState: (): MockSession => sessionMock(),
 }));
 
+// UserNameLink (comment author) resolves the sub via getUserLabel. Stub it so
+// the render is synchronous and no dynamic-import promise dangles past teardown.
+vi.mock('@/lib/users/label', async (importActual) => ({
+  ...(await importActual<Record<string, unknown>>()),
+  getUserLabel: (sub: string) => Promise.resolve({ sub, label: sub, piiBlanked: false }),
+}));
+
 // AbuseReportButton pulls amplify config in; stub to a simple button.
 vi.mock('@/components/abuse/AbuseReportButton', () => ({
   AbuseReportButton: ({ targetType, targetId }: { targetType: string; targetId: string }) => (
