@@ -14,6 +14,7 @@ import {
 } from '@/lib/revisions/query';
 import { isModeratorOrAdmin } from '@/lib/auth/roles';
 import { useCallerGroups } from '@/components/auth/AuthProvider';
+import { UserNameLink } from '@/components/users/UserNameLink';
 import { diffTranscript, hasChanges, type DiffSegment } from '@/lib/revisions/diff';
 import { containsProfanity } from '@/lib/moderation/profanity';
 import styles from './RevisionPanel.module.css';
@@ -287,8 +288,8 @@ function RevisionRow({ revision, canVote, canAccept, onVote, onAccept }: Revisio
           {revision.superseded && <span className={styles.tag}>SUPERSEDED</span>}
           {revision.source && <span className={styles.tag}>{revision.source}</span>}
           {revision.proposedBy && (
-            <span className={styles.subtle} title={`Proposed by ${revision.proposedBy}`}>
-              by {shortId(revision.proposedBy)}
+            <span className={styles.subtle}>
+              by <UserNameLink sub={revision.proposedBy} />
             </span>
           )}
           {revision.createdAt && <span>{formatTs(revision.createdAt)}</span>}
@@ -303,11 +304,6 @@ function RevisionRow({ revision, canVote, canAccept, onVote, onAccept }: Revisio
       </div>
     </article>
   );
-}
-
-/** Short, human-scannable form of a Cognito sub for attribution. */
-function shortId(id: string): string {
-  return id.length > 12 ? `${id.slice(0, 8)}…` : id;
 }
 
 interface SubmitRowProps {
