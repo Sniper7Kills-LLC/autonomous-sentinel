@@ -1,9 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { AbuseReportButton } from '@/components/abuse/AbuseReportButton';
+import { UserNameLink } from '@/components/users/UserNameLink';
 import { useSessionState } from '@/components/account/SessionGreeting';
 import { isModeratorOrAdmin } from '@/lib/auth/roles';
 import { useCallerGroups } from '@/components/auth/AuthProvider';
@@ -288,12 +288,7 @@ function CommentItem({ node, messageId, callerSub, signedIn, isMod, onChanged }:
         {isDeleted ? (
           <span className={styles.author}>—</span>
         ) : (
-          <Link
-            className={styles.author}
-            href={`/users/view?id=${encodeURIComponent(node.authorId)}`}
-          >
-            {node.authorId.slice(0, 12)}
-          </Link>
+          <UserNameLink sub={node.authorId} className={styles.author} />
         )}
         <span>{formatTs(node.createdAt)}</span>
         {!isDeleted && wasEdited(node) && (
