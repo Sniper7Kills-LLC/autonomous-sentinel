@@ -57,18 +57,25 @@ function makeEvent(body: object): SQSEvent {
 interface DataStub {
   client: PreprocessDataClient;
   updateSpy: ReturnType<typeof vi.fn>;
+  getSpy: ReturnType<typeof vi.fn>;
 }
 
-function makeDataStub(): DataStub {
+function makeDataStub(currentStatus: string = 'QUEUED'): DataStub {
   const updateSpy = vi.fn().mockResolvedValue({ data: {}, errors: null });
+  // #741: the stage reads current status first to guard against regressing
+  // an already-advanced recording. Default to QUEUED (a fresh upload).
+  const getSpy = vi
+    .fn()
+    .mockResolvedValue({ data: { id: 'rec', transcriptionStatus: currentStatus }, errors: null });
   const client: PreprocessDataClient = {
     models: {
       Recording: {
+        get: getSpy as never,
         update: updateSpy as never,
       },
     },
   };
-  return { client, updateSpy };
+  return { client, updateSpy, getSpy };
 }
 
 beforeEach(() => {
@@ -155,6 +162,29 @@ describe('preprocess — happy path (consolidated #514)', () => {
     expect(sentBody.recordingId).toBe('rec-42');
     expect(sentBody.originalKey).toBe('recordings/originals/abc.wav');
     expect(sentBody.contentHash).toBe('h-42');
+  });
+
+  it('skips (no status write, no transcribe enqueue) when the recording already reached TRANSCRIBING (#741)', async () => {
+    const { client, updateSpy } = makeDataStub('PUBLISHED');
+    __setDeps({
+      s3: new S3Client({}),
+      sqs: new SQSClient({}),
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    const event = makeEvent({
+      recordingId: 'rec-dup',
+      originalKey: 'recordings/originals/abc.wav',
+      contentHash: 'h',
+      enqueuedAt: '2026-05-24T18:00:00Z',
+    });
+
+    await handler(event, {} as never, () => undefined);
+
+    // No status regression, no HEAD, no re-enqueue to transcribe.
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(s3Mock.commandCalls(HeadObjectCommand)).toHaveLength(0);
+    expect(sqsMock.commandCalls(SendMessageCommand)).toHaveLength(0);
   });
 
   it('forwards a backendOverride onto the transcribe message (#592)', async () => {

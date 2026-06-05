@@ -22,6 +22,7 @@ import {
   type TranscriptForReconcile,
 } from './ai-fallback';
 import { coerceTranscripts, upsertTranscript, selectPrimary } from './transcripts';
+import { isTerminalRecordingStatus } from '../_shared/recording-status';
 import {
   audit as defaultAudit,
   type AuditContext,
@@ -391,25 +392,6 @@ async function dataClient(): Promise<LinguisticDataClient> {
 
 function nowDate(): Date {
   return (injected.now ?? (() => new Date()))();
-}
-
-/**
- * Terminal Recording statuses — once a recording reaches one of these the
- * cosmetic intermediate badge writes (PARSING) are skipped so a stray /
- * duplicate SQS delivery can't flip a finished recording back to
- * in-progress (#433). The authoritative terminal write itself remains
- * unguarded; full pipeline-wide status-regression protection is tracked
- * separately.
- */
-const TERMINAL_STATUSES = new Set([
-  'PUBLISHED',
-  'PARSE_FAILED',
-  'TRANSCRIBE_FAILED',
-  'PREPROCESS_FAILED',
-  'FAILED',
-]);
-function isTerminalStatus(status: unknown): boolean {
-  return typeof status === 'string' && TERMINAL_STATUSES.has(status);
 }
 
 /**
@@ -1243,24 +1225,34 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   // window. Falls back to enqueuedAt when absent (testing-portal upload).
   const rec = await client.models.Recording.get({ id: msg.recordingId });
 
-  // Advance → PARSING while the transcript is classified, so the My Uploads
-  // badge reflects this step (#433 status ladder). Skip when the recording
-  // is already terminal so a stray/duplicate delivery doesn't flip a
-  // finished recording back to in-progress. Best-effort: the authoritative
-  // terminal write (PUBLISHED / PARSE_FAILED) happens below, so a failure
-  // here is cosmetic — log rather than throw.
-  if (!isTerminalStatus(rec.data?.transcriptionStatus)) {
-    const parsingUpdate = await client.models.Recording.update({
-      id: msg.recordingId,
-      transcriptionStatus: 'PARSING',
-      transcriptionStatusUpdatedAt: nowDate().toISOString(),
+  // #741: a recording that has already reached a terminal state must not be
+  // re-parsed or regressed by a stray / duplicate SQS delivery (standard
+  // queues are at-least-once). Skip the whole transcript path — no PARSING
+  // write, no re-parse, no terminal re-write — so a finished recording
+  // stays put (and we don't burn a redundant Bedrock call). Admin reprocess
+  // resets the row to QUEUED first, so legitimate re-runs are not blocked.
+  if (isTerminalRecordingStatus(rec.data?.transcriptionStatus)) {
+    console.info('linguistic: skipped — recording already terminal (#741)', {
+      recordingId: msg.recordingId,
+      status: rec.data?.transcriptionStatus,
     });
-    if (parsingUpdate.errors) {
-      console.warn('linguistic: failed to mark Recording PARSING (continuing)', {
-        recordingId: msg.recordingId,
-        errors: parsingUpdate.errors,
-      });
-    }
+    return;
+  }
+
+  // Advance → PARSING while the transcript is classified, so the My Uploads
+  // badge reflects this step (#433 status ladder). Best-effort: the
+  // authoritative terminal write (PUBLISHED / PARSE_FAILED) happens below,
+  // so a failure here is cosmetic — log rather than throw.
+  const parsingUpdate = await client.models.Recording.update({
+    id: msg.recordingId,
+    transcriptionStatus: 'PARSING',
+    transcriptionStatusUpdatedAt: nowDate().toISOString(),
+  });
+  if (parsingUpdate.errors) {
+    console.warn('linguistic: failed to mark Recording PARSING (continuing)', {
+      recordingId: msg.recordingId,
+      errors: parsingUpdate.errors,
+    });
   }
   // Stable broadcast time (#556): persisted on the FIRST pipeline run and
   // reused on every re-run, so the deterministic id + dedup window don't

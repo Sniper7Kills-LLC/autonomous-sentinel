@@ -1,6 +1,7 @@
 import type { SQSEvent, SQSHandler } from 'aws-lambda';
 import { HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
+import { hasReachedStatus } from '../_shared/recording-status';
 
 /**
  * Pre-process Lambda (#433 stage 2 / consolidated #514).
@@ -63,6 +64,12 @@ interface TranscribeQueueMessage {
 export interface PreprocessDataClient {
   models: {
     Recording: {
+      get: (input: {
+        id: string;
+      }) => Promise<{
+        data: { id: string; transcriptionStatus?: string | null } | null;
+        errors?: unknown;
+      }>;
       update: (input: {
         id: string;
         webCanonicalKey?: string | null;
@@ -151,12 +158,25 @@ interface ProcessOneResult {
   originalKey: string;
   /** Original size (bytes) for the log. */
   inputSizeBytes: number;
+  /** True when the recording had already advanced past this stage (#741). */
+  skipped?: boolean;
 }
 
 async function processOne(msg: PreprocessQueueMessage): Promise<ProcessOneResult> {
   const bucket = requiredEnv('RECORDINGS_BUCKET');
   const transcribeQueueUrl = requiredEnv('TRANSCRIBE_QUEUE_URL');
   const client = await dataClient();
+
+  // #741: skip if the recording has already reached/passed TRANSCRIBING — a
+  // stray/duplicate SQS delivery or redrive must not regress an
+  // already-advanced (or terminal) recording. Reading the current status
+  // first keeps the subscription-firing Amplify Data write path (vs a raw
+  // DDB ConditionExpression). Admin reprocess resets the row to QUEUED, so
+  // legitimate re-runs are never blocked.
+  const existing = await client.models.Recording.get({ id: msg.recordingId });
+  if (hasReachedStatus(existing.data?.transcriptionStatus, 'TRANSCRIBING')) {
+    return { originalKey: msg.originalKey, inputSizeBytes: 0, skipped: true };
+  }
 
   // Advance QUEUED → PREPROCESSING the moment the stage picks the
   // recording up, so the My Uploads badge reflects this step (#433 status
@@ -252,12 +272,18 @@ export const handler: SQSHandler = async (event: SQSEvent, _context, _callback) 
     }
     try {
       const result = await processOne(msg);
-      console.info('preprocess: validated + advanced to TRANSCRIBING', {
-        recordingId: msg.recordingId,
-        originalKey: result.originalKey,
-        inputSizeBytes: result.inputSizeBytes,
-        note: 'transcode happens in the Whisper container (#514)',
-      });
+      if (result.skipped) {
+        console.info('preprocess: skipped — recording already past TRANSCRIBING (#741)', {
+          recordingId: msg.recordingId,
+        });
+      } else {
+        console.info('preprocess: validated + advanced to TRANSCRIBING', {
+          recordingId: msg.recordingId,
+          originalKey: result.originalKey,
+          inputSizeBytes: result.inputSizeBytes,
+          note: 'transcode happens in the Whisper container (#514)',
+        });
+      }
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       console.error('preprocess: failed', {
