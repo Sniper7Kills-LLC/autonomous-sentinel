@@ -128,9 +128,13 @@ describe('preprocess — happy path (consolidated #514)', () => {
     // HEAD validates existence; no copy/transcode in preprocess anymore.
     expect(s3Mock.commandCalls(HeadObjectCommand)).toHaveLength(1);
 
-    // Status advances; webCanonicalKey is NOT set here (the container sets it later).
-    expect(updateSpy).toHaveBeenCalledOnce();
-    const upd = updateSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+    // Status advances QUEUED → PREPROCESSING (on pickup) → TRANSCRIBING
+    // (on handoff); webCanonicalKey is NOT set here (the container sets it later).
+    expect(updateSpy).toHaveBeenCalledTimes(2);
+    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ id: 'rec-42', transcriptionStatus: 'PREPROCESSING' }),
+    );
+    const upd = updateSpy.mock.calls[1]?.[0] as Record<string, unknown>;
     expect(upd).toEqual(
       expect.objectContaining({
         id: 'rec-42',
@@ -257,8 +261,12 @@ describe('preprocess — failure paths', () => {
     });
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     await expect(handler(event, {} as never, () => undefined)).rejects.toThrow(/AccessDenied/);
-    expect(updateSpy).toHaveBeenCalledOnce();
+    // PREPROCESSING write on pickup (calls[0]), then PREPROCESS_FAILED after HEAD fails (calls[1]).
+    expect(updateSpy).toHaveBeenCalledTimes(2);
     expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ id: 'rec-fail', transcriptionStatus: 'PREPROCESSING' }),
+    );
+    expect(updateSpy.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({
         id: 'rec-fail',
         transcriptionStatus: 'PREPROCESS_FAILED',
