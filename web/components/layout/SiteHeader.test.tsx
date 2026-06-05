@@ -3,11 +3,22 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { SiteHeader } from './SiteHeader';
 
 let callerGroups: string[] = [];
+let signedIn = false;
 vi.mock('@/components/auth/AuthProvider', () => ({
   useCallerGroups: () => ({ groups: callerGroups, loading: false }),
+  useAuth: () => ({
+    loading: false,
+    signedIn,
+    username: signedIn ? 'sentinel@example.com' : null,
+    sub: signedIn ? 'sub-123' : null,
+    groups: callerGroups,
+  }),
 }));
 vi.mock('@/components/theme/ThemeToggle', () => ({
   ThemeToggle: () => <div data-testid="theme-toggle" />,
+}));
+vi.mock('./UserMenu', () => ({
+  UserMenu: () => <div data-testid="user-menu" />,
 }));
 const push = vi.fn();
 vi.mock('next/navigation', () => ({
@@ -19,6 +30,7 @@ describe('SiteHeader', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     callerGroups = [];
+    signedIn = false;
   });
   afterEach(() => {
     vi.runOnlyPendingTimers();
@@ -56,5 +68,19 @@ describe('SiteHeader', () => {
   it('marks the active nav item with aria-current', () => {
     render(<SiteHeader />);
     expect(screen.getByRole('link', { name: /messages/i })).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('shows the standalone theme toggle (not the user menu) for guests', () => {
+    signedIn = false;
+    render(<SiteHeader />);
+    expect(screen.getByTestId('theme-toggle')).toBeInTheDocument();
+    expect(screen.queryByTestId('user-menu')).not.toBeInTheDocument();
+  });
+
+  it('shows the user menu (not the standalone theme toggle) when signed in', () => {
+    signedIn = true;
+    render(<SiteHeader />);
+    expect(screen.getByTestId('user-menu')).toBeInTheDocument();
+    expect(screen.queryByTestId('theme-toggle')).not.toBeInTheDocument();
   });
 });

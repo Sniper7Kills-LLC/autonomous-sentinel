@@ -59,6 +59,10 @@ export const AuditLog = a
       'USER_UNBAN',
       'USER_ROLE_CHANGE',
       'USER_PII_BLANK',
+      // Caller edited their own profile fields (#736). Emitted by
+      // `updateProfile`; the `after` diff captures which of
+      // displayName / preferredUsername / bio / avatarKey changed.
+      'USER_PROFILE_UPDATE',
       // Legacy v3 → Cognito claim: PK rewrite from `legacy:<id>` to
       // the real sub via TransactWriteItems Put+Delete. Emitted by
       // `linkLegacyClaim` (sub-A of #16 → #272). Subsequent FK

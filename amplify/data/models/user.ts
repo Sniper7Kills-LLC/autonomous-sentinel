@@ -42,6 +42,14 @@ export const User = a
     preferredUsername: a.string(),
     displayName: a.string(),
 
+    // Self-authored profile (#736). `bio` is free-form text shown on the
+    // public profile page; `avatarKey` is the S3 key of the user's
+    // uploaded profile photo (under the `profile-photos/{sub}/*` prefix).
+    // Both are caller-editable via the gated `updateProfile` mutation
+    // below and blanked alongside the other PII fields on self-deletion.
+    bio: a.string(),
+    avatarKey: a.string(),
+
     // Role cache, mirrored from Cognito groups for quick filtering + display.
     // Real authorization runs off the `cognito:groups` claim.
     role: a.enum(['admin', 'moderator', 'member']),
@@ -143,6 +151,40 @@ export const selfDelete = a
   .arguments({})
   .returns(a.ref('User'))
   // #430: authenticated + group-paired.
+  .authorization((allow) => [allow.authenticated(), allow.groups(['admin', 'moderator', 'member'])])
+  .handler(a.handler.function(userMutations));
+
+/**
+ * `updateProfile` — caller edits their own profile fields (#736).
+ *
+ * The gated self-edit surface the User model's authorization block
+ * defers to (see the "No owner-update rule" comment there). Amplify
+ * Gen 2 model authz is row-level, so a bare `allow.ownerDefinedIn`
+ * grant would expose the auto-generated `updateUser` mutation and let a
+ * caller clear their own ban / flip their role. Routing the edit through
+ * this Lambda lets the resolver touch ONLY {displayName, preferredUsername,
+ * bio, avatarKey} and never the sensitive columns.
+ *
+ * Every argument is optional. The handler:
+ *   - Keys the row on `ctx.identity.sub` (owner-only — no target arg).
+ *   - Rejects banned callers (`bannedAt` set).
+ *   - Trims + length-guards each provided field (displayName /
+ *     preferredUsername ≤ 80, bio ≤ 500).
+ *   - Applies ONLY the provided fields (empty string clears → null).
+ *   - Emits a `USER_PROFILE_UPDATE` AuditLog entry.
+ *
+ * Returns the post-mutation User row.
+ */
+export const updateProfile = a
+  .mutation()
+  .arguments({
+    displayName: a.string(),
+    preferredUsername: a.string(),
+    bio: a.string(),
+    avatarKey: a.string(),
+  })
+  .returns(a.ref('User'))
+  // #430: authenticated + group-paired (same pairing as selfDelete).
   .authorization((allow) => [allow.authenticated(), allow.groups(['admin', 'moderator', 'member'])])
   .handler(a.handler.function(userMutations));
 

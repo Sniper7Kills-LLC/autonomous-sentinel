@@ -7,12 +7,16 @@ import {
 
 /**
  * Lambda-backed AppSync resolver for `selfDelete` + `banUser` mutations
- * (issue #248).
+ * (issue #248) and `updateProfile` (issue #736).
  *
  * Dispatches on `event.info.fieldName`:
  *   - `selfDelete` — caller blanks own PII on the User row keyed by their
  *     Cognito sub. Writes a `USER_PII_BLANK` audit row. Idempotent — a
  *     second call on an already-blanked row is a no-op.
+ *   - `updateProfile` — caller edits ONLY displayName / preferredUsername /
+ *     bio / avatarKey on the User row keyed by their Cognito sub. Rejects
+ *     banned callers + length-overflows. Writes a `USER_PROFILE_UPDATE`
+ *     audit row. Never touches role / ban / pii / claim columns.
  *   - `banUser` — admin-only. Sets `bannedAt` / `bannedReason` /
  *     `bannedById` on the target row. Writes a `USER_BAN` audit row.
  *
@@ -31,6 +35,8 @@ type UserRow = {
   email?: string | null;
   preferredUsername?: string | null;
   displayName?: string | null;
+  bio?: string | null;
+  avatarKey?: string | null;
   role?: string | null;
   piiBlanked?: boolean | null;
   piiBlankedAt?: string | null;
@@ -378,6 +384,101 @@ async function dispatchUnbanUser(
 }
 
 /**
+ * Editable profile fields and their max trimmed length (#736). The
+ * handler walks this map so adding a field is a one-line change and the
+ * length guard stays in lock-step with the column set. Sensitive columns
+ * (role / ban / pii / claim) are deliberately absent — they can never be
+ * reached through this path.
+ */
+const PROFILE_FIELDS = {
+  displayName: 80,
+  preferredUsername: 80,
+  bio: 500,
+} as const;
+
+async function dispatchUpdateProfile(
+  event: Parameters<AppSyncResolverHandler<Record<string, unknown>, UserRow | null>>[0],
+  deps: { client: UserMutationsDataClient; audit: AuditFn; now: () => Date },
+): Promise<UserRow | null> {
+  const sub = identitySub(event.identity);
+  if (!sub) {
+    throw new Error('updateProfile: caller has no identity (not signed in)');
+  }
+
+  const fetched = await deps.client.models.User.get({ cognitoSub: sub });
+  const before = fetched.data;
+  if (!before) {
+    throw new Error(`updateProfile: User row not found for cognitoSub=${sub}`);
+  }
+  // Banned callers cannot edit their profile.
+  if (before.bannedAt) {
+    throw new Error('updateProfile: banned users cannot edit their profile');
+  }
+
+  const args = event.arguments;
+
+  // Build a patch from ONLY the provided, length-checked profile fields.
+  // An explicit empty string clears the field (stored as null); an
+  // omitted / undefined arg is ignored so partial updates are possible.
+  const patch: Partial<UserRow> & { cognitoSub: string } = { cognitoSub: sub };
+  let touched = false;
+  for (const [field, maxLen] of Object.entries(PROFILE_FIELDS)) {
+    const raw = args[field];
+    if (raw === undefined || raw === null) continue;
+    if (typeof raw !== 'string') {
+      throw new Error(`updateProfile: ${field} must be a string`);
+    }
+    const trimmed = raw.trim();
+    if (trimmed.length > maxLen) {
+      throw new Error(`updateProfile: ${field} exceeds ${maxLen} characters`);
+    }
+    // Empty string clears the field (store null); otherwise store trimmed.
+    (patch as Record<string, unknown>)[field] = trimmed.length === 0 ? null : trimmed;
+    touched = true;
+  }
+  // avatarKey is an opaque S3 key — trimmed + length-guarded like a path,
+  // but with the same clear-on-empty semantics. Kept out of PROFILE_FIELDS
+  // because it is not user-visible prose (no prose length cap applies; we
+  // still bound it so a hostile caller can't store an unbounded key).
+  const avatarRaw = args.avatarKey;
+  if (avatarRaw !== undefined && avatarRaw !== null) {
+    if (typeof avatarRaw !== 'string') {
+      throw new Error('updateProfile: avatarKey must be a string');
+    }
+    const trimmed = avatarRaw.trim();
+    if (trimmed.length > 1024) {
+      throw new Error('updateProfile: avatarKey exceeds 1024 characters');
+    }
+    patch.avatarKey = trimmed.length === 0 ? null : trimmed;
+    touched = true;
+  }
+
+  // Nothing to change — return the row untouched, write no audit.
+  if (!touched) {
+    return before;
+  }
+
+  const updated = await deps.client.models.User.update(patch);
+  if (updated.errors) {
+    throw new Error(
+      `updateProfile: User.update returned errors: ${JSON.stringify(updated.errors)}`,
+    );
+  }
+  const after = updated.data ?? { ...before, ...patch };
+
+  await deps.audit(auditContextFrom(event), {
+    action: 'USER_PROFILE_UPDATE',
+    targetType: 'User',
+    targetId: sub,
+    before: snapshot(before),
+    after: snapshot(after),
+    reason: 'self profile edit',
+  });
+
+  return after;
+}
+
+/**
  * Cheap row snapshot for the audit `before` / `after` diff. The helper's
  * `diffShallow` only inspects own enumerable keys; copying via the
  * spread operator is enough and keeps the diff payload narrow.
@@ -405,6 +506,8 @@ export const handler: AppSyncResolverHandler<Record<string, unknown>, UserRow | 
   switch (field) {
     case 'selfDelete':
       return dispatchSelfDelete(event, deps);
+    case 'updateProfile':
+      return dispatchUpdateProfile(event, deps);
     case 'banUser':
       return dispatchBanUser(event, deps);
     case 'unbanUser':
