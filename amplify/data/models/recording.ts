@@ -74,9 +74,11 @@ export const Recording = a
     transcriptionFailed: a.boolean().default(false),
     // Last-mutation timestamp on `transcriptionStatus` — drives the
     // AppSync `onUpdateRecording` subscription (#70) so the My Uploads
-    // page can sort by "most recent activity" without a separate
-    // GSI scan. Set by the shared `setStatus` helper (#69) on every
-    // status change.
+    // page can sort by "most recent activity" without a separate GSI
+    // scan. Each pipeline stage sets it alongside the status via Amplify
+    // Data (`client.models.Recording.update`) so the subscription fires:
+    // preprocess → PREPROCESSING/TRANSCRIBING, linguistic →
+    // PARSING/PUBLISHED, failure paths → *_FAILED.
     transcriptionStatusUpdatedAt: a.datetime(),
     // Human-readable failure reason captured on FAILED transitions
     // (#69). The granular `*_FAILED` enum values on

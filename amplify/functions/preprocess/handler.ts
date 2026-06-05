@@ -158,6 +158,23 @@ async function processOne(msg: PreprocessQueueMessage): Promise<ProcessOneResult
   const transcribeQueueUrl = requiredEnv('TRANSCRIBE_QUEUE_URL');
   const client = await dataClient();
 
+  // Advance QUEUED → PREPROCESSING the moment the stage picks the
+  // recording up, so the My Uploads badge reflects this step (#433 status
+  // ladder). Best-effort: the authoritative transition is the TRANSCRIBING
+  // write below, so a failure here is cosmetic — log rather than throw, to
+  // avoid DLQ-ing an otherwise-fine job on a flaky status write.
+  const preprocessingUpdate = await client.models.Recording.update({
+    id: msg.recordingId,
+    transcriptionStatus: 'PREPROCESSING',
+    transcriptionStatusUpdatedAt: nowIso(),
+  });
+  if (preprocessingUpdate.errors) {
+    console.warn('preprocess: failed to mark Recording PREPROCESSING (continuing)', {
+      recordingId: msg.recordingId,
+      errors: preprocessingUpdate.errors,
+    });
+  }
+
   // Validate the original exists. The Whisper container does the ffmpeg
   // transcode now (#514), so preprocess only advances state + hands the
   // original key to the transcribe queue.

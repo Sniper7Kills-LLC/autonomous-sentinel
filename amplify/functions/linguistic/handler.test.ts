@@ -377,8 +377,13 @@ describe('linguistic — handler happy path', () => {
       }),
     );
 
-    expect(updateSpy).toHaveBeenCalledOnce();
+    // TRANSCRIBING → PARSING on pickup (calls[0]), then the terminal
+    // PUBLISHED write (calls[1]) — #433 status ladder.
+    expect(updateSpy).toHaveBeenCalledTimes(2);
     expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ id: 'rec-1', transcriptionStatus: 'PARSING' }),
+    );
+    expect(updateSpy.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({
         id: 'rec-1',
         messageId: 'msg-uuid-1',
@@ -680,7 +685,7 @@ describe('linguistic — structured Message via normalizeParsed (#506)', () => {
       }),
     );
     // Recording keeps the RAW transcript — Recording is source of truth.
-    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+    expect(updateSpy.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({ id: 'rec-as', transcript }),
     );
   });
@@ -753,7 +758,7 @@ describe('linguistic — persists web-canonical key from the container (#514)', 
       {} as never,
       () => undefined,
     );
-    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+    expect(updateSpy.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({
         id: 'rec-wc',
         webCanonicalKey: 'recordings/web/rec-wc.opus',
@@ -784,7 +789,7 @@ describe('linguistic — persists transcription confidence from the container (#
       {} as never,
       () => undefined,
     );
-    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+    expect(updateSpy.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({
         id: 'rec-tc',
         transcriptionConfidence: 0.82,
@@ -811,7 +816,7 @@ describe('linguistic — persists transcription confidence from the container (#
       {} as never,
       () => undefined,
     );
-    expect(updateSpy.mock.calls[0]?.[0]).not.toHaveProperty('transcriptionConfidence');
+    expect(updateSpy.mock.calls[1]?.[0]).not.toHaveProperty('transcriptionConfidence');
   });
 });
 
@@ -864,9 +869,9 @@ describe('linguistic — failure paths', () => {
     });
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     await expect(handler(event, {} as never, () => undefined)).rejects.toThrow(/throughput/);
-    // updateSpy is called once — for the PARSE_FAILED mark.
-    expect(updateSpy).toHaveBeenCalledOnce();
-    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+    // updateSpy is called twice — the PARSING mark then the PARSE_FAILED mark.
+    expect(updateSpy).toHaveBeenCalledTimes(2);
+    expect(updateSpy.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({
         id: 'rec-x',
         transcriptionStatus: 'PARSE_FAILED',
@@ -968,7 +973,7 @@ describe('linguistic — broadcast dedup (#454)', () => {
     );
     // No new Message — the second capture links to the existing one.
     expect(createSpy).not.toHaveBeenCalled();
-    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+    expect(updateSpy.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({
         id: 'rec-2nd-sdr',
         messageId: 'existing-msg',
@@ -999,7 +1004,7 @@ describe('linguistic — broadcast dedup (#454)', () => {
     );
     // Recording links to the deterministic id (same as the winner's).
     const createdId = (createSpy.mock.calls[0]?.[0] as { id?: string } | undefined)?.id;
-    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+    expect(updateSpy.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({
         id: 'rec-race',
         messageId: createdId,
@@ -1059,7 +1064,7 @@ describe('linguistic — recover soft-deleted Message on re-link (#599)', () => 
       expect.objectContaining({ action: 'MESSAGE_RESTORE', targetId: createdId }),
     );
     // Recording still links to the recovered Message.
-    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+    expect(updateSpy.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({ id: 'rec-recover', messageId: createdId }),
     );
   });
@@ -1129,7 +1134,11 @@ describe('linguistic — recover soft-deleted Message on re-link (#599)', () => 
 describe('linguistic — deleted-Recording tombstone (#459)', () => {
   it('drops a transcript message cleanly when the Recording was deleted in flight', async () => {
     const { client, updateSpy, deleteSpy } = makeDataStub();
-    updateSpy.mockResolvedValueOnce({ data: null, errors: CONDITIONAL_CHECK_ERRORS });
+    updateSpy
+      // first call: the best-effort PARSING mark succeeds
+      .mockResolvedValueOnce({ data: {}, errors: null })
+      // second call: the terminal PUBLISHED write hits the tombstone
+      .mockResolvedValueOnce({ data: null, errors: CONDITIONAL_CHECK_ERRORS });
     __setDeps({
       dataClient: client,
       bedrockFallback: bedrockNull,
@@ -1148,7 +1157,8 @@ describe('linguistic — deleted-Recording tombstone (#459)', () => {
 
     // Under dedup the Message may be shared by other recordings, so it
     // is NOT deleted — just drop the SQS message cleanly (#454/#459).
-    expect(updateSpy).toHaveBeenCalledOnce();
+    // Two updates: the PARSING mark then the tombstoned terminal write.
+    expect(updateSpy).toHaveBeenCalledTimes(2);
     expect(deleteSpy).not.toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalled();
 
@@ -1185,9 +1195,11 @@ describe('linguistic — deleted-Recording tombstone (#459)', () => {
   it('still throws + redrives on a genuine (non-tombstone) Recording.update error', async () => {
     const { client, updateSpy } = makeDataStub();
     updateSpy
-      // first call: the PUBLISHED write fails with a real error
+      // first call: the best-effort PARSING mark succeeds
+      .mockResolvedValueOnce({ data: {}, errors: null })
+      // second call: the PUBLISHED write fails with a real error
       .mockResolvedValueOnce({ data: null, errors: [{ message: 'throughput exceeded' }] })
-      // second call: the PARSE_FAILED mark
+      // third call: the PARSE_FAILED mark
       .mockResolvedValueOnce({ data: {}, errors: null });
     __setDeps({
       dataClient: client,
@@ -1233,7 +1245,7 @@ describe('linguistic — attempt log (#64)', () => {
       {} as never,
       () => undefined,
     );
-    const attempts = parseAttempts(updateSpy.mock.calls[0]?.[0]);
+    const attempts = parseAttempts(updateSpy.mock.calls[1]?.[0]);
     expect(attempts).toHaveLength(1);
     expect(attempts[0]).toMatchObject({
       provider: 'rules',
@@ -1287,7 +1299,7 @@ describe('linguistic — attempt log (#64)', () => {
       {} as never,
       () => undefined,
     );
-    const attempts = parseAttempts(updateSpy.mock.calls[0]?.[0]);
+    const attempts = parseAttempts(updateSpy.mock.calls[1]?.[0]);
     // shouldSkip → no new entry; the prior one is persisted unchanged.
     expect(attempts).toHaveLength(1);
     expect(attempts[0]?.resultHash).toBe('prev');
@@ -1333,7 +1345,7 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
     expect(createSpy.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({ type: 'SKYKING', confidence: 0.92, sender: 'MAINSAIL' }),
     );
-    const attempts = attemptsOf(updateSpy.mock.calls[0]?.[0]);
+    const attempts = attemptsOf(updateSpy.mock.calls[1]?.[0]);
     expect(attempts[0]).toMatchObject({ provider: 'bedrock', promptVersion: 1, success: true });
     expect(typeof attempts[0]?.promptHash).toBe('string');
   });
@@ -1392,14 +1404,14 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
     );
     expect(bedrockFallback).toHaveBeenCalledOnce();
     expect(createSpy.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ type: 'OTHER' }));
-    const attempts = attemptsOf(updateSpy.mock.calls[0]?.[0]);
+    const attempts = attemptsOf(updateSpy.mock.calls[1]?.[0]);
     expect(attempts[0]).toMatchObject({ provider: 'bedrock', success: false, resultHash: null });
     // #579: an AI-fail fresh publish is force-flagged, and the Recording
     // lands PARSE_FAILED (linked flagged Message, surfaced for review).
     expect(createSpy.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({ flaggedForReview: true }),
     );
-    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+    expect(updateSpy.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({ transcriptionStatus: 'PARSE_FAILED', transcriptionFailed: true }),
     );
   });
@@ -1806,7 +1818,7 @@ describe('linguistic — Bedrock AI fallback (#63)', () => {
     // Re-invoked (correctness over the micro-cost-skip)...
     expect(bedrockFallback).toHaveBeenCalledOnce();
     // ...but the append is de-duplicated — log stays length 1.
-    const attempts = attemptsOf(updateSpy.mock.calls[0]?.[0]);
+    const attempts = attemptsOf(updateSpy.mock.calls[1]?.[0]);
     expect(attempts).toHaveLength(1);
     expect(attempts[0]?.resultHash).toBe('prev');
   });
@@ -1840,7 +1852,7 @@ describe('linguistic — multi-transcript collection + reconcile (#593)', () => 
       {} as never,
       () => undefined,
     );
-    const update = updateSpy.mock.calls[0]?.[0] as {
+    const update = updateSpy.mock.calls[1]?.[0] as {
       transcript?: string;
       wordTimestampsKey?: string;
     };
@@ -1901,7 +1913,7 @@ describe('linguistic — multi-transcript collection + reconcile (#593)', () => 
       {} as never,
       () => undefined,
     );
-    const update = updateSpy.mock.calls[0]?.[0] as {
+    const update = updateSpy.mock.calls[1]?.[0] as {
       transcript?: string;
       transcriptionConfidence?: number;
       wordTimestampsKey?: string;
@@ -1999,7 +2011,7 @@ describe('linguistic — re-run supersede + stable broadcast time (#556)', () =>
     );
     // First run with no stored broadcastedAt → enqueuedAt is persisted so
     // the next run reuses it.
-    expect(updateSpy.mock.calls[0]?.[0]).toEqual(
+    expect(updateSpy.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({ broadcastedAt: '2026-05-24T17:55:00Z' }),
     );
   });
@@ -2039,7 +2051,7 @@ describe('linguistic — re-run supersede + stable broadcast time (#556)', () =>
       expect.objectContaining({ broadcastTs: '2026-05-24T13:00:00Z' }),
     );
     // The re-run does not overwrite the persisted broadcastedAt.
-    expect(stub.updateSpy.mock.calls[0]?.[0]).not.toHaveProperty('broadcastedAt');
+    expect(stub.updateSpy.mock.calls[1]?.[0]).not.toHaveProperty('broadcastedAt');
   });
 
   it('identical re-parse is idempotent: same Message id, no supersede', async () => {
@@ -2251,7 +2263,7 @@ describe('linguistic — re-run supersede + stable broadcast time (#556)', () =>
     ).resolves.not.toThrow();
     // Fresh Message still created + Recording still PUBLISHED.
     expect(stub.createSpy).toHaveBeenCalledOnce();
-    expect(stub.updateSpy.mock.calls[0]?.[0]).toEqual(
+    expect(stub.updateSpy.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({ transcriptionStatus: 'PUBLISHED' }),
     );
     errSpy.mockRestore();
@@ -2318,7 +2330,7 @@ describe('linguistic — low-confidence Amazon Transcribe escalation (#588)', ()
     // exists; an empty-string dedup-key value would be a bug — see review).
     expect(escMsg).not.toHaveProperty('contentHash');
     // The escalatedAt loop-guard marker is persisted on the Recording.
-    expect(stub.updateSpy.mock.calls[0]?.[0]).toEqual(
+    expect(stub.updateSpy.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({ escalatedAt: '2026-05-24T18:00:00.000Z' }),
     );
     // The current whisper Message still publishes (escalation is fire-and-forget).
@@ -2346,7 +2358,7 @@ describe('linguistic — low-confidence Amazon Transcribe escalation (#588)', ()
       () => undefined,
     );
     expect(escalateSpy).not.toHaveBeenCalled();
-    expect(stub.updateSpy.mock.calls[0]?.[0]).not.toHaveProperty('escalatedAt');
+    expect(stub.updateSpy.mock.calls[1]?.[0]).not.toHaveProperty('escalatedAt');
   });
 
   it('does NOT escalate when the recording is already escalated (escalatedAt marker)', async () => {
@@ -2487,10 +2499,10 @@ describe('linguistic — low-confidence Amazon Transcribe escalation (#588)', ()
     expect(escalateSpy).toHaveBeenCalledOnce();
     // Message still published; escalatedAt NOT persisted (enqueue failed).
     expect(stub.createSpy).toHaveBeenCalledOnce();
-    expect(stub.updateSpy.mock.calls[0]?.[0]).toEqual(
+    expect(stub.updateSpy.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({ transcriptionStatus: 'PUBLISHED' }),
     );
-    expect(stub.updateSpy.mock.calls[0]?.[0]).not.toHaveProperty('escalatedAt');
+    expect(stub.updateSpy.mock.calls[1]?.[0]).not.toHaveProperty('escalatedAt');
     errSpy.mockRestore();
   });
 });

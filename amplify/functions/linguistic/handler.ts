@@ -1211,6 +1211,23 @@ export function parseMessage(body: string): LinguisticQueueMessage {
 
 async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   const client = await dataClient();
+
+  // Advance TRANSCRIBING → PARSING while the transcript is classified, so
+  // the My Uploads badge reflects this step (#433 status ladder).
+  // Best-effort: the authoritative terminal write (PUBLISHED / PARSE_FAILED)
+  // happens below, so a failure here is cosmetic — log rather than throw.
+  const parsingUpdate = await client.models.Recording.update({
+    id: msg.recordingId,
+    transcriptionStatus: 'PARSING',
+    transcriptionStatusUpdatedAt: nowDate().toISOString(),
+  });
+  if (parsingUpdate.errors) {
+    console.warn('linguistic: failed to mark Recording PARSING (continuing)', {
+      recordingId: msg.recordingId,
+      errors: parsingUpdate.errors,
+    });
+  }
+
   // Per-type confidence threshold (#65) — admin-tunable via the
   // CONFIDENCE_THRESHOLDS LinguisticConfig row; falls back to 0.8.
   const confidenceConfig = await loadConfidenceConfig(client);
