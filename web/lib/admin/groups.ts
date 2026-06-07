@@ -37,7 +37,14 @@ function throwOnErrors(res: { errors?: { message: string }[] | null }): void {
  * or a JSON string depending on transport) into `{ cognitoSub, groups }`.
  */
 function toGroupsPayload(data: unknown): GroupsPayload {
-  const parsed: unknown = typeof data === 'string' ? JSON.parse(data) : data;
+  let parsed: unknown = data;
+  if (typeof data === 'string') {
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      throw new Error('Malformed group payload from server.');
+    }
+  }
   const obj = (parsed ?? {}) as { cognitoSub?: unknown; groups?: unknown };
   return {
     cognitoSub: typeof obj.cognitoSub === 'string' ? obj.cognitoSub : '',

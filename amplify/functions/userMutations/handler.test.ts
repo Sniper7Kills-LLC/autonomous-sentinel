@@ -1060,6 +1060,23 @@ describe('userMutations handler — setUserGroup / listUserGroups (#743)', () =>
     expect(patch.role).toBe('moderator');
   });
 
+  it('setUserGroup clears the role mirror to null when the last hierarchy group is removed', async () => {
+    setup('moderator');
+    groupsByUser.set('target-sub-456', ['moderator', 'diagnostics']);
+    await handler(
+      adminEvent(
+        { targetCognitoSub: 'target-sub-456', group: 'moderator', action: 'remove' },
+        'setUserGroup',
+      ),
+      {} as Context,
+      () => undefined,
+    );
+    // Only diagnostics (non-hierarchy) remains → role mirror must clear,
+    // not retain the stale 'moderator'.
+    const patch = userUpdateSpy.mock.calls[0]?.[0] as UserRow;
+    expect(patch.role).toBeNull();
+  });
+
   it('setUserGroup does NOT change the role mirror for a diagnostics-only change', async () => {
     setup('member');
     await handler(

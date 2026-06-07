@@ -615,11 +615,13 @@ async function dispatchSetUserGroup(
   }
   const after = await deps.cognito.listGroupsForUser({ cognitoSub: target });
 
-  // Keep the role mirror coherent only when a hierarchy group changed.
-  // diagnostics-only edits leave User.role untouched (no DDB write).
+  // Keep the role mirror coherent only when the hierarchy role changed.
+  // diagnostics-only edits leave the role unchanged (no DDB write); removing
+  // the last hierarchy group clears the mirror to null so a demoted user
+  // never retains a stale privilege level on the User row.
   const newRole = deriveRole(after);
   const oldRole = deriveRole(before);
-  if (newRole && newRole !== oldRole) {
+  if (newRole !== oldRole) {
     const updated = await deps.client.models.User.update({ cognitoSub: target, role: newRole });
     if (updated.errors) {
       throw new Error(
