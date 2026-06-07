@@ -58,7 +58,13 @@ export function DiagnosticsPanel({ recordingId }: DiagnosticsPanelProps) {
   if (!hasDiagnosticsAccess(groups)) return null;
 
   const selected = traces?.find((t) => t.id === selectedId) ?? null;
-  const compare = compareId ? (traces?.find((t) => t.id === compareId) ?? null) : null;
+  // Guard against a stale `compareId` equal to the current `selectedId`
+  // (e.g. compare B chosen, then the run selector switched to B): never
+  // diff a run against itself.
+  const compare =
+    compareId && compareId !== selectedId
+      ? (traces?.find((t) => t.id === compareId) ?? null)
+      : null;
 
   return (
     <div className={styles.wrap}>
