@@ -1,10 +1,8 @@
 import {
   DynamoDBClient,
   UpdateItemCommand,
+  DeleteItemCommand,
   ScanCommand,
-  BatchWriteItemCommand,
-  type WriteRequest,
-  type BatchWriteItemCommandOutput,
 } from '@aws-sdk/client-dynamodb';
 import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
 import type { AggregateStore } from './handler';
@@ -128,27 +126,23 @@ async function scanExistingKeys(table: string): Promise<{ metric: string; dimens
   return keys;
 }
 
-async function batchWrite(table: string, requests: WriteRequest[]): Promise<void> {
-  for (let i = 0; i < requests.length; i += 25) {
-    let pending: WriteRequest[] | undefined = requests.slice(i, i + 25);
-    let attempt = 0;
-    while (pending && pending.length > 0) {
-      const res: BatchWriteItemCommandOutput = await client().send(
-        new BatchWriteItemCommand({ RequestItems: { [table]: pending } }),
-      );
-      pending = res.UnprocessedItems?.[table];
-      if (!pending || pending.length === 0) break;
-      attempt += 1;
-      if (attempt >= 3) {
-        throw new Error(
-          `chartAggregator: BatchWriteItem left ${pending.length} unprocessed rows after 3 retries`,
-        );
-      }
-      await new Promise((r) => setTimeout(r, 100 * 2 ** (attempt - 1)));
-    }
+async function runChunked<T>(items: T[], fn: (item: T) => Promise<unknown>): Promise<void> {
+  for (let i = 0; i < items.length; i += 25) {
+    await Promise.all(items.slice(i, i + 25).map(fn));
   }
 }
 
+/**
+ * Overwrite the table with absolute counts, pruning rows no longer present.
+ *
+ * Uses `UpdateItem SET` (not `Put`) so it (a) preserves the original
+ * `createdAt` via `if_not_exists` — a `Put` would reset it on every nightly
+ * recompute — and (b) touches only `count` + timestamps, never wiping other
+ * attributes. The recompute is the source of truth (it scanned the full
+ * corpus), so `SET` to the computed absolute is correct as of the scan; a
+ * concurrent inline `ADD` in the brief scan→write window can be lost but
+ * self-heals on the next nightly recompute (acceptable for a 06:00 UTC job).
+ */
 async function writeAbsolute(
   totals: Map<string, { metric: string; dimension: string; count: number }>,
   nowIso: string,
@@ -156,32 +150,36 @@ async function writeAbsolute(
   const table = chartTable();
   const wanted = new Set([...totals.values()].map((t) => `${t.metric}#${t.dimension}`));
 
-  const puts: WriteRequest[] = [...totals.values()].map((t) => ({
-    PutRequest: {
-      Item: marshall(
-        {
-          metric: t.metric,
-          dimension: t.dimension,
-          count: t.count,
-          computedAt: nowIso,
-          createdAt: nowIso,
-          updatedAt: nowIso,
+  await runChunked([...totals.values()], (t) =>
+    client().send(
+      new UpdateItemCommand({
+        TableName: table,
+        Key: marshall({ metric: t.metric, dimension: t.dimension }),
+        UpdateExpression:
+          'SET #count = :c, #updatedAt = :now, #computedAt = :now, #createdAt = if_not_exists(#createdAt, :now)',
+        ExpressionAttributeNames: {
+          '#count': 'count',
+          '#updatedAt': 'updatedAt',
+          '#computedAt': 'computedAt',
+          '#createdAt': 'createdAt',
         },
-        { removeUndefinedValues: true },
-      ),
-    },
-  }));
+        ExpressionAttributeValues: marshall({ ':c': t.count, ':now': nowIso }),
+      }),
+    ),
+  );
 
   // Prune rows that no longer have any contribution (e.g. a codeword whose only
   // message was deleted) so the recompute is an exact snapshot.
   const existing = await scanExistingKeys(table);
-  const deletes: WriteRequest[] = existing
-    .filter((k) => !wanted.has(`${k.metric}#${k.dimension}`))
-    .map((k) => ({
-      DeleteRequest: { Key: marshall({ metric: k.metric, dimension: k.dimension }) },
-    }));
-
-  await batchWrite(table, [...puts, ...deletes]);
+  const stale = existing.filter((k) => !wanted.has(`${k.metric}#${k.dimension}`));
+  await runChunked(stale, (k) =>
+    client().send(
+      new DeleteItemCommand({
+        TableName: table,
+        Key: marshall({ metric: k.metric, dimension: k.dimension }),
+      }),
+    ),
+  );
 }
 
 export function createDynamoStore(): AggregateStore {
