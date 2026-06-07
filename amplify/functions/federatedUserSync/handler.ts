@@ -55,7 +55,7 @@ export function parseJob(body: string): FederatedIdentityInput | null {
   };
 }
 
-export const handler: SQSHandler = async (event) => {
+export const handler: SQSHandler = async (event, _context, _callback) => {
   const store = await getStore();
   for (const record of event.Records) {
     const job = parseJob(record.body);

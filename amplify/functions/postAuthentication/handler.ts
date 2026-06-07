@@ -30,7 +30,7 @@ async function defaultDispatcher(job: FederatedIdentityInput): Promise<void> {
   await sqs.send(new SendMessageCommand({ QueueUrl: queueUrl, MessageBody: JSON.stringify(job) }));
 }
 
-export const handler: PostAuthenticationTriggerHandler = async (event) => {
+export const handler: PostAuthenticationTriggerHandler = async (event, _context, _callback) => {
   const job = extractFederatedIdentity(event);
   if (!job) return event; // native sign-in (or no sub) — nothing to sync
 
