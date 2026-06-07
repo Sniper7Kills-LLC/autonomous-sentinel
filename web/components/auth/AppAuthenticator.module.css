@@ -194,7 +194,7 @@
 }
 
 .frame :global(.amplify-field__show-password:hover) {
-  background: var(--surface-3);
+  background: var(--color-surface-3);
   border-color: var(--color-accent);
   color: var(--text-1);
 }

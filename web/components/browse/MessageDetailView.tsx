@@ -99,9 +99,7 @@ export function MessageDetailView({ messageId }: MessageDetailViewProps) {
             currentValue={message.type}
             signedIn={session.signedIn}
           />
-          <span style={{ fontFamily: 'var(--font-jb-mono)', fontSize: '0.85rem' }}>
-            {formatTs(message.broadcastTs)}
-          </span>
+          <span className={styles.timestamp}>{formatTs(message.broadcastTs)}</span>
           <span className={styles.spacer} />
           {message.flaggedForReview && <Badge tone="warn">FLAGGED</Badge>}
           {typeof message.confidence === 'number' && (
