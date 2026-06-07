@@ -325,6 +325,10 @@ async function processOne(body) {
     throw new Error('whisper-handler: SQS body missing recordingId');
   }
   const config = readWhisperConfig(process.env);
+  // Admin-configured Whisper prompt (#771) injected by the preprocess Lambda
+  // and forwarded verbatim by the dispatcher. When present (incl. '' to
+  // disable priming) it overrides the env/baked default; absent → default.
+  const initialPrompt = typeof body.initialPrompt === 'string' ? body.initialPrompt : undefined;
   const tmpDir = join(tmpdir(), `whisper-${randomUUID()}`);
   await mkdir(tmpDir, { recursive: true });
 
@@ -424,7 +428,8 @@ async function processOne(body) {
       whisperBinary: config.whisperBinary,
       modelPath: config.modelPath,
       // Quality tunables (#757/#758/#761) resolved by readWhisperConfig.
-      initialPrompt: config.initialPrompt,
+      // The admin-configured prompt (#771) from the message wins when set.
+      initialPrompt: initialPrompt ?? config.initialPrompt,
       beamSize: config.beamSize,
       temperature: config.temperature,
       ...(config.entropyThold !== undefined ? { entropyThold: config.entropyThold } : {}),

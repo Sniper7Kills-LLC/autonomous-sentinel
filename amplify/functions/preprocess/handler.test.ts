@@ -58,24 +58,37 @@ interface DataStub {
   client: PreprocessDataClient;
   updateSpy: ReturnType<typeof vi.fn>;
   getSpy: ReturnType<typeof vi.fn>;
+  configGetSpy: ReturnType<typeof vi.fn>;
 }
 
-function makeDataStub(currentStatus: string = 'QUEUED'): DataStub {
+function makeDataStub(
+  currentStatus: string = 'QUEUED',
+  whisperPromptValue: unknown = undefined,
+): DataStub {
   const updateSpy = vi.fn().mockResolvedValue({ data: {}, errors: null });
   // #741: the stage reads current status first to guard against regressing
   // an already-advanced recording. Default to QUEUED (a fresh upload).
   const getSpy = vi
     .fn()
     .mockResolvedValue({ data: { id: 'rec', transcriptionStatus: currentStatus }, errors: null });
+  // #771: WHISPER_INITIAL_PROMPT LinguisticConfig row — undefined value →
+  // no row (data:null) so the message omits initialPrompt.
+  const configGetSpy = vi.fn().mockResolvedValue({
+    data: whisperPromptValue === undefined ? null : { value: whisperPromptValue },
+    errors: null,
+  });
   const client: PreprocessDataClient = {
     models: {
       Recording: {
         get: getSpy as never,
         update: updateSpy as never,
       },
+      LinguisticConfig: {
+        get: configGetSpy as never,
+      },
     },
   };
-  return { client, updateSpy, getSpy };
+  return { client, updateSpy, getSpy, configGetSpy };
 }
 
 beforeEach(() => {
@@ -162,6 +175,78 @@ describe('preprocess — happy path (consolidated #514)', () => {
     expect(sentBody.recordingId).toBe('rec-42');
     expect(sentBody.originalKey).toBe('recordings/originals/abc.wav');
     expect(sentBody.contentHash).toBe('h-42');
+  });
+
+  it('injects the admin WHISPER_INITIAL_PROMPT into the transcribe message (#771)', async () => {
+    const { client, configGetSpy } = makeDataStub('QUEUED', 'CUSTOM EAM PROMPT');
+    __setDeps({
+      s3: new S3Client({}),
+      sqs: new SQSClient({}),
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-p',
+        originalKey: 'recordings/originals/p.wav',
+        contentHash: 'h',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(configGetSpy).toHaveBeenCalledWith({ key: 'WHISPER_INITIAL_PROMPT' });
+    const body = JSON.parse(
+      sqsMock.commandCalls(SendMessageCommand)[0]?.args[0].input.MessageBody ?? '{}',
+    ) as { initialPrompt?: string };
+    expect(body.initialPrompt).toBe('CUSTOM EAM PROMPT');
+  });
+
+  it('omits initialPrompt when no WHISPER_INITIAL_PROMPT row exists (#771)', async () => {
+    const { client } = makeDataStub('QUEUED', undefined);
+    __setDeps({
+      s3: new S3Client({}),
+      sqs: new SQSClient({}),
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-q',
+        originalKey: 'recordings/originals/q.wav',
+        contentHash: 'h',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    const body = JSON.parse(
+      sqsMock.commandCalls(SendMessageCommand)[0]?.args[0].input.MessageBody ?? '{}',
+    ) as Record<string, unknown>;
+    expect('initialPrompt' in body).toBe(false);
+  });
+
+  it('includes an empty initialPrompt to disable priming when the row is "" (#771)', async () => {
+    const { client } = makeDataStub('QUEUED', '');
+    __setDeps({
+      s3: new S3Client({}),
+      sqs: new SQSClient({}),
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-e',
+        originalKey: 'recordings/originals/e.wav',
+        contentHash: 'h',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    const body = JSON.parse(
+      sqsMock.commandCalls(SendMessageCommand)[0]?.args[0].input.MessageBody ?? '{}',
+    ) as Record<string, unknown>;
+    // Empty string is a defined value → included so the container disables priming.
+    expect('initialPrompt' in body).toBe(true);
+    expect(body.initialPrompt).toBe('');
   });
 
   it('skips (no status write, no transcribe enqueue) when the recording already reached TRANSCRIBING (#741)', async () => {
