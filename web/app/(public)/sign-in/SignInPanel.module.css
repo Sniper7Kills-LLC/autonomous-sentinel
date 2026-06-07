@@ -10,14 +10,6 @@
   border-radius: var(--radius-md);
 }
 
-.note {
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
-  letter-spacing: 0.04em;
-  color: var(--text-2);
-  line-height: 1.5;
-}
-
 .signedIn {
   display: grid;
   gap: 0.75rem;

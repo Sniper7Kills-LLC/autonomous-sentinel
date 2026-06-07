@@ -37,10 +37,13 @@ describe('SignInPanel federated buttons (#336)', () => {
     );
   });
 
-  it('surfaces an error when starting federation fails', async () => {
+  it('surfaces an error and re-enables the buttons when starting federation fails', async () => {
     signInWithRedirect.mockRejectedValue(new Error('popup blocked'));
     render(<SignInPanel />);
     fireEvent.click(screen.getByTestId('signin-discord'));
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/popup blocked/i));
+    // busy resets on failure so the user can retry (not stuck disabled).
+    expect(screen.getByTestId('signin-discord')).not.toBeDisabled();
+    expect(screen.getByTestId('signin-google')).not.toBeDisabled();
   });
 });
