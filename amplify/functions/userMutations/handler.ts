@@ -94,9 +94,23 @@ export interface UserMutationsDataClient {
 
 export type AuditFn = (ctx: AuditContext, opts: AuditOptions) => Promise<string>;
 
+/**
+ * Narrow Cognito admin surface the `setUserGroup` / `listUserGroups`
+ * operations need (#743). Declared structurally so tests inject a stub
+ * without dragging the full `@aws-sdk/client-cognito-identity-provider`
+ * client in. The production client wraps the Admin* commands against the
+ * `USER_POOL_ID` user pool.
+ */
+export interface CognitoAdminClient {
+  addUserToGroup: (input: { cognitoSub: string; group: string }) => Promise<void>;
+  removeUserFromGroup: (input: { cognitoSub: string; group: string }) => Promise<void>;
+  listGroupsForUser: (input: { cognitoSub: string }) => Promise<string[]>;
+}
+
 interface Deps {
   dataClient?: UserMutationsDataClient;
   audit?: AuditFn;
+  cognito?: CognitoAdminClient;
   /** Override the wall clock — only used in tests. */
   now?: () => Date;
 }
@@ -132,6 +146,70 @@ async function getDefaultClient(): Promise<UserMutationsDataClient> {
   cachedDefaultClient = client;
   return cachedDefaultClient;
 }
+
+let cachedCognitoClient: CognitoAdminClient | undefined;
+
+/**
+ * Production Cognito admin client (#743). Wraps the Admin* group commands
+ * against the user pool named by `USER_POOL_ID` (wired in `backend.ts`).
+ * Dynamic import keeps the SDK out of unit tests that inject a stub.
+ */
+async function getDefaultCognito(): Promise<CognitoAdminClient> {
+  if (cachedCognitoClient) return cachedCognitoClient;
+  const userPoolId = process.env.USER_POOL_ID;
+  if (!userPoolId) {
+    throw new Error('setUserGroup: USER_POOL_ID env var is not set');
+  }
+  const {
+    CognitoIdentityProviderClient,
+    AdminAddUserToGroupCommand,
+    AdminRemoveUserFromGroupCommand,
+    AdminListGroupsForUserCommand,
+  } = await import('@aws-sdk/client-cognito-identity-provider');
+  const client = new CognitoIdentityProviderClient({});
+  cachedCognitoClient = {
+    addUserToGroup: async ({ cognitoSub, group }) => {
+      await client.send(
+        new AdminAddUserToGroupCommand({
+          UserPoolId: userPoolId,
+          Username: cognitoSub,
+          GroupName: group,
+        }),
+      );
+    },
+    removeUserFromGroup: async ({ cognitoSub, group }) => {
+      await client.send(
+        new AdminRemoveUserFromGroupCommand({
+          UserPoolId: userPoolId,
+          Username: cognitoSub,
+          GroupName: group,
+        }),
+      );
+    },
+    listGroupsForUser: async ({ cognitoSub }) => {
+      const out = await client.send(
+        new AdminListGroupsForUserCommand({ UserPoolId: userPoolId, Username: cognitoSub }),
+      );
+      return (out.Groups ?? [])
+        .map((g) => g.GroupName)
+        .filter((n): n is string => typeof n === 'string');
+    },
+  };
+  return cachedCognitoClient;
+}
+
+/**
+ * Groups an admin may add/remove via `setUserGroup` (#743). Mirrors the
+ * Cognito user-pool groups declared in `amplify/auth/resource.ts`.
+ */
+const ASSIGNABLE_GROUPS = ['admin', 'moderator', 'member', 'diagnostics'] as const;
+
+/**
+ * Hierarchy roles mirrored onto `User.role` for quick filtering/display
+ * (highest-first). `diagnostics` is an additive capability group, NOT a
+ * hierarchy role, so it never appears here and never rewrites the mirror.
+ */
+const ROLE_HIERARCHY = ['admin', 'moderator', 'member'] as const;
 
 function isAdmin(identity: unknown): boolean {
   if (!identity || typeof identity !== 'object') return false;
@@ -487,11 +565,106 @@ function snapshot(row: UserRow): Record<string, unknown> {
   return { ...row };
 }
 
-export const handler: AppSyncResolverHandler<Record<string, unknown>, UserRow | null> = async (
-  event,
-  _context,
-  _callback,
-) => {
+type GroupsResult = { cognitoSub: string; groups: string[] };
+
+/** Highest hierarchy role present in a group list, or null when none. */
+function deriveRole(groups: readonly string[]): string | null {
+  for (const role of ROLE_HIERARCHY) {
+    if (groups.includes(role)) return role;
+  }
+  return null;
+}
+
+/**
+ * `setUserGroup` — admin adds/removes a target user to/from a Cognito
+ * group (#743). The `cognito:groups` claim is the source of truth for
+ * authorization; this also keeps the `User.role` mirror coherent when a
+ * hierarchy group (admin/moderator/member) changes. `diagnostics` is
+ * additive and never rewrites the role mirror. Emits a `USER_ROLE_CHANGE`
+ * audit entry with before/after group lists. Returns the post-change
+ * group list.
+ */
+async function dispatchSetUserGroup(
+  event: Parameters<AppSyncResolverHandler<Record<string, unknown>, unknown>>[0],
+  deps: { client: UserMutationsDataClient; audit: AuditFn; cognito: CognitoAdminClient },
+): Promise<GroupsResult> {
+  if (!isAdmin(event.identity)) {
+    throw new Error('setUserGroup: caller is not in the admin group');
+  }
+  const args = event.arguments;
+  const target = typeof args.targetCognitoSub === 'string' ? args.targetCognitoSub : '';
+  const group = typeof args.group === 'string' ? args.group : '';
+  const action = typeof args.action === 'string' ? args.action : '';
+  if (!target) {
+    throw new Error('setUserGroup: targetCognitoSub argument is required');
+  }
+  if (!ASSIGNABLE_GROUPS.includes(group as (typeof ASSIGNABLE_GROUPS)[number])) {
+    throw new Error(
+      `setUserGroup: unknown group "${group}" (allowed: ${ASSIGNABLE_GROUPS.join(', ')})`,
+    );
+  }
+  if (action !== 'add' && action !== 'remove') {
+    throw new Error(`setUserGroup: action must be "add" or "remove" (got "${action}")`);
+  }
+
+  const before = await deps.cognito.listGroupsForUser({ cognitoSub: target });
+  if (action === 'add') {
+    await deps.cognito.addUserToGroup({ cognitoSub: target, group });
+  } else {
+    await deps.cognito.removeUserFromGroup({ cognitoSub: target, group });
+  }
+  const after = await deps.cognito.listGroupsForUser({ cognitoSub: target });
+
+  // Keep the role mirror coherent only when a hierarchy group changed.
+  // diagnostics-only edits leave User.role untouched (no DDB write).
+  const newRole = deriveRole(after);
+  const oldRole = deriveRole(before);
+  if (newRole && newRole !== oldRole) {
+    const updated = await deps.client.models.User.update({ cognitoSub: target, role: newRole });
+    if (updated.errors) {
+      throw new Error(
+        `setUserGroup: User.update returned errors: ${JSON.stringify(updated.errors)}`,
+      );
+    }
+  }
+
+  await deps.audit(auditContextFrom(event), {
+    action: 'USER_ROLE_CHANGE',
+    targetType: 'User',
+    targetId: target,
+    before: { groups: before },
+    after: { groups: after },
+    reason: `${action} group ${group}`,
+  });
+
+  return { cognitoSub: target, groups: after };
+}
+
+/**
+ * `listUserGroups` — admin reads a target user's current Cognito groups
+ * (#743). Read-only: no mutation, no audit. Powers the admin
+ * group-management UI's initial display.
+ */
+async function dispatchListUserGroups(
+  event: Parameters<AppSyncResolverHandler<Record<string, unknown>, unknown>>[0],
+  deps: { cognito: CognitoAdminClient },
+): Promise<GroupsResult> {
+  if (!isAdmin(event.identity)) {
+    throw new Error('listUserGroups: caller is not in the admin group');
+  }
+  const args = event.arguments;
+  const target = typeof args.targetCognitoSub === 'string' ? args.targetCognitoSub : '';
+  if (!target) {
+    throw new Error('listUserGroups: targetCognitoSub argument is required');
+  }
+  const groups = await deps.cognito.listGroupsForUser({ cognitoSub: target });
+  return { cognitoSub: target, groups };
+}
+
+export const handler: AppSyncResolverHandler<
+  Record<string, unknown>,
+  UserRow | GroupsResult | null
+> = async (event, _context, _callback) => {
   const client = injected.dataClient ?? (await getDefaultClient());
   const auditFn: AuditFn = injected.audit ?? ((ctx, opts) => defaultAudit(ctx, opts));
   const now = injected.now ?? (() => new Date());
@@ -512,6 +685,14 @@ export const handler: AppSyncResolverHandler<Record<string, unknown>, UserRow | 
       return dispatchBanUser(event, deps);
     case 'unbanUser':
       return dispatchUnbanUser(event, deps);
+    case 'setUserGroup': {
+      const cognito = injected.cognito ?? (await getDefaultCognito());
+      return dispatchSetUserGroup(event, { client, audit: auditFn, cognito });
+    }
+    case 'listUserGroups': {
+      const cognito = injected.cognito ?? (await getDefaultCognito());
+      return dispatchListUserGroups(event, { cognito });
+    }
     default:
       throw new Error(`userMutations: unsupported fieldName "${field}"`);
   }

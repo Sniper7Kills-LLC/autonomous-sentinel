@@ -185,6 +185,30 @@ getUserPublicLambdaFn.addToRolePolicy(
   }),
 );
 
+// userMutations admin group-management wiring (#743). The `setUserGroup` /
+// `listUserGroups` resolvers call the Cognito Admin* group APIs against the
+// user pool. `USER_POOL_ID` env addresses the pool without an SDK lookup;
+// the IAM grant scopes the three Admin* actions to that pool's ARN.
+//
+// Direction: userMutations lives in the `data` stack (resourceGroupName:
+// 'data'); referencing the user pool ARN/id adds a data → auth edge. That
+// direction already exists (data → auth + storage → auth, per the preAuth
+// note below), so this reinforces an existing edge rather than closing a
+// cycle (no auth → data edge is introduced).
+const userMutationsLambda = backend.userMutations.resources.lambda as LambdaFunction;
+const userPool = backend.auth.resources.userPool;
+userMutationsLambda.addEnvironment('USER_POOL_ID', userPool.userPoolId);
+userMutationsLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: [
+      'cognito-idp:AdminAddUserToGroup',
+      'cognito-idp:AdminRemoveUserFromGroup',
+      'cognito-idp:AdminListGroupsForUser',
+    ],
+    resources: [userPool.userPoolArn],
+  }),
+);
+
 // Cognito token TTL tuning (#333). Pin Cognito's CDK defaults
 // explicitly so a future Amplify upgrade can't silently shift the
 // rotation cadence. Env-tunable per `cognito-token-validity.ts` so a

@@ -234,6 +234,44 @@ export const unbanUser = a
   .handler(a.handler.function(userMutations));
 
 /**
+ * `setUserGroup` — admin adds/removes a user to/from a Cognito group (#743).
+ *
+ * Arguments:
+ *   - `targetCognitoSub` — the user to modify.
+ *   - `group`            — one of admin / moderator / member / diagnostics.
+ *   - `action`           — `add` or `remove`.
+ *
+ * The Lambda mutates Cognito group membership (`cognito:groups` is the
+ * authorization source of truth), keeps the `User.role` mirror coherent
+ * when a hierarchy group changes (diagnostics is additive and leaves the
+ * mirror untouched), and emits a `USER_ROLE_CHANGE` AuditLog entry.
+ * Returns `{ cognitoSub, groups }` — the post-change group list.
+ */
+export const setUserGroup = a
+  .mutation()
+  .arguments({
+    targetCognitoSub: a.string().required(),
+    group: a.string().required(),
+    action: a.string().required(),
+  })
+  .returns(a.json())
+  .authorization((allow) => allow.group('admin'))
+  .handler(a.handler.function(userMutations));
+
+/**
+ * `listUserGroups` — admin reads a user's current Cognito groups (#743).
+ *
+ * Read-only companion to `setUserGroup` that powers the admin group-
+ * management UI's initial display. Returns `{ cognitoSub, groups }`.
+ */
+export const listUserGroups = a
+  .query()
+  .arguments({ targetCognitoSub: a.string().required() })
+  .returns(a.json())
+  .authorization((allow) => allow.group('admin'))
+  .handler(a.handler.function(userMutations));
+
+/**
  * `getUserPublic` — PII-filtered wrapper around GetItem (issue #248).
  *
  * Public profile pages hit this for guest + authenticated callers. The

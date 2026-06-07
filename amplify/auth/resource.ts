@@ -120,7 +120,11 @@ export const authConfig = {
     mode: 'OPTIONAL' as const,
     totp: true,
   },
-  groups: ['admin', 'moderator', 'member'] as string[],
+  // `diagnostics` (#743) is an additive capability group — it grants read
+  // access to the deep linguistic-trace debug surface (in addition to
+  // moderator + admin) without conferring any hierarchy role. Membership
+  // is managed post-signup via the admin `setUserGroup` mutation.
+  groups: ['admin', 'moderator', 'member', 'diagnostics'] as string[],
   triggers: {
     postConfirmation,
     preTokenGeneration,

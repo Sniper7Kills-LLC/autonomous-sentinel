@@ -1,5 +1,14 @@
 import { type ClientSchema, a, defineData } from '@aws-amplify/backend';
-import { User, selfDelete, updateProfile, banUser, unbanUser, getUserPublic } from './models/user';
+import {
+  User,
+  selfDelete,
+  updateProfile,
+  banUser,
+  unbanUser,
+  getUserPublic,
+  setUserGroup,
+  listUserGroups,
+} from './models/user';
 import { userMutations } from '../functions/userMutations/resource';
 import { postConfirmation } from '../functions/postConfirmation/resource';
 import { messageMutations } from '../functions/messageMutations/resource';
@@ -151,6 +160,10 @@ export const schema = a
     banUser,
     unbanUser,
     getUserPublic,
+
+    // Admin group management — issue #743
+    setUserGroup,
+    listUserGroups,
 
     // Message soft-delete — issue #28
     softDeleteMessage,
