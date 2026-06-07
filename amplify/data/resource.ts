@@ -66,6 +66,7 @@ import { listDlqMessages, requeueDlqMessage, dropDlqMessage } from './models/dlq
 import { wafMetricsQuery } from './models/waf-metrics';
 import { RevenueSnapshot } from './models/revenue-snapshot';
 import { LinguisticRule } from './models/linguistic-rule';
+import { LinguisticTrace } from './models/linguistic-trace';
 import {
   LinguisticPromptTemplate,
   activatePromptTemplate,
@@ -125,6 +126,8 @@ export const schema = a
 
     LinguisticRule,
     LinguisticPromptTemplate,
+    // Per-run deep-debug trace — issue #744
+    LinguisticTrace,
 
     // Atomic LinguisticPromptTemplate admin mutations — issue #572
     activatePromptTemplate,

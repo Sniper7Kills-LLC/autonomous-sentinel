@@ -2,7 +2,13 @@ import type { SQSEvent, SQSHandler } from 'aws-lambda';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { normalizeParsed } from './normalize';
 import { contentMatches, dedupWindow, deterministicMessageId } from './dedup';
-import { LinguisticRulesEngine, type RuleMatch, type RuleSummary } from './rules-engine';
+import {
+  LinguisticRulesEngine,
+  type RuleMatch,
+  type RuleSummary,
+  type TracedMatch,
+} from './rules-engine';
+import { persistTrace, type TraceInput, type TraceBedrock, type TraceRow } from './trace';
 import { loadRulesFromDdb } from './load-rules-ddb';
 import { type ConfidenceConfig, isFlagged } from './threshold';
 import {
@@ -304,6 +310,10 @@ export interface LinguisticDataClient {
         notes?: string | null;
       }) => Promise<{ data: { id?: string } | null; errors?: unknown }>;
     };
+    /** Per-run deep-debug trace (#744). Written best-effort after publish. */
+    LinguisticTrace: {
+      create: (input: TraceRow) => Promise<{ data?: unknown; errors?: unknown }>;
+    };
   };
 }
 
@@ -312,6 +322,8 @@ export interface RulesMatcher {
   tryMatch(transcript: string): Promise<RuleMatch | null>;
   /** Active ruleset summary for the AI-refine context (#544b). Optional. */
   snapshot?(): Promise<RuleSummary[]>;
+  /** Traced match for the #744 diagnostics trace. Optional (best-effort). */
+  tryMatchTraced?(transcript: string): Promise<TracedMatch>;
 }
 
 /** AuditLog writer (#556 supersede-on-re-run). Injected in tests. */
@@ -351,6 +363,8 @@ export interface LinguisticDeps {
   escalate?: EscalateFn;
   /** Reputation recompute on Recording publish (#480). Injected in tests. */
   repRecompute?: (client: ReputationHelperClient, userId: string) => Promise<number>;
+  /** Deep-debug trace writer (#744). Injected in tests; defaults to persistTrace. */
+  traceWriter?: (input: TraceInput) => Promise<void>;
   now?: () => Date;
   uuid?: () => string;
 }
@@ -647,6 +661,23 @@ function auditFn(ctx: AuditContext, opts: AuditOptions): Promise<string> {
 /** Resolve the reputation recompute (injected in tests, real helper in prod). */
 function repRecomputeFn(client: ReputationHelperClient, userId: string): Promise<number> {
   return (injected.repRecompute ?? recomputeReputation)(client, userId);
+}
+
+/**
+ * Resolve the deep-debug trace writer (#744). Injected in tests; the
+ * default builds + size-guards + writes the LinguisticTrace row
+ * best-effort (persistTrace never throws).
+ *
+ * The S3 size-guard SPILL is intentionally NOT wired at v1: granting the
+ * data-stack linguistic Lambda an S3 bucket-token reference is a known
+ * CFN-cycle trigger (#644). With no `putObject`/`bucket`, the size guard
+ * drops the oversized prompt/response fields (`truncated=true`) instead of
+ * spilling — the ~99% of traces under the limit keep everything inline.
+ * Wiring the spill via a cross-stack-token-free path is a #744 follow-up.
+ */
+function traceWriterFn(client: LinguisticDataClient, input: TraceInput): Promise<void> {
+  if (injected.traceWriter) return injected.traceWriter(input);
+  return persistTrace(client, input, { now: nowDate });
 }
 
 /** The backend a low-confidence whisper transcript escalates to (#588). */
@@ -1320,6 +1351,26 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
   const engine = rulesEngine();
   let result = await classifyWithRules(parseTranscript, engine);
 
+  // Deep-debug trace capture (#744). Best-effort throughout — the trace is
+  // diagnostic, so a capture hiccup must never affect the parse. Re-runs the
+  // engine's traced match to record every rule evaluation (cached rules; one
+  // extra regex pass, negligible next to a Bedrock call).
+  let traceRuleEvaluations: unknown = [];
+  let traceRulesOutcome: unknown = null;
+  let traceBedrock: TraceBedrock | null = null;
+  try {
+    const traced = await engine.tryMatchTraced?.(parseTranscript);
+    if (traced) {
+      traceRuleEvaluations = traced.evaluations;
+      traceRulesOutcome = traced.match;
+    }
+  } catch (err) {
+    console.warn('linguistic: traced rules capture failed (trace only, non-fatal)', {
+      recordingId: msg.recordingId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+
   // Attempt provenance — rules path by default; switched to bedrock below.
   let attemptProvider: LinguisticProvider = RULES_PROVIDER;
   let attemptPromptVersion: number | null = result.promptVersion ?? null;
@@ -1387,6 +1438,29 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
     // (same parse → same id → link); re-invoking on a rare redrive is the
     // safe trade. A cost-skip that reuses the stored parse is a follow-up.
     const fb = await bedrockFallback(parseTranscript, fbOpts);
+    // Deep-debug trace (#744): capture the full Bedrock request/response.
+    // `fb.diagnostics` carries the exact prompt sent + raw Converse output;
+    // when `fb` is null (Bedrock gave nothing usable) fall back to the
+    // rendered prompt we computed for the hash so the trace still shows what
+    // was sent.
+    traceBedrock = {
+      modelId,
+      promptVersion: bedrockVersion,
+      promptHash: attemptPromptHash,
+      renderedPrompt: fb?.diagnostics?.renderedPrompt ?? rendered,
+      rawResponse: fb?.diagnostics?.rawResponse ?? null,
+      parsed: fb
+        ? {
+            type: fb.message.type,
+            sender: fb.message.sender ?? null,
+            receiver: fb.message.receiver ?? null,
+            body: fb.message.body ?? null,
+            confidence: fb.message.confidence,
+            retried: fb.retried,
+          }
+        : null,
+      proposedRules: fb?.rules ?? [],
+    };
     // Log the raw Bedrock parse for debugging (#560) — the attempt log
     // stores only hashes, so without this the model's actual output
     // (body, fields, proposed rules) is invisible in CloudWatch.
@@ -1658,6 +1732,38 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
     throw new Error(
       `linguistic: Recording.update returned errors: ${JSON.stringify(updated.errors)}`,
     );
+  }
+
+  // Deep-debug trace (#744). Written best-effort AFTER the authoritative
+  // Recording update so a trace failure can never block the publish or the
+  // 30-minute SLA (persistTrace swallows internally; the extra guard here
+  // covers an injected test writer that throws).
+  try {
+    await traceWriterFn(client, {
+      recordingId: msg.recordingId,
+      runAt: ts,
+      triggerBackend: backend,
+      transcriptSnapshot: parseTranscript,
+      rulesEvaluated: traceRuleEvaluations,
+      rulesOutcome: traceRulesOutcome,
+      bedrock: traceBedrock,
+      finalResult: {
+        type: result.type,
+        sender: normalized.sender ?? null,
+        receiver: normalized.receiver ?? null,
+        body: canonical,
+        confidence: result.confidence,
+        source: attemptProvider,
+      },
+      attemptSuccess,
+      resultHash,
+      promptHash: attemptPromptHash,
+    });
+  } catch (err) {
+    console.warn('linguistic: trace write failed (non-fatal)', {
+      recordingId: msg.recordingId,
+      err: err instanceof Error ? err.message : String(err),
+    });
   }
 
   // Reputation recompute on publish (#480). A PUBLISHED recording is a

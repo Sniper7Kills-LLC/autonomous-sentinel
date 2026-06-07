@@ -313,6 +313,32 @@ describe('tryBedrockFallback — schema-invalid retry', () => {
   });
 });
 
+describe('tryBedrockFallback — diagnostics capture (#744)', () => {
+  it('captures the full rendered prompt + raw response on a clean parse', async () => {
+    const response = toolUseResponse({ type: 'SKYKING', confidence: 0.9 });
+    const { client } = makeStubClient([response]);
+    const result = await tryBedrockFallback('SKYKING ABC123', {
+      client,
+      promptTemplate: 'Parse: {{TRANSCRIPT}}',
+      context: 'CTX: prior failed attempt',
+    });
+    expect(result?.diagnostics.renderedPrompt).toBe(
+      'Parse: SKYKING ABC123\n\nCTX: prior failed attempt',
+    );
+    // The raw Converse output is captured verbatim for the trace.
+    expect(result?.diagnostics.rawResponse).toBe(response);
+  });
+
+  it('captures the RETRY response (not the first) when the corrective retry fires', async () => {
+    const first = textOnlyResponse('no tool call');
+    const retry = toolUseResponse({ type: 'OTHER', confidence: 0.6 });
+    const { client } = makeStubClient([first, retry]);
+    const result = await tryBedrockFallback('test', { client });
+    expect(result?.retried).toBe(true);
+    expect(result?.diagnostics.rawResponse).toBe(retry);
+  });
+});
+
 describe('tryBedrockFallback — Bedrock errors', () => {
   it('retries once and returns null when both attempts throw (no SQS-retry spam) (#577)', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);

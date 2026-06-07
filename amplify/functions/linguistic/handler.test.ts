@@ -45,6 +45,7 @@ interface DataStub {
   configGetSpy: ReturnType<typeof vi.fn>;
   promptListSpy: ReturnType<typeof vi.fn>;
   ruleCreateSpy: ReturnType<typeof vi.fn>;
+  traceCreateSpy: ReturnType<typeof vi.fn>;
 }
 
 /**
@@ -83,6 +84,7 @@ function makeDataStub(
   // markdown default (#self-improving-loop).
   const promptListSpy = vi.fn().mockResolvedValue({ data: [], errors: null });
   const ruleCreateSpy = vi.fn().mockResolvedValue({ data: { id: 'rule-1' }, errors: null });
+  const traceCreateSpy = vi.fn().mockResolvedValue({ data: { id: 'trace-1' }, errors: null });
   const client: LinguisticDataClient = {
     models: {
       Message: {
@@ -102,6 +104,7 @@ function makeDataStub(
         list: promptListSpy as never,
       },
       LinguisticRule: { create: ruleCreateSpy as never },
+      LinguisticTrace: { create: traceCreateSpy as never },
     },
   };
   return {
@@ -117,6 +120,7 @@ function makeDataStub(
     configGetSpy,
     promptListSpy,
     ruleCreateSpy,
+    traceCreateSpy,
   };
 }
 
@@ -163,7 +167,17 @@ function bedrockOk(message: {
   receiver?: string;
   body?: string;
 }) {
-  return vi.fn().mockResolvedValue({ message: { confidence: 0.9, ...message }, rules: [] });
+  return vi.fn().mockResolvedValue({
+    message: { confidence: 0.9, ...message },
+    rules: [],
+    modelId: 'us.anthropic.claude-opus-4-8',
+    promptVersion: 1,
+    retried: false,
+    diagnostics: {
+      renderedPrompt: 'RENDERED PROMPT FIXTURE',
+      rawResponse: { output: { message: { content: [] } } },
+    },
+  });
 }
 
 /** Bedrock fallback stub that fails to parse (returns null). */
@@ -390,6 +404,84 @@ describe('linguistic — handler happy path', () => {
         transcript: 'Skyking, Skyking, do not answer',
         transcriptionStatus: 'PUBLISHED',
       }),
+    );
+  });
+
+  it('writes a LinguisticTrace row after publish capturing rules + bedrock detail (#744)', async () => {
+    const { client, traceCreateSpy } = makeDataStub();
+    const bedrockFallback = bedrockOk({ type: 'SKYKING', body: 'Skyking do not answer' });
+    __setDeps({
+      dataClient: client,
+      bedrockFallback,
+      // Deterministic rule evaluations for the trace (real engine would hit DDB).
+      rulesEngine: {
+        tryMatch: () => Promise.resolve(null),
+        tryMatchTraced: () =>
+          Promise.resolve({
+            match: null,
+            evaluations: [
+              {
+                ruleId: 'r1',
+                component: 'TYPE',
+                messageType: 'SKYKING',
+                appliesToType: null,
+                pattern: 'SKYKING',
+                confidence: 0.9,
+                matched: false,
+                matchedText: null,
+                captures: {},
+              },
+            ],
+          }),
+      },
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-uuid-1',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-1',
+        transcript: 'Skyking do not answer',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+
+    expect(traceCreateSpy).toHaveBeenCalledOnce();
+    const row = traceCreateSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(row.recordingId).toBe('rec-1');
+    expect(row.bedrockInvoked).toBe(true);
+    expect(row.bedrockRenderedPrompt).toBe('RENDERED PROMPT FIXTURE');
+    expect(JSON.parse(row.rulesEvaluated as string)).toHaveLength(1);
+    expect(JSON.parse(row.finalResult as string)).toMatchObject({
+      type: 'SKYKING',
+      source: 'bedrock',
+    });
+    expect(typeof row.ttl).toBe('number');
+  });
+
+  it('publishes even when the trace write fails (best-effort, non-fatal) (#744)', async () => {
+    const { client, updateSpy, traceCreateSpy } = makeDataStub();
+    traceCreateSpy.mockRejectedValue(new Error('trace table unavailable'));
+    __setDeps({
+      dataClient: client,
+      bedrockFallback: bedrockOk({ type: 'SKYKING', body: 'x' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-uuid-1',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-1',
+        transcript: 'Skyking do not answer',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    // The authoritative PUBLISHED write still happened despite the trace failure.
+    expect(updateSpy).toHaveBeenCalledTimes(2);
+    expect(updateSpy.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({ id: 'rec-1', transcriptionStatus: 'PUBLISHED' }),
     );
   });
 

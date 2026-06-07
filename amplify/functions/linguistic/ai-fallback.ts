@@ -217,6 +217,19 @@ export interface FallbackResult {
   retried: boolean;
   /** Per-component rules the model proposed (#544) — already sanitized. */
   rules: ProposedRule[];
+  /**
+   * Full request/response capture for the #744 diagnostics trace. The
+   * `renderedPrompt` is the EXACT user-turn text sent (template +
+   * transcript + reconcile section + dynamic context), and `rawResponse`
+   * is the complete Converse output that produced this parse (the retry's
+   * response when the corrective retry fired). The handler persists this
+   * to the LinguisticTrace row (spilling to S3 when oversized); it is NOT
+   * part of the prompt-version hash.
+   */
+  diagnostics: {
+    renderedPrompt: string;
+    rawResponse: unknown;
+  };
 }
 
 /**
@@ -454,6 +467,9 @@ export async function tryBedrockFallback(
     }
   }
   parsed = extractToolUse(firstResponse);
+  // Track the response that actually produced the kept parse so the #744
+  // diagnostics capture reflects the retry's output when the retry fired.
+  let finalResponse: ConverseCommandOutput = firstResponse;
 
   if (!isParsedEam(parsed)) {
     // Corrective retry (#577) — re-ask as a FRESH single user turn with an
@@ -479,6 +495,7 @@ export async function tryBedrockFallback(
     ];
     try {
       const retry = await client.send(new ConverseCommand(buildInput(modelId, correctiveMessages)));
+      finalResponse = retry;
       parsed = extractToolUse(retry);
     } catch (err) {
       console.warn('ai-fallback: Bedrock Converse threw on corrective retry', {
@@ -502,5 +519,9 @@ export async function tryBedrockFallback(
     promptVersion,
     retried,
     rules: sanitizeProposedRules((parsed as { rules?: unknown }).rules),
+    diagnostics: {
+      renderedPrompt: userPrompt,
+      rawResponse: finalResponse,
+    },
   };
 }

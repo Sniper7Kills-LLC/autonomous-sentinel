@@ -1238,6 +1238,24 @@ linguisticLambda.addToRolePolicy(
   }),
 );
 
+// LinguisticTrace DynamoDB TTL (#744). The per-run deep-debug trace rows
+// expire automatically (default ~90 days, written as epoch seconds in the
+// `ttl` column by the linguistic Lambda) so the table never grows
+// unbounded. The Gen 2 DSL has no TTL primitive, so set it on the
+// Amplify-managed table construct via the same escape hatch as the
+// LinguisticConfig stream below. No cross-stack reference (intra-data), so
+// no CFN cycle. NOTE: the S3 size-guard SPILL for oversized traces is
+// intentionally NOT wired here — granting the data-stack linguistic Lambda
+// an S3 token reference is a known CFN-cycle trigger (#644); the size guard
+// drops the oversized prompt/response fields (truncated=true) until the
+// spill is wired via a cross-stack-token-free path (follow-up #744).
+const linguisticTraceCfnTable =
+  backend.data.resources.cfnResources.amplifyDynamoDbTables['LinguisticTrace'];
+if (!linguisticTraceCfnTable) {
+  throw new Error('backend: LinguisticTrace CFN table wrapper not found on data resources');
+}
+linguisticTraceCfnTable.timeToLiveAttribute = { attributeName: 'ttl', enabled: true };
+
 // LinguisticConfig audit + reprocess-on-bump wiring (#481).
 //
 // A DynamoDB stream on the LinguisticConfig table drives the
