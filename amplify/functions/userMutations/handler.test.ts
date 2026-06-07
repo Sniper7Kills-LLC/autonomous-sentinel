@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import type { AppSyncResolverEvent, Context } from 'aws-lambda';
-import { handler, __setDeps, type UserMutationsDataClient } from './handler';
+import {
+  handler,
+  __setDeps,
+  type UserMutationsDataClient,
+  type CognitoAdminClient,
+} from './handler';
 
 /**
  * Lambda-resolver tests for the `selfDelete` + `banUser` custom mutations
@@ -894,5 +899,246 @@ describe('userMutations handler — updateProfile (#736)', () => {
     const event = makeEvent({ fieldName: 'updateProfile', arguments: { displayName: 'X' } });
     await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(/not found/i);
     expect(userUpdateSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('userMutations handler — setUserGroup / listUserGroups (#743)', () => {
+  let users: Map<string, UserRow>;
+  let groupsByUser: Map<string, string[]>;
+  let userUpdateSpy: ReturnType<typeof vi.fn>;
+  let auditSpy: Mock<() => Promise<string>>;
+  let addToGroupSpy: ReturnType<typeof vi.fn>;
+  let removeFromGroupSpy: ReturnType<typeof vi.fn>;
+  let listGroupsSpy: ReturnType<typeof vi.fn>;
+
+  function setup(targetRole: string | undefined = 'member') {
+    users = new Map<string, UserRow>([
+      [
+        'target-sub-456',
+        {
+          cognitoSub: 'target-sub-456',
+          email: 'target@example.com',
+          displayName: 'Target',
+          role: targetRole,
+        },
+      ],
+    ]);
+    groupsByUser = new Map<string, string[]>([['target-sub-456', ['member']]]);
+
+    userUpdateSpy = vi.fn((input: Partial<UserRow> & { cognitoSub: string }) => {
+      const before = users.get(input.cognitoSub);
+      const merged: UserRow = { ...(before ?? { cognitoSub: input.cognitoSub }), ...input };
+      users.set(input.cognitoSub, merged);
+      return Promise.resolve({ data: merged, errors: undefined });
+    });
+    auditSpy = vi.fn<() => Promise<string>>(() => Promise.resolve('audit-id-5'));
+
+    addToGroupSpy = vi.fn(({ cognitoSub, group }: { cognitoSub: string; group: string }) => {
+      const cur = groupsByUser.get(cognitoSub) ?? [];
+      if (!cur.includes(group)) groupsByUser.set(cognitoSub, [...cur, group]);
+      return Promise.resolve();
+    });
+    removeFromGroupSpy = vi.fn(({ cognitoSub, group }: { cognitoSub: string; group: string }) => {
+      const cur = groupsByUser.get(cognitoSub) ?? [];
+      groupsByUser.set(
+        cognitoSub,
+        cur.filter((g) => g !== group),
+      );
+      return Promise.resolve();
+    });
+    listGroupsSpy = vi.fn(({ cognitoSub }: { cognitoSub: string }) =>
+      Promise.resolve(groupsByUser.get(cognitoSub) ?? []),
+    );
+
+    __setDeps({
+      dataClient: {
+        models: {
+          User: {
+            get: vi.fn((input: { cognitoSub: string }) =>
+              Promise.resolve({ data: users.get(input.cognitoSub) ?? null, errors: undefined }),
+            ),
+            update: userUpdateSpy,
+          },
+          Sdr: {
+            listSdrByOwnerId: vi.fn(() => Promise.resolve({ data: [], errors: undefined })),
+            update: vi.fn(),
+          },
+        },
+      } as unknown as UserMutationsDataClient,
+      audit: auditSpy,
+      cognito: {
+        addUserToGroup: addToGroupSpy,
+        removeUserFromGroup: removeFromGroupSpy,
+        listGroupsForUser: listGroupsSpy,
+      } as unknown as CognitoAdminClient,
+    });
+  }
+
+  function adminEvent(args: Record<string, unknown>, fieldName: string) {
+    const event = makeEvent({ fieldName, arguments: args });
+    if (event.identity && 'groups' in event.identity) event.identity.groups = ['admin'];
+    return event;
+  }
+
+  it('setUserGroup rejects non-admin callers', async () => {
+    setup();
+    const event = makeEvent({
+      fieldName: 'setUserGroup',
+      arguments: { targetCognitoSub: 'target-sub-456', group: 'diagnostics', action: 'add' },
+    });
+    if (event.identity && 'groups' in event.identity) event.identity.groups = ['moderator'];
+    await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(/admin/i);
+    expect(addToGroupSpy).not.toHaveBeenCalled();
+    expect(auditSpy).not.toHaveBeenCalled();
+  });
+
+  it('setUserGroup adds the caller to a Cognito group and returns the updated group list', async () => {
+    setup();
+    const event = adminEvent(
+      { targetCognitoSub: 'target-sub-456', group: 'diagnostics', action: 'add' },
+      'setUserGroup',
+    );
+    const result = (await handler(event, {} as Context, () => undefined)) as {
+      cognitoSub: string;
+      groups: string[];
+    };
+    expect(addToGroupSpy).toHaveBeenCalledWith({
+      cognitoSub: 'target-sub-456',
+      group: 'diagnostics',
+    });
+    expect(result.cognitoSub).toBe('target-sub-456');
+    expect(result.groups).toContain('diagnostics');
+    expect(result.groups).toContain('member');
+  });
+
+  it('setUserGroup removes the caller from a Cognito group', async () => {
+    setup();
+    groupsByUser.set('target-sub-456', ['member', 'diagnostics']);
+    const event = adminEvent(
+      { targetCognitoSub: 'target-sub-456', group: 'diagnostics', action: 'remove' },
+      'setUserGroup',
+    );
+    const result = (await handler(event, {} as Context, () => undefined)) as { groups: string[] };
+    expect(removeFromGroupSpy).toHaveBeenCalledWith({
+      cognitoSub: 'target-sub-456',
+      group: 'diagnostics',
+    });
+    expect(result.groups).not.toContain('diagnostics');
+  });
+
+  it('setUserGroup writes a USER_ROLE_CHANGE audit with before/after groups', async () => {
+    setup();
+    await handler(
+      adminEvent(
+        { targetCognitoSub: 'target-sub-456', group: 'diagnostics', action: 'add' },
+        'setUserGroup',
+      ),
+      {} as Context,
+      () => undefined,
+    );
+    const [, opts] = auditSpy.mock.calls[0] as unknown as [unknown, Record<string, unknown>];
+    expect(opts.action).toBe('USER_ROLE_CHANGE');
+    expect(opts.targetType).toBe('User');
+    expect(opts.targetId).toBe('target-sub-456');
+    const before = opts.before as { groups: string[] };
+    const after = opts.after as { groups: string[] };
+    expect(before.groups).toEqual(['member']);
+    expect(after.groups).toEqual(expect.arrayContaining(['member', 'diagnostics']));
+  });
+
+  it('setUserGroup recomputes the User.role mirror when a hierarchy group changes', async () => {
+    setup('member');
+    await handler(
+      adminEvent(
+        { targetCognitoSub: 'target-sub-456', group: 'moderator', action: 'add' },
+        'setUserGroup',
+      ),
+      {} as Context,
+      () => undefined,
+    );
+    const patch = userUpdateSpy.mock.calls[0]?.[0] as UserRow;
+    expect(patch.role).toBe('moderator');
+  });
+
+  it('setUserGroup clears the role mirror to null when the last hierarchy group is removed', async () => {
+    setup('moderator');
+    groupsByUser.set('target-sub-456', ['moderator', 'diagnostics']);
+    await handler(
+      adminEvent(
+        { targetCognitoSub: 'target-sub-456', group: 'moderator', action: 'remove' },
+        'setUserGroup',
+      ),
+      {} as Context,
+      () => undefined,
+    );
+    // Only diagnostics (non-hierarchy) remains → role mirror must clear,
+    // not retain the stale 'moderator'.
+    const patch = userUpdateSpy.mock.calls[0]?.[0] as UserRow;
+    expect(patch.role).toBeNull();
+  });
+
+  it('setUserGroup does NOT change the role mirror for a diagnostics-only change', async () => {
+    setup('member');
+    await handler(
+      adminEvent(
+        { targetCognitoSub: 'target-sub-456', group: 'diagnostics', action: 'add' },
+        'setUserGroup',
+      ),
+      {} as Context,
+      () => undefined,
+    );
+    // diagnostics is additive — role stays 'member', no User.update for role.
+    expect(userUpdateSpy).not.toHaveBeenCalled();
+  });
+
+  it('setUserGroup rejects an unknown group', async () => {
+    setup();
+    const event = adminEvent(
+      { targetCognitoSub: 'target-sub-456', group: 'superuser', action: 'add' },
+      'setUserGroup',
+    );
+    await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(/group/i);
+    expect(addToGroupSpy).not.toHaveBeenCalled();
+  });
+
+  it('setUserGroup rejects an invalid action', async () => {
+    setup();
+    const event = adminEvent(
+      { targetCognitoSub: 'target-sub-456', group: 'diagnostics', action: 'toggle' },
+      'setUserGroup',
+    );
+    await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(/action/i);
+  });
+
+  it('setUserGroup throws when targetCognitoSub is missing', async () => {
+    setup();
+    const event = adminEvent({ group: 'diagnostics', action: 'add' }, 'setUserGroup');
+    await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(
+      /targetCognitoSub/,
+    );
+  });
+
+  it('listUserGroups returns the current groups for the target (admin-only)', async () => {
+    setup();
+    groupsByUser.set('target-sub-456', ['member', 'diagnostics']);
+    const event = adminEvent({ targetCognitoSub: 'target-sub-456' }, 'listUserGroups');
+    const result = (await handler(event, {} as Context, () => undefined)) as {
+      cognitoSub: string;
+      groups: string[];
+    };
+    expect(listGroupsSpy).toHaveBeenCalledWith({ cognitoSub: 'target-sub-456' });
+    expect(result.groups).toEqual(['member', 'diagnostics']);
+    expect(addToGroupSpy).not.toHaveBeenCalled();
+    expect(auditSpy).not.toHaveBeenCalled();
+  });
+
+  it('listUserGroups rejects non-admin callers', async () => {
+    setup();
+    const event = makeEvent({
+      fieldName: 'listUserGroups',
+      arguments: { targetCognitoSub: 'target-sub-456' },
+    });
+    if (event.identity && 'groups' in event.identity) event.identity.groups = ['member'];
+    await expect(handler(event, {} as Context, () => undefined)).rejects.toThrow(/admin/i);
   });
 });

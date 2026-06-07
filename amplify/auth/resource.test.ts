@@ -14,8 +14,8 @@ describe('auth resource', () => {
     expect(authConfig.loginWith.email).toBe(true);
   });
 
-  it('creates admin, moderator, and member groups', () => {
-    expect(authConfig.groups).toEqual(['admin', 'moderator', 'member']);
+  it('creates admin, moderator, member, and diagnostics groups', () => {
+    expect(authConfig.groups).toEqual(['admin', 'moderator', 'member', 'diagnostics']);
   });
 
   it('requires email as a mutable standard attribute', () => {
