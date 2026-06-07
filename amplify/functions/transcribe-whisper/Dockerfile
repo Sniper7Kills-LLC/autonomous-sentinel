@@ -4,12 +4,12 @@
 #   stage 1 — builds whisper.cpp from a pinned source tarball.
 #             Lambda x86_64 CPUs are Skylake-class so AVX + AVX2
 #             are both available; we keep them enabled (default).
-#   stage 2 — copies the whisper binary + medium English model
+#   stage 2 — copies the whisper binary + large-v3-turbo model
 #             into the Node 22 Lambda runtime base + drops in
 #             the JS handler.
 #
-# Total image size budget: ~1.7 GB
-#   ~1.5 GB ggml-medium.en model
+# Total image size budget: ~1.9 GB
+#   ~1.6 GB ggml-large-v3-turbo model (#759)
 #   ~50  MB whisper binary
 #   ~120 MB Node 22 base + handler deps
 # Well under Lambda's 10 GB container ceiling.
@@ -33,7 +33,7 @@
 # propose a bump in the PR description. v1.7.x ships the CLI as
 # `bin/main`; v1.8.x+ ships it as `bin/whisper-cli` (the `COPY
 # --from=builder` source path below must match the tag).
-ARG WHISPER_CPP_VERSION=v1.8.4
+ARG WHISPER_CPP_VERSION=v1.8.6
 
 # ----- stage 1: build whisper.cpp -----------------------------------
 FROM public.ecr.aws/lambda/nodejs:22 AS builder
@@ -83,11 +83,13 @@ RUN git clone --depth 1 --branch ${WHISPER_CPP_VERSION} \
       -DWHISPER_BUILD_EXAMPLES=ON \
  && cmake --build build --config Release -j
 
-# Download the medium English model. The `download-ggml-model.sh`
-# script verifies the SHA-1 checksum that ships with the
-# whisper.cpp release, so a model swap or tampered mirror fails
-# the build loudly.
-RUN bash ./models/download-ggml-model.sh medium.en
+# Download the large-v3-turbo model (#759). Near-large-v3 accuracy at a
+# fraction of the runtime — the big accuracy lever for the noisy / phonetic
+# EAM audio that medium.en under-resolved. Multilingual model; the `-l en`
+# hint (run-whisper.mjs) keeps it English. `download-ggml-model.sh` verifies
+# the SHA-1 shipped with the whisper.cpp release, so a tampered mirror fails
+# the build loudly. Overridable at runtime via WHISPER_MODEL_PATH.
+RUN bash ./models/download-ggml-model.sh large-v3-turbo
 
 # ----- stage 2: runtime ---------------------------------------------
 FROM public.ecr.aws/lambda/nodejs:22
@@ -108,7 +110,7 @@ RUN dnf -y install libgomp && dnf clean all
 # WHISPER_CPP_VERSION below v1.7.2, update this path to
 # `bin/main`.
 COPY --from=builder /build/build/bin/whisper-cli /opt/whisper
-COPY --from=builder /build/models/ggml-medium.en.bin /opt/models/medium.en.bin
+COPY --from=builder /build/models/ggml-large-v3-turbo.bin /opt/models/large-v3-turbo.bin
 RUN chmod +x /opt/whisper
 
 # Static ffmpeg for the in-container Opus transcode (#514). The handler

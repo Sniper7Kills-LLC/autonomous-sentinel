@@ -20,8 +20,12 @@
 import { copyFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 
-export const NOISE_REDUCTION_MODES = ['off', 'afftdn', 'rnnoise'];
-export const DEFAULT_NOISE_REDUCTION_MODE = 'afftdn';
+export const NOISE_REDUCTION_MODES = ['off', 'afftdn', 'eam', 'rnnoise'];
+// `eam` (#760): HF-SSB-tuned chain — bandpass to the 300–3000 Hz voice band
+// (drops sub-rumble + high-freq hiss outside speech), afftdn FFT denoise, then
+// dynaudnorm AGC to even out fading. Raises SNR for ASR on noisy shortwave.
+// All native ffmpeg filters — no RNNoise WASM dependency.
+export const DEFAULT_NOISE_REDUCTION_MODE = 'eam';
 export const DEFAULT_NR_DB = 12;
 export const DEFAULT_NF_DB = -25;
 export const DEFAULT_FFMPEG_PATH = '/usr/local/bin/ffmpeg';
@@ -106,6 +110,28 @@ export function buildAfftdnFilter(nrDb, nfDb) {
   return `afftdn=nr=${nrDb}:nf=${nfDb}`;
 }
 
+/** HF voice band edges for the `eam` chain (#760). */
+export const EAM_HIGHPASS_HZ = 300;
+export const EAM_LOWPASS_HZ = 3000;
+
+/**
+ * Builds the `eam` HF-voice ffmpeg chain (#760): bandpass to the SSB voice
+ * band → afftdn FFT denoise → dynaudnorm AGC. Exposed for tests.
+ */
+export function buildEamFilter(nrDb, nfDb) {
+  return [
+    `highpass=f=${EAM_HIGHPASS_HZ}`,
+    `lowpass=f=${EAM_LOWPASS_HZ}`,
+    buildAfftdnFilter(nrDb, nfDb),
+    'dynaudnorm',
+  ].join(',');
+}
+
+/** Resolve the ffmpeg `-af` filter string for an ffmpeg-backed mode. */
+export function filterForMode(mode, nrDb, nfDb) {
+  return mode === 'eam' ? buildEamFilter(nrDb, nfDb) : buildAfftdnFilter(nrDb, nfDb);
+}
+
 export function buildArgs(inputPath, outputPath, filter) {
   return ['-y', '-loglevel', 'error', '-i', inputPath, '-af', filter, outputPath];
 }
@@ -146,7 +172,8 @@ export async function denoise(opts) {
   const nfDb = opts.nfDb ?? DEFAULT_NF_DB;
   const ffmpegPath = opts.ffmpegPath || process.env.FFMPEG_PATH || DEFAULT_FFMPEG_PATH;
   const spawnFn = opts.spawnFn || spawn;
-  const args = buildArgs(inputPath, outputPath, buildAfftdnFilter(nrDb, nfDb));
+  // `afftdn` and `eam` are both ffmpeg-backed; pick the filter for the mode.
+  const args = buildArgs(inputPath, outputPath, filterForMode(mode, nrDb, nfDb));
 
   return new Promise((resolve, reject) => {
     let child;
@@ -179,7 +206,7 @@ export async function denoise(opts) {
     });
     child.once('close', (code) => {
       if (code === 0) {
-        resolve({ inputPath, outputPath, mode: 'afftdn', nrDb, nfDb, stderrTail: decode() });
+        resolve({ inputPath, outputPath, mode, nrDb, nfDb, stderrTail: decode() });
         return;
       }
       reject(

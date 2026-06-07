@@ -423,6 +423,12 @@ async function processOne(body) {
       threads: config.threads,
       whisperBinary: config.whisperBinary,
       modelPath: config.modelPath,
+      // Quality tunables (#757/#758/#761) resolved by readWhisperConfig.
+      initialPrompt: config.initialPrompt,
+      beamSize: config.beamSize,
+      temperature: config.temperature,
+      ...(config.entropyThold !== undefined ? { entropyThold: config.entropyThold } : {}),
+      ...(config.logprobThold !== undefined ? { logprobThold: config.logprobThold } : {}),
     });
 
     const transcriptJson = await readFile(result.jsonOutputPath, 'utf8');

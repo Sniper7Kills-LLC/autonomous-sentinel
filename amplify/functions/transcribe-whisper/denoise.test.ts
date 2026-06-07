@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import {
   buildAfftdnFilter,
+  buildEamFilter,
+  filterForMode,
   readDenoiseConfig,
   isNoiseReductionMode,
   denoise,
@@ -26,6 +28,24 @@ function makeFakeProc() {
 describe('buildAfftdnFilter', () => {
   it('encodes nr + nf', () => {
     expect(buildAfftdnFilter(12, -25)).toBe('afftdn=nr=12:nf=-25');
+  });
+});
+
+describe('buildEamFilter / filterForMode (#760)', () => {
+  it('chains bandpass + afftdn + dynaudnorm', () => {
+    expect(buildEamFilter(12, -25)).toBe(
+      'highpass=f=300,lowpass=f=3000,afftdn=nr=12:nf=-25,dynaudnorm',
+    );
+  });
+
+  it('eam is the default mode', () => {
+    expect(DEFAULT_NOISE_REDUCTION_MODE).toBe('eam');
+    expect(isNoiseReductionMode('eam')).toBe(true);
+  });
+
+  it('filterForMode picks the eam chain for eam, plain afftdn otherwise', () => {
+    expect(filterForMode('eam', 12, -25)).toContain('highpass=f=300');
+    expect(filterForMode('afftdn', 12, -25)).toBe('afftdn=nr=12:nf=-25');
   });
 });
 
@@ -109,6 +129,23 @@ describe('denoise', () => {
     expect(res).toMatchObject({ mode: 'afftdn', nrDb: DEFAULT_NR_DB, nfDb: DEFAULT_NF_DB });
     const args = spawnFn.mock.calls[0]?.[1] as string[];
     expect(args).toContain('afftdn=nr=12:nf=-25');
+  });
+
+  it('eam mode applies the HF chain + reports mode=eam (#760)', async () => {
+    const proc = makeFakeProc();
+    const spawnFn = vi.fn().mockReturnValue(proc);
+    const p = denoise({
+      inputPath: '/tmp/in.wav',
+      outputPath: '/tmp/out.wav',
+      mode: 'eam',
+      ffmpegPath: '/usr/local/bin/ffmpeg',
+      spawnFn: spawnFn as never,
+    });
+    proc.emit('close', 0);
+    const res = await p;
+    expect(res).toMatchObject({ mode: 'eam' });
+    const args = spawnFn.mock.calls[0]?.[1] as string[];
+    expect(args).toContain('highpass=f=300,lowpass=f=3000,afftdn=nr=12:nf=-25,dynaudnorm');
   });
 
   it('afftdn mode rejects with DenoiseError on non-zero exit', async () => {

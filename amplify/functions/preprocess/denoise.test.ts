@@ -11,6 +11,7 @@ import {
   RnnoiseModelPathUnsafe,
   buildAfftdnFilter,
   buildArnndnFilter,
+  buildEamFilter,
   denoise,
   isNoiseReductionMode,
   readDenoiseConfig,
@@ -256,7 +257,7 @@ describe('denoise — mode=rnnoise (#476)', () => {
   });
 });
 
-describe('denoise — mode=afftdn (default)', () => {
+describe('denoise — mode=afftdn', () => {
   it('invokes ffmpeg with -y -loglevel error -i input -af afftdn=... output', async () => {
     let recordedArgs: readonly string[] = [];
     const fakeProc = makeFakeProc();
@@ -268,6 +269,7 @@ describe('denoise — mode=afftdn (default)', () => {
     await denoise({
       inputPath: '/in.wav',
       outputPath: '/out.wav',
+      mode: 'afftdn',
       spawnFn: spawnFn as unknown as typeof SpawnFn,
     });
     expect(recordedArgs).toEqual([
@@ -293,6 +295,7 @@ describe('denoise — mode=afftdn (default)', () => {
     await denoise({
       inputPath: '/in.wav',
       outputPath: '/out.wav',
+      mode: 'afftdn',
       nrDb: 20,
       nfDb: -40,
       spawnFn: spawnFn as unknown as typeof SpawnFn,
@@ -313,12 +316,35 @@ describe('denoise — mode=afftdn (default)', () => {
     const result = await denoise({
       inputPath: '/in.wav',
       outputPath: '/out.wav',
+      mode: 'afftdn',
       spawnFn: spawnFn as unknown as typeof SpawnFn,
     });
     expect(result.mode).toBe('afftdn');
     expect(result.nrDb).toBe(DEFAULT_NR_DB);
     expect(result.nfDb).toBe(DEFAULT_NF_DB);
     expect(result.stderrTail).toContain('size=1024');
+  });
+});
+
+describe('denoise — mode=eam (default, #760)', () => {
+  it('defaults to the eam HF chain when no mode is given', async () => {
+    let recordedArgs: readonly string[] = [];
+    const fakeProc = makeFakeProc();
+    const spawnFn = vi.fn((_b: string, args: readonly string[]) => {
+      recordedArgs = args;
+      queueMicrotask(() => fakeProc.emit('close', 0));
+      return fakeProc;
+    });
+    const result = await denoise({
+      inputPath: '/in.wav',
+      outputPath: '/out.wav',
+      spawnFn: spawnFn as unknown as typeof SpawnFn,
+    });
+    expect(result.mode).toBe('eam');
+    const filterArg = recordedArgs[recordedArgs.indexOf('-af') + 1];
+    expect(filterArg).toBe(buildEamFilter(DEFAULT_NR_DB, DEFAULT_NF_DB));
+    expect(filterArg).toContain('highpass=f=300');
+    expect(filterArg).toContain('dynaudnorm');
   });
 });
 

@@ -6,6 +6,9 @@ import {
   DEFAULT_WHISPER_LANGUAGE,
   DEFAULT_WHISPER_MODEL_PATH,
   DEFAULT_WHISPER_THREADS,
+  DEFAULT_WHISPER_INITIAL_PROMPT,
+  DEFAULT_WHISPER_BEAM_SIZE,
+  DEFAULT_WHISPER_TEMPERATURE,
   WhisperError,
   buildArgs,
   readWhisperConfig,
@@ -122,6 +125,40 @@ describe('buildArgs', () => {
     expect(args).not.toContain('false');
     expect(args).not.toContain('true');
   });
+
+  it('appends --prompt / -bs / -tp / -et / -lpt when the quality opts are set (#757/#758/#761)', () => {
+    const args = buildArgs({
+      inputPath: '/tmp/in.opus',
+      outputPrefix: '/tmp/out',
+      language: 'en',
+      threads: 4,
+      modelPath: '/opt/models/large-v3-turbo.bin',
+      initialPrompt: 'EAM prime',
+      beamSize: 5,
+      temperature: 0,
+      entropyThold: 2.6,
+      logprobThold: -1.0,
+    });
+    expect(args[args.indexOf('--prompt') + 1]).toBe('EAM prime');
+    expect(args[args.indexOf('-bs') + 1]).toBe('5');
+    expect(args[args.indexOf('-tp') + 1]).toBe('0');
+    expect(args[args.indexOf('-et') + 1]).toBe('2.6');
+    expect(args[args.indexOf('-lpt') + 1]).toBe('-1');
+  });
+
+  it('omits --prompt when empty and -bs when beam <= 1 (greedy)', () => {
+    const args = buildArgs({
+      inputPath: '/tmp/in.opus',
+      outputPrefix: '/tmp/out',
+      language: 'en',
+      threads: 4,
+      modelPath: '/opt/models/large-v3-turbo.bin',
+      initialPrompt: '',
+      beamSize: 1,
+    });
+    expect(args).not.toContain('--prompt');
+    expect(args).not.toContain('-bs');
+  });
 });
 
 describe('readWhisperConfig', () => {
@@ -131,6 +168,11 @@ describe('readWhisperConfig', () => {
       modelPath: DEFAULT_WHISPER_MODEL_PATH,
       language: DEFAULT_WHISPER_LANGUAGE,
       threads: DEFAULT_WHISPER_THREADS,
+      initialPrompt: DEFAULT_WHISPER_INITIAL_PROMPT,
+      beamSize: DEFAULT_WHISPER_BEAM_SIZE,
+      temperature: DEFAULT_WHISPER_TEMPERATURE,
+      entropyThold: undefined,
+      logprobThold: undefined,
     });
   });
 
@@ -141,13 +183,27 @@ describe('readWhisperConfig', () => {
         WHISPER_MODEL_PATH: '/opt/models/large.bin',
         WHISPER_LANGUAGE: 'es',
         WHISPER_THREADS: '8',
+        WHISPER_INITIAL_PROMPT: 'custom prompt',
+        WHISPER_BEAM_SIZE: '3',
+        WHISPER_TEMPERATURE: '0.2',
+        WHISPER_ENTROPY_THOLD: '2.6',
+        WHISPER_LOGPROB_THOLD: '-1.0',
       }),
     ).toEqual({
       whisperBinary: '/usr/local/bin/whisper',
       modelPath: '/opt/models/large.bin',
       language: 'es',
       threads: 8,
+      initialPrompt: 'custom prompt',
+      beamSize: 3,
+      temperature: 0.2,
+      entropyThold: 2.6,
+      logprobThold: -1.0,
     });
+  });
+
+  it('disables priming when WHISPER_INITIAL_PROMPT is empty', () => {
+    expect(readWhisperConfig({ WHISPER_INITIAL_PROMPT: '' }).initialPrompt).toBe('');
   });
 
   it('rejects threads outside [1, 16] with a warn', () => {
@@ -206,6 +262,10 @@ describe('runWhisper — spawn arg shape', () => {
         language: DEFAULT_WHISPER_LANGUAGE,
         threads: DEFAULT_WHISPER_THREADS,
         modelPath: DEFAULT_WHISPER_MODEL_PATH,
+        // runWhisper injects the quality defaults (#757/#758/#761).
+        initialPrompt: DEFAULT_WHISPER_INITIAL_PROMPT,
+        beamSize: DEFAULT_WHISPER_BEAM_SIZE,
+        temperature: DEFAULT_WHISPER_TEMPERATURE,
       }),
     );
   });
