@@ -54,6 +54,39 @@ interface TranscribeQueueMessage {
   enqueuedAt: string;
   /** See PreprocessQueueMessage.backendOverride (#592). */
   backendOverride?: string;
+  /**
+   * Admin-configured Whisper initial prompt (#771). Read from the
+   * `WHISPER_INITIAL_PROMPT` LinguisticConfig row and forwarded verbatim by
+   * the dispatcher so the Whisper container uses it without a DB client.
+   * Omitted when unset → the container falls back to its baked default.
+   */
+  initialPrompt?: string;
+}
+
+/** LinguisticConfig key holding the admin-tunable Whisper prompt (#771). */
+export const WHISPER_INITIAL_PROMPT_CONFIG_KEY = 'WHISPER_INITIAL_PROMPT';
+
+/**
+ * Best-effort read of the admin Whisper prompt (#771). Returns the string
+ * value (including '' to disable priming) or undefined when the row is
+ * absent / unreadable / non-string — never throws, so a config hiccup can't
+ * block the pipeline.
+ */
+export async function loadWhisperInitialPrompt(
+  client: PreprocessDataClient,
+): Promise<string | undefined> {
+  try {
+    const res = await client.models.LinguisticConfig.get({
+      key: WHISPER_INITIAL_PROMPT_CONFIG_KEY,
+    });
+    const value = res.data?.value;
+    return typeof value === 'string' ? value : undefined;
+  } catch (err) {
+    console.warn('preprocess: WHISPER_INITIAL_PROMPT read failed (using container default)', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return undefined;
+  }
 }
 
 /**
@@ -64,9 +97,7 @@ interface TranscribeQueueMessage {
 export interface PreprocessDataClient {
   models: {
     Recording: {
-      get: (input: {
-        id: string;
-      }) => Promise<{
+      get: (input: { id: string }) => Promise<{
         data: { id: string; transcriptionStatus?: string | null } | null;
         errors?: unknown;
       }>;
@@ -79,6 +110,18 @@ export interface PreprocessDataClient {
         transcriptionFailed?: boolean;
         failedReason?: string | null;
       }) => Promise<{ data: unknown; errors?: unknown }>;
+    };
+    /**
+     * Admin-tunable Linguistic config (#771). Read-only here — the
+     * preprocess Lambda fetches the `WHISPER_INITIAL_PROMPT` row to inject
+     * the prompt into the transcribe-queue message so the lean Whisper
+     * container needs no DB client of its own.
+     */
+    LinguisticConfig: {
+      get: (input: { key: string }) => Promise<{
+        data: { value?: unknown } | null;
+        errors?: unknown;
+      }>;
     };
   };
 }
@@ -217,6 +260,11 @@ async function processOne(msg: PreprocessQueueMessage): Promise<ProcessOneResult
     );
   }
 
+  // Admin-tunable Whisper prompt (#771) — injected here so the lean Whisper
+  // container (no DB client) gets it via the dispatcher's verbatim forward.
+  // Best-effort: a config hiccup leaves it unset → container baked default.
+  const initialPrompt = await loadWhisperInitialPrompt(client);
+
   const transcribeMsg: TranscribeQueueMessage = {
     recordingId: msg.recordingId,
     originalKey: msg.originalKey,
@@ -225,6 +273,8 @@ async function processOne(msg: PreprocessQueueMessage): Promise<ProcessOneResult
     // Forward the admin-chosen backend override (#592) so the dispatcher
     // routes this recording to it.
     ...(msg.backendOverride ? { backendOverride: msg.backendOverride } : {}),
+    // Include the prompt only when configured (incl. '' to disable priming).
+    ...(initialPrompt !== undefined ? { initialPrompt } : {}),
   };
   await sqs().send(
     new SendMessageCommand({

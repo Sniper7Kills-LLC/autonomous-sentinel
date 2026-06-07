@@ -3,6 +3,7 @@
 import { PageHeader } from '@/components/layout/PageHeader';
 import { AdminGate } from '@/components/admin/AdminGate';
 import { LinguisticPromptTemplates } from '@/components/admin/LinguisticPromptTemplates';
+import { LinguisticWhisperPromptEditor } from '@/components/admin/LinguisticWhisperPromptEditor';
 import { LinguisticRulesQueue } from '@/components/admin/LinguisticRulesQueue';
 import { LinguisticThresholdsEditor } from '@/components/admin/LinguisticThresholdsEditor';
 import { LinguisticSchemasEditor } from '@/components/admin/LinguisticSchemasEditor';
@@ -32,6 +33,7 @@ export default function AdminLinguisticPage() {
       <AdminGate>
         <div className={styles.page}>
           <LinguisticPromptTemplates />
+          <LinguisticWhisperPromptEditor />
           <LinguisticThresholdsEditor />
           <LinguisticSchemasEditor />
           <LinguisticRulesQueue />
