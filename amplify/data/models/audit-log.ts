@@ -80,6 +80,13 @@ export const AuditLog = a
       // Separate from `USER_PII_BLANK` (which targets the User row)
       // so analytics can segregate user-blank from sdr-blank events.
       'SDR_PII_BLANK',
+      // Member submitted a PUBLIC SDR (third-party receiver like
+      // KiwiSDR/WebSDR) for admin review (#785). The `after` payload
+      // captures the submitted SDR row.
+      'SDR_SUBMIT_PUBLIC',
+      // Admin approved or rejected a PUBLIC SDR submission (#785).
+      // The `before` / `after` diff captures the reviewStatus change.
+      'SDR_REVIEW',
       // Scheduled cleanup of FieldVote rows whose `messageId` no
       // longer resolves to a Message (#270). Emitted once per sweep
       // with the orphan count + sample messageIds in `after`.

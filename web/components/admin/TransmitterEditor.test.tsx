@@ -3,6 +3,25 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { TransmitterEditor } from './TransmitterEditor';
 import type { TransmitterRow, TransmitterInput } from '@/lib/admin/transmitters';
 
+// Stub LocationPicker (no WebGL in jsdom) — dynamic import via next/dynamic
+vi.mock('next/dynamic', () => ({
+  default: (_fn: unknown) => {
+    const Component = ({
+      onChange,
+    }: {
+      onChange: (lat: number, lng: number) => void;
+      latitude?: number | null;
+      longitude?: number | null;
+    }) => (
+      <div>
+        <button onClick={() => onChange(10.0, 20.0)}>Set map location</button>
+      </div>
+    );
+    Component.displayName = 'LocationPickerDynamic';
+    return Component;
+  },
+}));
+
 const listMock = vi.fn<() => Promise<TransmitterRow[]>>();
 const createMock = vi.fn<(input: TransmitterInput) => Promise<TransmitterRow>>();
 const updateMock = vi.fn<(id: string, input: TransmitterInput) => Promise<TransmitterRow>>();

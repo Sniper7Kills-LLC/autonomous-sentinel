@@ -29,8 +29,9 @@ import {
   reparseRecording,
   restoreRecording,
 } from './models/recording';
-import { Sdr, listSdrPublic } from './models/sdr';
+import { Sdr, listSdrPublic, submitPublicSdr, reviewSdr } from './models/sdr';
 import { listSdrPublicLambda } from '../functions/listSdrPublicLambda/resource';
+import { sdrMutations } from '../functions/sdrMutations/resource';
 import { Transmitter } from './models/transmitter';
 import { Comment, submitComment, softDeleteComment } from './models/comment';
 import { FieldVote, FieldVoteField, castFieldVote } from './models/field-vote';
@@ -208,6 +209,10 @@ export const schema = a
     // Sdr public listing with granularity-blurred lat/lon — issue #286
     listSdrPublic,
 
+    // SDR custom mutations — #785: member submits PUBLIC SDR, admin reviews
+    submitPublicSdr,
+    reviewSdr,
+
     // NotificationPreference KMS-encrypted webhook URL + lazy-create — issue #288
     getMyNotificationPreference,
     setNotificationPreference,
@@ -275,6 +280,10 @@ export const schema = a
     // future switch to the Amplify Data client without re-touching
     // the schema-level grant.
     allow.resource(listSdrPublicLambda).to(['query']),
+    // sdrMutations resolves submitPublicSdr (creates PUBLIC Sdr rows) and
+    // reviewSdr (updates reviewStatus). Needs query + mutate so both the
+    // Sdr.get read and the Sdr.create/update paths work (#785).
+    allow.resource(sdrMutations).to(['query', 'mutate']),
     // notificationPreferenceMutations reads / writes the
     // NotificationPreference table directly via the DDB SDK (GetItem
     // + UpdateItem — see handler comment). The `query` + `mutate`

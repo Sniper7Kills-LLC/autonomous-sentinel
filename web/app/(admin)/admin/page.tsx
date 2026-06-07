@@ -40,6 +40,11 @@ const GROUPS: { heading: string; tools: Tool[] }[] = [
         desc: 'Curate the public transmitter list shown on the propagation map.',
       },
       {
+        href: '/admin/sdrs',
+        title: 'SDR submissions',
+        desc: 'Review and approve or reject community-submitted public SDR receivers (KiwiSDR, WebSDR, etc.).',
+      },
+      {
         href: '/admin/callsigns',
         title: 'Callsigns',
         desc: 'Maintain the callsign dictionary; confirm or reject AI-suggested entries.',
