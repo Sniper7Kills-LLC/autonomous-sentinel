@@ -34,6 +34,12 @@ export const storage = defineStorage({
       allow.groups(['admin', 'moderator', 'member']).to(['read']),
     ],
     'pipeline-temp/*': [allow.authenticated.to(['read', 'write', 'delete'])],
+    // Linguistic diagnostics-trace spill (#749). Oversized LinguisticTrace
+    // prompt/response blobs land here; the linguistic Lambda writes them via
+    // a backend IAM grant (not these identity-pool rules). Read is limited to
+    // the same groups that can read the trace rows so the #745 popout can
+    // signed-URL-fetch them. No guest/member read.
+    'diagnostics/*': [allow.groups(['admin', 'moderator', 'diagnostics']).to(['read'])],
     'exports/{entity_id}/*': [allow.entity('identity').to(['read'])],
     // Self-authored profile photos (#736). The owner manages their own
     // photo (entity-scoped write/delete); avatars are publicly viewable on

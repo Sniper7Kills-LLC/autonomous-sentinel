@@ -1243,18 +1243,29 @@ linguisticLambda.addToRolePolicy(
 // `ttl` column by the linguistic Lambda) so the table never grows
 // unbounded. The Gen 2 DSL has no TTL primitive, so set it on the
 // Amplify-managed table construct via the same escape hatch as the
-// LinguisticConfig stream below. No cross-stack reference (intra-data), so
-// no CFN cycle. NOTE: the S3 size-guard SPILL for oversized traces is
-// intentionally NOT wired here — granting the data-stack linguistic Lambda
-// an S3 token reference is a known CFN-cycle trigger (#644); the size guard
-// drops the oversized prompt/response fields (truncated=true) until the
-// spill is wired via a cross-stack-token-free path (follow-up #744).
+// LinguisticConfig stream below. No cross-stack reference (intra-data).
 const linguisticTraceCfnTable =
   backend.data.resources.cfnResources.amplifyDynamoDbTables['LinguisticTrace'];
 if (!linguisticTraceCfnTable) {
   throw new Error('backend: LinguisticTrace CFN table wrapper not found on data resources');
 }
 linguisticTraceCfnTable.timeToLiveAttribute = { attributeName: 'ttl', enabled: true };
+
+// LinguisticTrace S3 size-guard spill (#749). Oversized traces move their
+// two large text fields to `<media bucket>/diagnostics/*`; the linguistic
+// Lambda needs the bucket name + a scoped PutObject grant. This replicates
+// the `recordingMutations` wiring (also `resourceGroupName:'data'`, lines
+// above): the `data → storage` edge already exists and is one-way, so this
+// adds no CFN cycle (the #644 cycle was data↔function, not data→storage).
+// The `diagnostics/*` objects expire at 90 days via the storage lifecycle
+// rule (matching the DDB TTL); the #745 popout reads them via signed URL.
+linguisticLambda.addEnvironment('DIAGNOSTICS_BUCKET_NAME', mediaBucket.bucketName);
+linguisticLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['s3:PutObject'],
+    resources: [`${mediaBucket.bucketArn}/diagnostics/*`],
+  }),
+);
 
 // LinguisticConfig audit + reprocess-on-bump wiring (#481).
 //

@@ -9,6 +9,7 @@ import {
   type TracedMatch,
 } from './rules-engine';
 import { persistTrace, type TraceInput, type TraceBedrock, type TraceRow } from './trace';
+import { makeDiagnosticsPutObject } from './trace-s3';
 import { loadRulesFromDdb } from './load-rules-ddb';
 import { type ConfidenceConfig, isFlagged } from './threshold';
 import {
@@ -668,16 +669,21 @@ function repRecomputeFn(client: ReputationHelperClient, userId: string): Promise
  * default builds + size-guards + writes the LinguisticTrace row
  * best-effort (persistTrace never throws).
  *
- * The S3 size-guard SPILL is intentionally NOT wired at v1: granting the
- * data-stack linguistic Lambda an S3 bucket-token reference is a known
- * CFN-cycle trigger (#644). With no `putObject`/`bucket`, the size guard
- * drops the oversized prompt/response fields (`truncated=true`) instead of
- * spilling — the ~99% of traces under the limit keep everything inline.
- * Wiring the spill via a cross-stack-token-free path is a #744 follow-up.
+ * The size-guard SPILL is wired (#749): oversized traces move their two
+ * large text fields to `<DIAGNOSTICS_BUCKET_NAME>/diagnostics/*` and record
+ * the keys in `overflowKeys`. `makeDiagnosticsPutObject` returns undefined
+ * when the bucket env is unset, in which case the guard falls back to
+ * dropping the fields (`truncated=true`). The ~99% of traces under the
+ * limit keep everything inline regardless.
  */
 function traceWriterFn(client: LinguisticDataClient, input: TraceInput): Promise<void> {
   if (injected.traceWriter) return injected.traceWriter(input);
-  return persistTrace(client, input, { now: nowDate });
+  const bucket = process.env.DIAGNOSTICS_BUCKET_NAME;
+  return persistTrace(client, input, {
+    now: nowDate,
+    bucket,
+    putObject: makeDiagnosticsPutObject(bucket),
+  });
 }
 
 /** The backend a low-confidence whisper transcript escalates to (#588). */

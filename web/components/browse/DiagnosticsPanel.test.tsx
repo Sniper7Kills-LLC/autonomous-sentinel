@@ -9,9 +9,11 @@ vi.mock('@/components/auth/AuthProvider', () => ({
 }));
 
 const listTracesForRecording = vi.fn<(id: string) => Promise<DisplayTrace[]>>();
+const fetchTraceOverflow = vi.fn<(key: string) => Promise<string>>();
 vi.mock('@/lib/messages/traces', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   listTracesForRecording: (id: string) => listTracesForRecording(id),
+  fetchTraceOverflow: (key: string) => fetchTraceOverflow(key),
 }));
 
 function trace(overrides: Partial<DisplayTrace> = {}): DisplayTrace {
@@ -57,6 +59,7 @@ describe('DiagnosticsPanel (#745)', () => {
   beforeEach(() => {
     callerGroups = { groups: [], loading: false };
     listTracesForRecording.mockReset();
+    fetchTraceOverflow.mockReset();
   });
 
   it('renders nothing for a member (no diagnostics access)', () => {
@@ -133,5 +136,49 @@ describe('DiagnosticsPanel (#745)', () => {
     await waitFor(() =>
       expect(screen.getByTestId('bedrock-prompt')).toHaveTextContent(/dropped — trace truncated/i),
     );
+  });
+
+  it('loads a spilled field from S3 on demand (#749)', async () => {
+    callerGroups = { groups: ['admin'], loading: false };
+    listTracesForRecording.mockResolvedValue([
+      trace({
+        truncated: true,
+        bedrockRenderedPrompt: null,
+        overflowKeys: { renderedPrompt: 'diagnostics/rec-1/run-prompt.txt' },
+      }),
+    ]);
+    fetchTraceOverflow.mockResolvedValue('FULL PROMPT FROM S3');
+    render(<DiagnosticsPanel recordingId="rec-1" />);
+    fireEvent.click(screen.getByTestId('diagnostics-open'));
+
+    // Offloaded → shows a load button, not the text, until clicked (lazy).
+    const promptField = await screen.findByTestId('bedrock-prompt');
+    expect(promptField).toHaveTextContent(/offloaded to s3/i);
+    expect(fetchTraceOverflow).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /load from s3/i }));
+    await waitFor(() =>
+      expect(fetchTraceOverflow).toHaveBeenCalledWith('diagnostics/rec-1/run-prompt.txt'),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId('bedrock-prompt')).toHaveTextContent('FULL PROMPT FROM S3'),
+    );
+  });
+
+  it('surfaces an error when the S3 spill fetch fails (#749)', async () => {
+    callerGroups = { groups: ['admin'], loading: false };
+    listTracesForRecording.mockResolvedValue([
+      trace({
+        truncated: true,
+        bedrockRenderedPrompt: null,
+        overflowKeys: { renderedPrompt: 'diagnostics/rec-1/run-prompt.txt' },
+      }),
+    ]);
+    fetchTraceOverflow.mockRejectedValue(new Error('signed URL expired'));
+    render(<DiagnosticsPanel recordingId="rec-1" />);
+    fireEvent.click(screen.getByTestId('diagnostics-open'));
+    await screen.findByTestId('bedrock-prompt');
+    fireEvent.click(screen.getByRole('button', { name: /load from s3/i }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/signed url expired/i));
   });
 });

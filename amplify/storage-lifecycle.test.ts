@@ -159,4 +159,22 @@ describe('attachStorageLifecycle — lifecycle rules (#45, #47, #48)', () => {
       }),
     });
   });
+
+  it('expires diagnostics/ trace blobs after 90 days (#749)', () => {
+    synth().hasResourceProperties('AWS::S3::Bucket', {
+      LifecycleConfiguration: Match.objectLike({
+        Rules: Match.arrayWith([
+          Match.objectLike({
+            Id: 'diagnostics-90d',
+            Status: 'Enabled',
+            Prefix: 'diagnostics/',
+            ExpirationInDays: 90,
+            AbortIncompleteMultipartUpload: Match.objectLike({
+              DaysAfterInitiation: 1,
+            }),
+          }),
+        ]),
+      }),
+    });
+  });
 });
