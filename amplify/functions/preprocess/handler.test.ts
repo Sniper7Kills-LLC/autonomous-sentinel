@@ -224,6 +224,31 @@ describe('preprocess — happy path (consolidated #514)', () => {
     expect('initialPrompt' in body).toBe(false);
   });
 
+  it('includes an empty initialPrompt to disable priming when the row is "" (#771)', async () => {
+    const { client } = makeDataStub('QUEUED', '');
+    __setDeps({
+      s3: new S3Client({}),
+      sqs: new SQSClient({}),
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-e',
+        originalKey: 'recordings/originals/e.wav',
+        contentHash: 'h',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    const body = JSON.parse(
+      sqsMock.commandCalls(SendMessageCommand)[0]?.args[0].input.MessageBody ?? '{}',
+    ) as Record<string, unknown>;
+    // Empty string is a defined value → included so the container disables priming.
+    expect('initialPrompt' in body).toBe(true);
+    expect(body.initialPrompt).toBe('');
+  });
+
   it('skips (no status write, no transcribe enqueue) when the recording already reached TRANSCRIBING (#741)', async () => {
     const { client, updateSpy } = makeDataStub('PUBLISHED');
     __setDeps({
