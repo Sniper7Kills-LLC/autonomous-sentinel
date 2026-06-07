@@ -164,4 +164,21 @@ describe('DiagnosticsPanel (#745)', () => {
       expect(screen.getByTestId('bedrock-prompt')).toHaveTextContent('FULL PROMPT FROM S3'),
     );
   });
+
+  it('surfaces an error when the S3 spill fetch fails (#749)', async () => {
+    callerGroups = { groups: ['admin'], loading: false };
+    listTracesForRecording.mockResolvedValue([
+      trace({
+        truncated: true,
+        bedrockRenderedPrompt: null,
+        overflowKeys: { renderedPrompt: 'diagnostics/rec-1/run-prompt.txt' },
+      }),
+    ]);
+    fetchTraceOverflow.mockRejectedValue(new Error('signed URL expired'));
+    render(<DiagnosticsPanel recordingId="rec-1" />);
+    fireEvent.click(screen.getByTestId('diagnostics-open'));
+    await screen.findByTestId('bedrock-prompt');
+    fireEvent.click(screen.getByRole('button', { name: /load from s3/i }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/signed url expired/i));
+  });
 });
