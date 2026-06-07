@@ -111,6 +111,57 @@ export async function listMyUploads(
   return { items: rows, nextToken: raw.nextToken ?? null };
 }
 
+/** Minimal subscription handle returned by `observeMyUploads`. */
+export interface UploadsSubscription {
+  unsubscribe: () => void;
+}
+
+export interface ObserveMyUploadsHandlers {
+  /** Full, sorted (newest-first) snapshot on every sync tick. */
+  next: (rows: UploadRow[]) => void;
+  error?: (err: unknown) => void;
+}
+
+/**
+ * Live `My Uploads` (#774). Subscribes to the caller's Recordings via
+ * AppSync `observeQuery` so pipeline-status changes (incl. an admin
+ * reprocess) surface in real time without a manual refresh. `observeQuery`
+ * keeps a full synced snapshot, so each `next` delivers the complete set —
+ * sorted newest-first here, mapped to UploadRow.
+ *
+ * Uses the `userPool` auth mode (the GSI read is group/owner-gated; the
+ * identity-pool path doesn't carry the claim). Returns a handle whose
+ * `unsubscribe` the caller must invoke on unmount.
+ */
+export function observeMyUploads(
+  uploaderId: string,
+  handlers: ObserveMyUploadsHandlers,
+): UploadsSubscription {
+  const client = getDataClient();
+  const observe = client.models.Recording.observeQuery as unknown as (input: {
+    filter: Record<string, unknown>;
+    authMode: 'userPool';
+  }) => {
+    subscribe: (cbs: {
+      next: (snap: { items: RawRecording[] }) => void;
+      error?: (err: unknown) => void;
+    }) => UploadsSubscription;
+  };
+  return observe({
+    filter: {
+      and: [{ uploaderId: { eq: uploaderId } }, { deletedAt: { attributeExists: false } }],
+    },
+    authMode: 'userPool',
+  }).subscribe({
+    next: ({ items }) => {
+      const rows = items.map(toUploadRow);
+      rows.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+      handlers.next(rows);
+    },
+    error: (err) => handlers.error?.(err),
+  });
+}
+
 /**
  * Maps the `Recording.transcriptionStatus` enum to a human label +
  * tone for the dashboard pill. Mirrors the testing-portal pipeline-

@@ -1,13 +1,22 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { UploadsList } from './UploadsList';
+import type { UploadRow } from '@/lib/uploads/query';
 
-const listMock = vi.fn<() => Promise<unknown>>();
+// observeMyUploads is mocked to capture the handlers so a test can drive
+// `next(rows)` / `error(err)` like a live AppSync observeQuery snapshot.
+type Handlers = { next: (rows: UploadRow[]) => void; error?: (err: unknown) => void };
+let captured: Handlers | null = null;
+const unsubscribeMock = vi.fn();
+const observeMock = vi.fn((_uploaderId: string, handlers: Handlers) => {
+  captured = handlers;
+  return { unsubscribe: unsubscribeMock };
+});
 vi.mock('@/lib/uploads/query', async (importActual) => {
   const actual = await importActual<Record<string, unknown>>();
   return {
     ...actual,
-    listMyUploads: (): Promise<unknown> => listMock(),
+    observeMyUploads: (uploaderId: string, handlers: Handlers) => observeMock(uploaderId, handlers),
   };
 });
 
@@ -22,158 +31,148 @@ vi.mock('@/lib/uploads/reprocess', () => ({
   reprocessRecording: (id: string): Promise<void> => reprocessMock(id),
 }));
 
-const failedRow = {
-  id: 'rec-ccc',
-  messageId: null,
-  contentHash: 'h',
-  originalKey: 'recordings/originals/h.wav',
-  webCanonicalKey: null,
-  wordTimestampsKey: null,
-  peaksJsonKey: null,
-  transcript: null,
-  transcriptionStatus: 'TRANSCRIBE_FAILED',
-  transcriptionStatusUpdatedAt: '2026-05-28T19:00:00Z',
-  transcriptionFailed: true,
-  failedReason: 'whisper.cpp exit 1',
-  frequencyKhz: null,
-  modulation: null,
-  broadcastedAt: null,
-  durationMs: null,
-  sdrId: null,
-  automated: false,
-  createdAt: '2026-05-28T19:00:00Z',
-};
+/** Build an UploadRow-shaped fixture (observeMyUploads is mocked, so the
+ *  component receives these directly — no toUploadRow mapping). */
+function row(p: Partial<UploadRow> = {}): UploadRow {
+  return {
+    id: 'rec-ccc',
+    messageId: null,
+    transcript: null,
+    transcriptionStatus: 'TRANSCRIBE_FAILED',
+    transcriptionStatusUpdatedAt: '2026-05-28T19:00:00Z',
+    transcriptionFailed: true,
+    failedReason: 'whisper.cpp exit 1',
+    frequencyKhz: null,
+    modulation: null,
+    broadcastedAt: null,
+    durationMs: null,
+    sdrId: null,
+    automated: false,
+    webCanonicalKey: null,
+    wordTimestampsKey: null,
+    peaksJsonKey: null,
+    transcriptionConfidence: null,
+    uploaderId: 'sub-1',
+    createdAt: '2026-05-28T19:00:00Z',
+    originalKey: 'recordings/originals/h.wav',
+    ...p,
+  } as UploadRow;
+}
 
-describe('UploadsList', () => {
+/** Deliver a live snapshot through the captured subscription handler. */
+function emit(rows: UploadRow[]): void {
+  act(() => captured?.next(rows));
+}
+
+describe('UploadsList (#774 live)', () => {
   beforeEach(() => {
-    listMock.mockReset();
+    captured = null;
+    observeMock.mockClear();
+    unsubscribeMock.mockClear();
     groupsMock.mockReset();
     groupsMock.mockReturnValue([]);
     reprocessMock.mockReset();
     reprocessMock.mockResolvedValue(undefined);
-    vi.stubGlobal(
-      'matchMedia',
-      vi.fn().mockReturnValue({
-        matches: false,
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-        addListener: vi.fn(),
-        removeListener: vi.fn(),
-      }),
-    );
   });
   afterEach(() => vi.unstubAllGlobals());
 
   it('shows the empty state when the caller has no uploads', async () => {
-    listMock.mockResolvedValue({ items: [], nextToken: null });
     render(<UploadsList uploaderId="sub-1" />);
-    await waitFor(() => {
-      expect(screen.getByText(/no uploads yet/i)).toBeInTheDocument();
-    });
+    emit([]);
+    await waitFor(() => expect(screen.getByText(/no uploads yet/i)).toBeInTheDocument());
   });
 
-  it('renders one row per Recording with the published pill', async () => {
-    listMock.mockResolvedValue({
-      items: [
-        {
-          id: 'rec-aaa',
-          messageId: 'msg-1',
-          contentHash: 'h',
-          originalKey: null,
-          webCanonicalKey: null,
-          wordTimestampsKey: null,
-          peaksJsonKey: null,
-          transcript: null,
-          transcriptionStatus: 'PUBLISHED',
-          transcriptionStatusUpdatedAt: '2026-05-28T19:00:00Z',
-          transcriptionFailed: false,
-          failedReason: null,
-          frequencyKhz: 11175,
-          modulation: 'USB',
-          broadcastedAt: '2026-05-28T18:59:00Z',
-          durationMs: 4200,
-          sdrId: null,
-          automated: true,
-          createdAt: '2026-05-28T19:00:00Z',
-        },
-      ],
-      nextToken: null,
-    });
+  it('renders a row with status pill, upload + broadcast time, and message link', async () => {
     render(<UploadsList uploaderId="sub-1" />);
-    await waitFor(() => {
-      expect(screen.getByText('Published')).toBeInTheDocument();
-    });
+    emit([
+      row({
+        id: 'rec-aaa',
+        messageId: 'msg-1',
+        transcriptionStatus: 'PUBLISHED',
+        transcriptionFailed: false,
+        failedReason: null,
+        frequencyKhz: 11175,
+        modulation: 'USB',
+        broadcastedAt: '2026-05-28T18:59:00Z',
+        durationMs: 4200,
+        automated: true,
+      }),
+    ]);
+    await waitFor(() => expect(screen.getByText('Published')).toBeInTheDocument());
     expect(screen.getByText(/11\.175 MHz · USB/)).toBeInTheDocument();
+    expect(screen.getByText(/Uploaded /)).toBeInTheDocument();
+    expect(screen.getByText(/Broadcast /)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /open message/i })).toBeInTheDocument();
   });
 
   it('surfaces failure reason inline for failed rows', async () => {
-    listMock.mockResolvedValue({
-      items: [
-        {
-          id: 'rec-bbb',
-          messageId: null,
-          contentHash: 'h',
-          originalKey: null,
-          webCanonicalKey: null,
-          wordTimestampsKey: null,
-          peaksJsonKey: null,
-          transcript: null,
-          transcriptionStatus: 'TRANSCRIBE_FAILED',
-          transcriptionStatusUpdatedAt: '2026-05-28T19:00:00Z',
-          transcriptionFailed: true,
-          failedReason: 'whisper.cpp exit 1',
-          frequencyKhz: null,
-          modulation: null,
-          broadcastedAt: null,
-          durationMs: null,
-          sdrId: null,
-          automated: false,
-          createdAt: '2026-05-28T19:00:00Z',
-        },
-      ],
-      nextToken: null,
-    });
     render(<UploadsList uploaderId="sub-1" />);
+    emit([row()]);
     expect(await screen.findByText('whisper.cpp exit 1')).toBeInTheDocument();
     expect(screen.getByText(/transcribe failed/i)).toBeInTheDocument();
   });
 
-  it('renders an error banner when the query rejects', async () => {
-    listMock.mockRejectedValue(new Error('Unauthorized'));
+  it('advances status live on a subscription tick (#774)', async () => {
     render(<UploadsList uploaderId="sub-1" />);
+    emit([
+      row({
+        id: 'rec-x',
+        transcriptionStatus: 'TRANSCRIBING',
+        transcriptionFailed: false,
+        failedReason: null,
+      }),
+    ]);
+    await waitFor(() => expect(screen.getByText('Transcribing')).toBeInTheDocument());
+    // Next snapshot: the same recording reaches PUBLISHED.
+    emit([
+      row({
+        id: 'rec-x',
+        transcriptionStatus: 'PUBLISHED',
+        transcriptionFailed: false,
+        failedReason: null,
+      }),
+    ]);
+    await waitFor(() => expect(screen.getByText('Published')).toBeInTheDocument());
+  });
+
+  it('renders an error banner when the subscription errors', async () => {
+    render(<UploadsList uploaderId="sub-1" />);
+    act(() => captured?.error?.(new Error('Unauthorized')));
     expect(await screen.findByRole('alert')).toHaveTextContent(/Unauthorized/i);
+  });
+
+  it('unsubscribes on unmount', () => {
+    const { unmount } = render(<UploadsList uploaderId="sub-1" />);
+    emit([row()]);
+    unmount();
+    expect(unsubscribeMock).toHaveBeenCalled();
   });
 
   it('hides the Reprocess button for a non-mod/admin member (#505)', async () => {
     groupsMock.mockReturnValue(['member']);
-    listMock.mockResolvedValue({ items: [failedRow], nextToken: null });
     render(<UploadsList uploaderId="sub-1" />);
+    emit([row()]);
     await waitFor(() => expect(screen.getByText('whisper.cpp exit 1')).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: /reprocess/i })).not.toBeInTheDocument();
   });
 
-  it('shows Reprocess for a moderator/admin and calls the mutation, flipping the row to queued (#505)', async () => {
+  it('calls the reprocess mutation; the live query carries the row to queued (#505/#774)', async () => {
     groupsMock.mockReturnValue(['admin']);
-    listMock.mockResolvedValue({ items: [failedRow], nextToken: null });
     render(<UploadsList uploaderId="sub-1" />);
-
+    emit([row()]);
     const btn = await screen.findByRole('button', { name: /reprocess/i });
     fireEvent.click(btn);
-
     await waitFor(() => expect(reprocessMock).toHaveBeenCalledWith('rec-ccc'));
-    // Optimistic status flip — pill moves to Queued, failure text clears.
+    // Server resets to QUEUED → next snapshot reflects it (no optimistic patch).
+    emit([row({ transcriptionStatus: 'QUEUED', transcriptionFailed: false, failedReason: null })]);
     await waitFor(() => expect(screen.getByText('Queued')).toBeInTheDocument());
     expect(screen.queryByText('whisper.cpp exit 1')).not.toBeInTheDocument();
   });
 
   it('hides Reprocess for a recording-less row (no originalKey) even for admins (#505)', async () => {
     groupsMock.mockReturnValue(['admin']);
-    listMock.mockResolvedValue({
-      items: [{ ...failedRow, originalKey: null }],
-      nextToken: null,
-    });
     render(<UploadsList uploaderId="sub-1" />);
+    emit([row({ originalKey: null })]);
     await waitFor(() => expect(screen.getByText('whisper.cpp exit 1')).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: /reprocess/i })).not.toBeInTheDocument();
   });
