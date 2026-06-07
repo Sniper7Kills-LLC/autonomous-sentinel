@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { Drawer } from '@/components/ui/Drawer';
@@ -12,6 +12,12 @@ import {
   type DisplayTrace,
 } from '@/lib/messages/traces';
 import { listRules, setRuleEnabled } from '@/lib/admin/linguistic';
+import {
+  findCallsignByNormalized,
+  approveCallsign,
+  deleteCallsign,
+  type CallsignRow,
+} from '@/lib/admin/callsigns';
 import { diffTranscript, type DiffSegment } from '@/lib/revisions/diff';
 import styles from './DiagnosticsPanel.module.css';
 
@@ -418,7 +424,187 @@ function RunDetail({
           {prettyJson(trace.finalResult)}
         </pre>
       </section>
+
+      <CallsignReview trace={trace} admin={admin} />
     </div>
+  );
+}
+
+/** Receivers that are NOT callsigns — never offer to confirm these (#777). */
+const NON_CALLSIGN = new Set(['ALL STATIONS', 'ALLSTATIONS', 'ALL STATION']);
+
+/**
+ * Distinct, normalized sender/receiver callsigns from a run's final parse.
+ * Mirrors the pipeline's `callsignCandidates` so the panel reviews exactly
+ * the callsigns the linguistic stage would have auto-suggested (#776/#777).
+ */
+function callsignsFromResult(result: unknown): string[] {
+  if (!result || typeof result !== 'object') return [];
+  const r = result as { sender?: unknown; receiver?: unknown };
+  const out: string[] = [];
+  for (const raw of [r.sender, r.receiver]) {
+    if (typeof raw !== 'string') continue;
+    const n = raw.trim().toUpperCase();
+    if (!n || NON_CALLSIGN.has(n)) continue;
+    if (!out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
+interface CallsignState {
+  loading: boolean;
+  row: CallsignRow | null;
+  removed: boolean;
+  busy: boolean;
+  error: string | null;
+}
+
+const PENDING_STATE: CallsignState = {
+  loading: true,
+  row: null,
+  removed: false,
+  busy: false,
+  error: null,
+};
+
+/**
+ * Confirm/reject the parse's suggested callsigns (#777).
+ *
+ * On run selection, looks up each sender/receiver callsign in the dictionary.
+ * Admins get Confirm (approve → `approved=true`) / Reject (delete) controls on
+ * any `AI_SUGGESTED`, not-yet-approved row — exactly the rows the pipeline
+ * auto-created from this parse. Non-admins (diagnostics/moderator) see the
+ * dictionary state read-only. The `Callsign` model enforces admin-only writes
+ * server-side regardless.
+ */
+function CallsignReview({ trace, admin }: { trace: DisplayTrace; admin: boolean }) {
+  const candidates = useMemo(() => callsignsFromResult(trace.finalResult), [trace.finalResult]);
+  const [state, setState] = useState<Record<string, CallsignState>>({});
+
+  useEffect(() => {
+    if (candidates.length === 0) {
+      setState({});
+      return;
+    }
+    let active = true;
+    setState(Object.fromEntries(candidates.map((c) => [c, PENDING_STATE])));
+    for (const c of candidates) {
+      findCallsignByNormalized(c)
+        .then((row) => {
+          if (active)
+            setState((s) => ({ ...s, [c]: { ...(s[c] ?? PENDING_STATE), loading: false, row } }));
+        })
+        .catch(() => {
+          if (active)
+            setState((s) => ({
+              ...s,
+              [c]: { ...(s[c] ?? PENDING_STATE), loading: false, row: null },
+            }));
+        });
+    }
+    return () => {
+      active = false;
+    };
+  }, [candidates]);
+
+  const confirm = useCallback((c: string, id: string) => {
+    setState((s) => ({ ...s, [c]: { ...(s[c] ?? PENDING_STATE), busy: true, error: null } }));
+    approveCallsign(id)
+      .then((row) =>
+        setState((s) => ({ ...s, [c]: { ...(s[c] ?? PENDING_STATE), busy: false, row } })),
+      )
+      .catch((e: unknown) =>
+        setState((s) => ({
+          ...s,
+          [c]: {
+            ...(s[c] ?? PENDING_STATE),
+            busy: false,
+            error: e instanceof Error ? e.message : 'Confirm failed.',
+          },
+        })),
+      );
+  }, []);
+
+  const reject = useCallback((c: string, id: string) => {
+    setState((s) => ({ ...s, [c]: { ...(s[c] ?? PENDING_STATE), busy: true, error: null } }));
+    deleteCallsign(id)
+      .then(() =>
+        setState((s) => ({
+          ...s,
+          [c]: { ...(s[c] ?? PENDING_STATE), busy: false, removed: true, row: null },
+        })),
+      )
+      .catch((e: unknown) =>
+        setState((s) => ({
+          ...s,
+          [c]: {
+            ...(s[c] ?? PENDING_STATE),
+            busy: false,
+            error: e instanceof Error ? e.message : 'Reject failed.',
+          },
+        })),
+      );
+  }, []);
+
+  if (candidates.length === 0) return null;
+
+  return (
+    <section data-testid="callsign-review">
+      <h4 className={styles.heading}>Callsigns</h4>
+      <ul className={styles.callsignList}>
+        {candidates.map((c) => {
+          const st = state[c] ?? PENDING_STATE;
+          const pending = st.row !== null && st.row.source === 'AI_SUGGESTED' && !st.row.approved;
+          return (
+            <li key={c} className={styles.callsignChip} data-testid={`callsign-chip-${c}`}>
+              <code className={styles.code}>{c}</code>
+              <span className={styles.callsignState} data-testid={`callsign-state-${c}`}>
+                {st.loading
+                  ? 'checking…'
+                  : st.removed
+                    ? 'rejected'
+                    : st.row === null
+                      ? 'not in dictionary'
+                      : pending
+                        ? 'suggested — pending review'
+                        : 'in dictionary'}
+              </span>
+              {admin && pending && st.row && (
+                <span className={styles.callsignActions}>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="sm"
+                    loading={st.busy}
+                    disabled={st.busy}
+                    data-testid={`callsign-confirm-${c}`}
+                    onClick={() => confirm(c, st.row!.id)}
+                  >
+                    Confirm
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    loading={st.busy}
+                    disabled={st.busy}
+                    data-testid={`callsign-reject-${c}`}
+                    onClick={() => reject(c, st.row!.id)}
+                  >
+                    Reject
+                  </Button>
+                </span>
+              )}
+              {st.error && (
+                <span className={styles.error} role="alert">
+                  {st.error}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 
