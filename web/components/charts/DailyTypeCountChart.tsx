@@ -1,20 +1,42 @@
 'use client';
 
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import type { DailyCountBucket } from '@/lib/messages/aggregations';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  CartesianGrid,
+} from 'recharts';
+import type { DailyTypeRow } from '@/lib/stats/aggregates';
 
-interface DailyCountChartProps {
-  /** Precomputed daily totals (#780). */
-  data: DailyCountBucket[];
+interface DailyTypeCountChartProps {
+  /** Precomputed per-day, per-type series (#780). */
+  dates: DailyTypeRow[];
+  types: string[];
 }
 
-export function DailyCountChart({ data }: DailyCountChartProps) {
-  if (data.length === 0) {
+// Stable palette cycled across message types (CSS theme tokens).
+const PALETTE = [
+  'var(--color-accent)',
+  'var(--color-info)',
+  'var(--color-success)',
+  'var(--color-warning)',
+  'var(--color-danger)',
+  '#8b5cf6',
+  '#14b8a6',
+  '#f97316',
+];
+
+export function DailyTypeCountChart({ dates, types }: DailyTypeCountChartProps) {
+  if (dates.length === 0) {
     return <EmptyChart label="No daily-count data yet." />;
   }
   return (
     <ResponsiveContainer>
-      <BarChart data={data} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
+      <BarChart data={dates} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
         <CartesianGrid stroke="var(--border-1)" strokeDasharray="2 4" />
         <XAxis
           dataKey="date"
@@ -35,7 +57,10 @@ export function DailyCountChart({ data }: DailyCountChartProps) {
           }}
           labelStyle={{ color: 'var(--text-1)' }}
         />
-        <Bar dataKey="count" fill="var(--color-accent)" />
+        <Legend wrapperStyle={{ fontFamily: 'var(--font-jb-mono)', fontSize: 11 }} />
+        {types.map((t, i) => (
+          <Bar key={t} dataKey={t} stackId="type" fill={PALETTE[i % PALETTE.length]} />
+        ))}
       </BarChart>
     </ResponsiveContainer>
   );

@@ -1,28 +1,47 @@
 'use client';
 
+import { useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import type { DailyCountBucket } from '@/lib/messages/aggregations';
+import type { UsageBucket } from '@/lib/stats/aggregates';
 
-interface DailyCountChartProps {
-  /** Precomputed daily totals (#780). */
-  data: DailyCountBucket[];
+interface UsageBarChartProps {
+  /** Precomputed single-dimension ranking (callsign usage, preamble) (#780). */
+  data: UsageBucket[];
+  /** How many top entries to chart. */
+  topN?: number;
+  emptyLabel?: string;
+  /** Color token for the bars. */
+  fill?: string;
+  /** Y-axis category label width (px). */
+  labelWidth?: number;
 }
 
-export function DailyCountChart({ data }: DailyCountChartProps) {
-  if (data.length === 0) {
-    return <EmptyChart label="No daily-count data yet." />;
+export function UsageBarChart({
+  data,
+  topN = 20,
+  emptyLabel = 'No data yet.',
+  fill = 'var(--color-accent)',
+  labelWidth = 110,
+}: UsageBarChartProps) {
+  const charted = useMemo(() => data.slice(0, topN), [data, topN]);
+  if (charted.length === 0) {
+    return <EmptyChart label={emptyLabel} />;
   }
   return (
     <ResponsiveContainer>
-      <BarChart data={data} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
+      <BarChart data={charted} layout="vertical" margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
         <CartesianGrid stroke="var(--border-1)" strokeDasharray="2 4" />
         <XAxis
-          dataKey="date"
+          type="number"
+          allowDecimals={false}
           tick={{ fill: 'var(--text-2)', fontSize: 11 }}
           stroke="var(--border-1)"
         />
         <YAxis
-          allowDecimals={false}
+          type="category"
+          dataKey="label"
+          width={labelWidth}
+          interval={0}
           tick={{ fill: 'var(--text-2)', fontSize: 11 }}
           stroke="var(--border-1)"
         />
@@ -35,7 +54,7 @@ export function DailyCountChart({ data }: DailyCountChartProps) {
           }}
           labelStyle={{ color: 'var(--text-1)' }}
         />
-        <Bar dataKey="count" fill="var(--color-accent)" />
+        <Bar dataKey="count" fill={fill} />
       </BarChart>
     </ResponsiveContainer>
   );

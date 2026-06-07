@@ -1,9 +1,12 @@
 import type { AppSyncResolverHandler } from 'aws-lambda';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
   audit as defaultAudit,
   type AuditContext,
   type AuditOptions,
 } from '../../data/audit-log-helper';
+import { diffOps, type StatMessage } from '../chartAggregator/contributions';
+import { applyDeltasWith } from '../chartAggregator/store';
 
 /**
  * Lambda-backed AppSync resolver for Message custom mutations.
@@ -113,10 +116,24 @@ function envNumber(key: string, fallback: number): number {
 
 export type AuditFn = (ctx: AuditContext, opts: AuditOptions) => Promise<string>;
 
+/**
+ * Apply the precomputed-stats counter delta for a single Message write (#780).
+ *
+ * Event-driven, inline in the resolver (a DynamoDB stream on the Message table
+ * would close the #658/#661 resolver-table CFN cycle). Best-effort: the caller
+ * wraps it so a stats hiccup never rolls back the user-facing Message.
+ */
+export type RecordStatFn = (
+  before: StatMessage | null,
+  after: StatMessage | null,
+  nowIso: string,
+) => Promise<void>;
+
 interface Deps {
   dataClient?: MessageMutationsDataClient;
   audit?: AuditFn;
   now?: () => Date;
+  recordStat?: RecordStatFn;
 }
 
 let injected: Deps = {};
@@ -143,6 +160,31 @@ async function getDefaultClient(): Promise<MessageMutationsDataClient> {
     authMode: 'iam',
   }) as unknown as MessageMutationsDataClient;
   return cachedDefaultClient;
+}
+
+let cachedDdb: DynamoDBClient | undefined;
+function getDdb(): DynamoDBClient {
+  if (!cachedDdb) cachedDdb = new DynamoDBClient({});
+  return cachedDdb;
+}
+
+/**
+ * Default stats-delta applier (#780). Diffs the before/after Message images and
+ * applies the net `ChartAggregate` counter deltas via atomic `ADD`. A no-op
+ * when `CHART_AGGREGATE_TABLE` is unset (local / tests) or when the net delta
+ * is empty (e.g. a just-created recording-less Message lands flagged → not yet
+ * eligible). The full nightly recompute reconciles anything missed.
+ */
+async function defaultRecordStat(
+  before: StatMessage | null,
+  after: StatMessage | null,
+  nowIso: string,
+): Promise<void> {
+  const table = process.env.CHART_AGGREGATE_TABLE;
+  if (!table) return;
+  const ops = diffOps(before, after);
+  if (ops.length === 0) return;
+  await applyDeltasWith(getDdb(), table, ops, nowIso);
 }
 
 function isAdmin(identity: unknown): boolean {
@@ -175,7 +217,12 @@ function snapshot(row: MessageRow): Record<string, unknown> {
 
 async function dispatchSoftDelete(
   event: Parameters<AppSyncResolverHandler<Record<string, unknown>, MessageRow | null>>[0],
-  deps: { client: MessageMutationsDataClient; audit: AuditFn; now: () => Date },
+  deps: {
+    client: MessageMutationsDataClient;
+    audit: AuditFn;
+    now: () => Date;
+    recordStat: RecordStatFn;
+  },
 ): Promise<MessageRow | null> {
   if (!isAdmin(event.identity)) {
     throw new Error('softDeleteMessage: caller is not in the admin group');
@@ -233,6 +280,18 @@ async function dispatchSoftDelete(
     reason: normalisedReason,
   });
 
+  // Stats: a soft-delete removes an eligible Message's contributions (#780).
+  // Best-effort — never roll back the delete on a stats hiccup.
+  try {
+    await deps.recordStat(before, after, now);
+  } catch (err: unknown) {
+    console.warn(
+      `softDeleteMessage: stats delta failed for messageId=${targetId}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+
   return after;
 }
 
@@ -250,7 +309,12 @@ function pickString(v: unknown): string | null {
 
 async function dispatchSubmitRecordingLess(
   event: Parameters<AppSyncResolverHandler<Record<string, unknown>, MessageRow | null>>[0],
-  deps: { client: MessageMutationsDataClient; audit: AuditFn; now: () => Date },
+  deps: {
+    client: MessageMutationsDataClient;
+    audit: AuditFn;
+    now: () => Date;
+    recordStat: RecordStatFn;
+  },
 ): Promise<MessageRow> {
   const sub = identitySub(event.identity);
   if (!sub) {
@@ -401,6 +465,19 @@ async function dispatchSubmitRecordingLess(
     );
   }
 
+  // Stats (#780): recording-less submissions always land flagged → not yet
+  // eligible, so this is a no-op today, but wire it so the path is correct if
+  // the eligibility rules ever change. Best-effort.
+  try {
+    await deps.recordStat(null, after, nowIso);
+  } catch (err: unknown) {
+    console.warn(
+      `submitRecordingLessMessage: stats delta failed for messageId=${after.id}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+
   return after;
 }
 
@@ -412,7 +489,8 @@ export const handler: AppSyncResolverHandler<Record<string, unknown>, MessageRow
   const client = injected.dataClient ?? (await getDefaultClient());
   const auditFn: AuditFn = injected.audit ?? ((ctx, opts) => defaultAudit(ctx, opts));
   const now = injected.now ?? (() => new Date());
-  const deps = { client, audit: auditFn, now };
+  const recordStat: RecordStatFn = injected.recordStat ?? defaultRecordStat;
+  const deps = { client, audit: auditFn, now, recordStat };
 
   // AppSync's pipeline-function payload puts `fieldName` at the top level
   // (see the VTL template generated by Amplify Gen 2 for Lambda data sources).

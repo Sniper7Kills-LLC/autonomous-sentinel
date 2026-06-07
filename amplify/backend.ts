@@ -53,6 +53,7 @@ import { dlqAdmin } from './functions/dlqAdmin/resource';
 import { stripeRevenueWorker } from './functions/stripeRevenueWorker/resource';
 import { wafSync } from './functions/wafSync/resource';
 import { wafMetrics } from './functions/wafMetrics/resource';
+import { chartAggregator } from './functions/chartAggregator/resource';
 import { attachWaf, attachAppSyncWaf, WAF_RESOURCE_NAMES, APPSYNC_WAF_NAMES } from './waf';
 import { attachBudgetAlarms, attachBudgetThrottleAction, readBudgetConfig } from './budgets';
 import { applyCognitoTokenValidity } from './cognito-token-validity';
@@ -99,6 +100,7 @@ const backend = defineBackend({
   stripeRevenueWorker,
   wafSync,
   wafMetrics,
+  chartAggregator,
 });
 
 // Wire the legacy-claim worker into postConfirmation (sub-A of #16 / #272).
@@ -1767,3 +1769,70 @@ wafMetricsLambda.addToRolePolicy(
     resources: ['*'],
   }),
 );
+
+// ---------------------------------------------------------------------------
+// Precomputed stats — ChartAggregate (#780)
+// ---------------------------------------------------------------------------
+//
+// Two write paths into the ChartAggregate counter table, both cycle-safe:
+//   1. EVENT-DRIVEN, inline in `messageMutations` — the create / soft-delete
+//      resolvers diff before/after and apply atomic `ADD` deltas via the raw
+//      DynamoDB SDK. A DynamoDB stream on the Message table was deliberately
+//      avoided: Message carries custom mutation resolvers, and a stream
+//      consumer on a resolver-bearing table closes the #658/#661 CFN cycle
+//      (the same reason `revisionVoteScoreCron` is a cron). Inline-in-resolver
+//      is the blessed pattern — messageMutations already depends on data, so
+//      granting it raw write to a data-stack table adds no new edge direction.
+//   2. SCHEDULED full recompute — `chartAggregator` (resourceGroupName:'data',
+//      so it lives in the data stack) Scans the Message table nightly and
+//      rewrites absolute counts. Seeds existing rows + corrects drift + covers
+//      any Message write that doesn't flow through messageMutations (model-CRUD
+//      admin edits, the future SDR pipeline). Raw DDB only — no allow.resource
+//      data→function edge — exactly like wafSync / revisionVoteScoreCron.
+const chartAggregateTable = backend.data.resources.tables['ChartAggregate'];
+if (!chartAggregateTable) {
+  throw new Error('backend: ChartAggregate table not found on data resources');
+}
+
+// messageMutations (inline event-driven ADD): write to ChartAggregate + name env.
+const messageMutationsLambda = backend.messageMutations.resources.lambda as LambdaFunction;
+messageMutationsLambda.addEnvironment('CHART_AGGREGATE_TABLE', chartAggregateTable.tableName);
+messageMutationsLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:UpdateItem'],
+    resources: [chartAggregateTable.tableArn],
+  }),
+);
+
+// chartAggregator (scheduled full recompute): Scan Message, overwrite + prune
+// ChartAggregate. Both tables in the data stack → intra-stack grants.
+const chartAggregatorLambda = backend.chartAggregator.resources.lambda as LambdaFunction;
+chartAggregatorLambda.addEnvironment('MESSAGE_TABLE', messageTable.tableName);
+chartAggregatorLambda.addEnvironment('CHART_AGGREGATE_TABLE', chartAggregateTable.tableName);
+chartAggregatorLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:Scan'],
+    resources: [messageTable.tableArn],
+  }),
+);
+chartAggregatorLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: [
+      'dynamodb:Scan',
+      'dynamodb:UpdateItem',
+      'dynamodb:PutItem',
+      'dynamodb:DeleteItem',
+      'dynamodb:BatchWriteItem',
+    ],
+    resources: [chartAggregateTable.tableArn],
+  }),
+);
+
+// Nightly 06:00 UTC full recompute (after the 03/04/05 crons so the data stack
+// never runs two heavy sweeps at once). The Rule lives in the aggregator
+// Lambda's enclosing (data) stack — same pattern as the other data-stack crons.
+new Rule(chartAggregatorLambda.stack, 'ChartAggregatorNightlyRecompute', {
+  description: 'Nightly full recompute of the ChartAggregate stats counters (#780).',
+  schedule: Schedule.cron({ minute: '0', hour: '6' }),
+  targets: [new LambdaTarget(chartAggregatorLambda)],
+});

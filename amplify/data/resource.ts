@@ -67,6 +67,7 @@ import { wafMetricsQuery } from './models/waf-metrics';
 import { RevenueSnapshot } from './models/revenue-snapshot';
 import { LinguisticRule } from './models/linguistic-rule';
 import { LinguisticTrace } from './models/linguistic-trace';
+import { ChartAggregate } from './models/chart-aggregate';
 import {
   LinguisticPromptTemplate,
   activatePromptTemplate,
@@ -102,6 +103,8 @@ export const schema = a
     // Broadcast catalog
     Message,
     Recording,
+    // Precomputed stats counters (#780) — read by the public charts
+    ChartAggregate,
     Sdr,
     Transmitter,
 

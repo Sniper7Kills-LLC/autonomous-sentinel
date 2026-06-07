@@ -2,19 +2,17 @@
 
 import { useMemo, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { charFrequency } from '@/lib/stats/frequency';
-import type { DisplayMessage } from '@/lib/messages/types';
+import type { CharFrequencyBucket } from '@/lib/stats/frequency';
 
 interface CharacterFrequencyChartProps {
-  /** Should already be filtered to ALLSTATIONS by the caller. */
-  messages: Pick<DisplayMessage, 'body'>[];
+  /** Precomputed ALLSTATIONS character-frequency buckets (#780). */
+  data: CharFrequencyBucket[];
 }
 
 type SortMode = 'freq' | 'alpha';
 
-export function CharacterFrequencyChart({ messages }: CharacterFrequencyChartProps) {
+export function CharacterFrequencyChart({ data: freqData }: CharacterFrequencyChartProps) {
   const [sort, setSort] = useState<SortMode>('freq');
-  const freqData = useMemo(() => charFrequency(messages), [messages]);
   const data = useMemo(
     () =>
       sort === 'alpha' ? [...freqData].sort((a, b) => a.char.localeCompare(b.char)) : freqData,
@@ -22,7 +20,7 @@ export function CharacterFrequencyChart({ messages }: CharacterFrequencyChartPro
   );
 
   if (data.length === 0) {
-    return <EmptyChart label="No ALLSTATIONS characters in this window yet." />;
+    return <EmptyChart label="No ALLSTATIONS characters yet." />;
   }
 
   return (
@@ -83,7 +81,7 @@ export function CharacterFrequencyChart({ messages }: CharacterFrequencyChartPro
         </summary>
         <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '0.5rem' }}>
           <caption style={{ textAlign: 'left', fontSize: '0.78rem', color: 'var(--text-2)' }}>
-            Per-character occurrence counts across ALLSTATIONS bodies in the window.
+            Per-character occurrence counts across all published ALLSTATIONS bodies.
           </caption>
           <thead>
             <tr>
