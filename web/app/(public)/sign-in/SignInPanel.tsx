@@ -2,21 +2,69 @@
 
 import { Authenticator } from '@aws-amplify/ui-react';
 import '@aws-amplify/ui-react/styles.css';
+import { useState } from 'react';
 import Link from 'next/link';
+import { signInWithRedirect } from 'aws-amplify/auth';
 import { Button } from '@/components/ui/Button';
 import styles from './SignInPanel.module.css';
 
+type FederatedProvider = 'Google' | 'Discord';
+
 export function SignInPanel() {
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<FederatedProvider | null>(null);
+
+  const startFederated = async (provider: FederatedProvider) => {
+    setError(null);
+    setBusy(provider);
+    try {
+      // Google is a built-in Cognito social provider; Discord is our custom
+      // OIDC IdP (the in-house bridge, registered under the name "Discord").
+      await signInWithRedirect(
+        provider === 'Google' ? { provider: 'Google' } : { provider: { custom: 'Discord' } },
+      );
+      // On success the browser navigates to the IdP, so this rarely runs.
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not start federated sign-in. Try again.');
+      setBusy(null);
+    }
+  };
+
   return (
     <div className={styles.shell}>
-      <p className={styles.note}>
-        Sign in with email + password. Federated sign-in (Google / Discord) is tracked under issue
-        #336 and will land in a follow-up — the Discord OIDC bridge wiring is the blocker, not the
-        button styling.
-      </p>
+      <div className={styles.federated}>
+        <Button
+          variant="secondary"
+          disabled={busy !== null}
+          loading={busy === 'Google'}
+          onClick={() => void startFederated('Google')}
+          data-testid="signin-google"
+        >
+          Continue with Google
+        </Button>
+        <Button
+          variant="secondary"
+          disabled={busy !== null}
+          loading={busy === 'Discord'}
+          onClick={() => void startFederated('Discord')}
+          data-testid="signin-discord"
+        >
+          Continue with Discord
+        </Button>
+        {error && (
+          <p className={styles.error} role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+
+      <div className={styles.divider}>
+        <span>or sign in with email</span>
+      </div>
+
       <Authenticator
-        // Hide the federated provider buttons that would otherwise render
-        // alongside email/password at the top of the sign-in form.
+        // Hide the Authenticator's own federated buttons — we render styled
+        // ones above so the layout matches the command aesthetic (#336).
         socialProviders={[]}
       >
         {({ signOut, user }) => (
@@ -33,7 +81,6 @@ export function SignInPanel() {
           </div>
         )}
       </Authenticator>
-      <p className={styles.federatedDefer}>Federated providers · deferred to #336</p>
     </div>
   );
 }
