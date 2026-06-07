@@ -54,6 +54,8 @@ import { stripeRevenueWorker } from './functions/stripeRevenueWorker/resource';
 import { wafSync } from './functions/wafSync/resource';
 import { wafMetrics } from './functions/wafMetrics/resource';
 import { chartAggregator } from './functions/chartAggregator/resource';
+import { postAuthentication } from './functions/postAuthentication/resource';
+import { federatedUserSync } from './functions/federatedUserSync/resource';
 import { attachWaf, attachAppSyncWaf, WAF_RESOURCE_NAMES, APPSYNC_WAF_NAMES } from './waf';
 import { attachBudgetAlarms, attachBudgetThrottleAction, readBudgetConfig } from './budgets';
 import { applyCognitoTokenValidity } from './cognito-token-validity';
@@ -101,6 +103,8 @@ const backend = defineBackend({
   wafSync,
   wafMetrics,
   chartAggregator,
+  postAuthentication,
+  federatedUserSync,
 });
 
 // Wire the legacy-claim worker into postConfirmation (sub-A of #16 / #272).
@@ -1836,3 +1840,47 @@ new Rule(chartAggregatorLambda.stack, 'ChartAggregatorNightlyRecompute', {
   schedule: Schedule.cron({ minute: '0', hour: '6' }),
   targets: [new LambdaTarget(chartAggregatorLambda)],
 });
+
+// ---------------------------------------------------------------------------
+// Federated user-row ensure (#783)
+// ---------------------------------------------------------------------------
+//
+// PostConfirmation doesn't fire for external-IdP (Google/Discord) users, so
+// their User + Reputation rows are otherwise never created. The
+// postAuthentication trigger (auth stack) publishes a sync job to a neutral
+// queue on each federated sign-in; the federatedUserSync worker (data stack)
+// consumes it and idempotently ensures the rows. The SQS hand-off keeps the
+// auth↔data edge acyclic (mirrors postConfirmation → legacyClaim, #318):
+//   - auth → FederatedUserSyncQueueStack (SendMessage env + IAM)
+//   - data → FederatedUserSyncQueueStack (SqsEventSource subscription)
+// Both edges flow into the queue stack, which has no outgoing edges — no cycle.
+const reputationTable = backend.data.resources.tables['Reputation'];
+if (!reputationTable) {
+  throw new Error('backend: Reputation table not found on data resources');
+}
+const postAuthLambda = backend.postAuthentication.resources.lambda as LambdaFunction;
+const federatedUserSyncLambda = backend.federatedUserSync.resources.lambda as LambdaFunction;
+
+const federatedSyncQueueStack = backend.createStack('FederatedUserSyncQueueStack');
+const federatedSyncDlq = new Queue(federatedSyncQueueStack, 'FederatedUserSyncDeadLetterQueue', {
+  retentionPeriod: Duration.days(14),
+});
+const federatedSyncQueue = new Queue(federatedSyncQueueStack, 'FederatedUserSyncQueue', {
+  visibilityTimeout: Duration.seconds(180),
+  retentionPeriod: Duration.days(4),
+  deadLetterQueue: { queue: federatedSyncDlq, maxReceiveCount: 5 },
+});
+postAuthLambda.addEnvironment('FEDERATED_SYNC_QUEUE_URL', federatedSyncQueue.queueUrl);
+federatedSyncQueue.grantSendMessages(postAuthLambda);
+
+// batchSize 1 matches the worker's per-record idempotent ensure (no batch SDK
+// optimisation). Errors throw → SQS redrive → DLQ after 5 attempts.
+federatedUserSyncLambda.addEventSource(new SqsEventSource(federatedSyncQueue, { batchSize: 1 }));
+federatedUserSyncLambda.addEnvironment('USER_TABLE_NAME', userTable.tableName);
+federatedUserSyncLambda.addEnvironment('REPUTATION_TABLE_NAME', reputationTable.tableName);
+federatedUserSyncLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:GetItem', 'dynamodb:PutItem'],
+    resources: [userTable.tableArn, reputationTable.tableArn],
+  }),
+);

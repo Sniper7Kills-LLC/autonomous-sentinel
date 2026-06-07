@@ -4,6 +4,7 @@ import { auth, authConfig, discordIssuerUrl, DISCORD_ISSUER_URL_PLACEHOLDER } fr
 import { postConfirmation } from '../functions/postConfirmation/resource';
 import { preTokenGeneration } from '../functions/preTokenGeneration/resource';
 import { preAuth } from '../functions/preAuth/resource';
+import { postAuthentication } from '../functions/postAuthentication/resource';
 
 describe('auth resource', () => {
   it('exports an Amplify auth resource', () => {
@@ -81,6 +82,10 @@ describe('auth resource', () => {
 
   it('registers the preAuthentication trigger (issue #335)', () => {
     expect(authConfig.triggers?.preAuthentication).toBe(preAuth);
+  });
+
+  it('registers the postAuthentication trigger (issue #783)', () => {
+    expect(authConfig.triggers?.postAuthentication).toBe(postAuthentication);
   });
 
   it('federates Discord via the in-house OIDC bridge (issues #14 + #254)', () => {
