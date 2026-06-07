@@ -142,3 +142,44 @@
   font-size: var(--fs-xs);
   letter-spacing: 0.04em;
 }
+
+/* Password show/hide toggle — merge it into the field instead of a detached
+   grey box: same surface + border as the input, accent on hover. */
+.frame :global(.amplify-field__show-password) {
+  background: var(--surface-2);
+  border-color: var(--color-border-strong);
+  border-left: none;
+  color: var(--text-2);
+}
+
+.frame :global(.amplify-field__show-password:hover) {
+  background: var(--surface-3);
+  border-color: var(--color-accent);
+  color: var(--text-1);
+}
+
+.frame :global(.amplify-field__show-password:focus-visible) {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+/* Inputs: a touch more height + breathing room for the terminal feel. */
+.frame :global(.amplify-input) {
+  min-height: 2.75rem;
+}
+
+/* Primary submit: full-width emphasis with the signal-orange press state. */
+.frame :global(.amplify-button--primary) {
+  min-height: 2.75rem;
+}
+
+.frame :global(.amplify-button--primary:active) {
+  transform: translateY(1px);
+}
+
+/* Field error text in the site's danger token, monospace. */
+.frame :global(.amplify-text--error) {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-danger);
+}
