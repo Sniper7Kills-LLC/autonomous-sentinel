@@ -7,8 +7,8 @@ vi.mock('@/components/theme/ThemeToggle', () => ({
   ThemeToggle: () => <div data-testid="theme-toggle" />,
 }));
 
-vi.mock('@aws-amplify/ui-react', () => ({
-  Authenticator: ({
+vi.mock('@/components/auth/AppAuthenticator', () => ({
+  AppAuthenticator: ({
     children,
   }: {
     children: (ctx: { signOut: () => void; user: unknown }) => React.ReactNode;
@@ -49,9 +49,8 @@ describe('SignInPage', () => {
     expect(screen.getByRole('heading', { name: /sign in/i })).toBeInTheDocument();
   });
 
-  it('renders federated sign-in buttons (#336)', () => {
+  it('renders the signed-in quick links through AppAuthenticator (#336)', () => {
     render(<SignInPage />);
-    expect(screen.getByTestId('signin-google')).toBeInTheDocument();
-    expect(screen.getByTestId('signin-discord')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /testing portal/i })).toBeInTheDocument();
   });
 });

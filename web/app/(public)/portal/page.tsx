@@ -2,8 +2,7 @@
 
 import { useCallback, useState, type JSX } from 'react';
 import Link from 'next/link';
-import { Authenticator } from '@aws-amplify/ui-react';
-import '@aws-amplify/ui-react/styles.css';
+import { AppAuthenticator } from '@/components/auth/AppAuthenticator';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -110,11 +109,11 @@ function PortalPanel() {
       ) : signedIn ? (
         uploadUi(() => void handleSignOut(), username)
       ) : (
-        <Authenticator>
+        <AppAuthenticator>
           {({ signOut, user }) =>
             uploadUi(signOut ?? (() => {}), user?.signInDetails?.loginId ?? user?.username ?? null)
           }
-        </Authenticator>
+        </AppAuthenticator>
       )}
     </section>
   );
