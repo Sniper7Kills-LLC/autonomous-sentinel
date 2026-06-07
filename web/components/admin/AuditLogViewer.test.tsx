@@ -15,6 +15,16 @@ vi.mock('@/lib/admin/audit', async (importActual) => {
   };
 });
 
+// Render the actor/target link deterministically (no data-client probe) so
+// assertions can target the sub + the profile href.
+vi.mock('@/components/users/UserNameLink', () => ({
+  UserNameLink: ({ sub, className }: { sub: string; className?: string }) => (
+    <a className={className} href={`/users/view?id=${sub}`}>
+      {sub}
+    </a>
+  ),
+}));
+
 function auditRow(p: Partial<AuditRow>): AuditRow {
   return {
     id: 'a1',
@@ -44,6 +54,23 @@ describe('AuditLogViewer', () => {
     await waitFor(() => expect(screen.getByText('MESSAGE_DELETE')).toBeInTheDocument());
     expect(screen.getByText('sub-123')).toBeInTheDocument();
     expect(screen.getByText('spam')).toBeInTheDocument();
+  });
+
+  it('links the actor to their profile by sub (#773)', async () => {
+    listMock.mockResolvedValue({ items: [auditRow({ actorId: 'sub-abc' })], nextToken: null });
+    render(<AuditLogViewer />);
+    const link = await screen.findByRole('link', { name: 'sub-abc' });
+    expect(link).toHaveAttribute('href', '/users/view?id=sub-abc');
+  });
+
+  it('links a User target to their profile (#773)', async () => {
+    listMock.mockResolvedValue({
+      items: [auditRow({ targetType: 'User', targetId: 'sub-target', action: 'USER_BAN' })],
+      nextToken: null,
+    });
+    render(<AuditLogViewer />);
+    const link = await screen.findByRole('link', { name: 'sub-target' });
+    expect(link).toHaveAttribute('href', '/users/view?id=sub-target');
   });
 
   it('labels a null actor as SYSTEM', async () => {

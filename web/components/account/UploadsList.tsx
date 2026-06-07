@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { StatusPill, type PipelineStatus } from '@/components/ui/StatusPill';
 import {
-  listMyUploads,
+  observeMyUploads,
   statusToStage,
   type UploadRow,
   type UploadStage,
@@ -20,20 +20,16 @@ interface UploadsListProps {
 }
 
 /**
- * `My Uploads` list (#94).
+ * `My Uploads` list (#94, live #774).
  *
- * Lists every Recording the caller has uploaded with its current
- * pipeline stage. Failed rows highlight in red and surface
- * `failedReason` inline for debugging.
- *
- * Pagination via the AppSync `nextToken`; "Load more" appends to the
- * existing list rather than replacing it.
+ * Lists every Recording the caller has uploaded with its current pipeline
+ * stage, upload time + broadcast time. Subscribes via AppSync `observeQuery`
+ * so status advances LIVE while a recording processes or is reprocessed —
+ * no manual refresh. Failed rows highlight in red + surface `failedReason`.
  */
 export function UploadsList({ uploaderId }: UploadsListProps) {
   const [rows, setRows] = useState<UploadRow[]>([]);
-  const [nextToken, setNextToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Moderators/admins get a per-row "Reprocess" control (#505). The
   // mutation is authz-gated server-side too — this only decides
@@ -41,42 +37,30 @@ export function UploadsList({ uploaderId }: UploadsListProps) {
   const { groups } = useCallerGroups();
   const canReprocess = isModeratorOrAdmin(groups);
 
+  // Live subscription (#774): the synced snapshot reflects the server-side
+  // QUEUED reset after a reprocess + every subsequent stage transition, so
+  // the mutation just fires and the query carries the row forward.
   const handleReprocess = useCallback(async (recordingId: string) => {
     await reprocessRecording(recordingId);
-    // Reflect the server-side reset to QUEUED + cleared failure so the
-    // row updates immediately; the pipeline subscription / next reload
-    // will carry it forward from there.
-    setRows((prev) =>
-      prev.map((r) =>
-        r.id === recordingId
-          ? { ...r, transcriptionStatus: 'QUEUED', transcriptionFailed: false, failedReason: null }
-          : r,
-      ),
-    );
   }, []);
 
-  const load = useCallback(
-    async (token: string | null) => {
-      try {
-        if (!token) setLoading(true);
-        else setLoadingMore(true);
-        setError(null);
-        const page = await listMyUploads(uploaderId, { nextToken: token });
-        setRows((prev) => (token ? [...prev, ...page.items] : page.items));
-        setNextToken(page.nextToken);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        setLoading(false);
-        setLoadingMore(false);
-      }
-    },
-    [uploaderId],
-  );
-
   useEffect(() => {
-    void load(null);
-  }, [load]);
+    setLoading(true);
+    setError(null);
+    const sub = observeMyUploads(uploaderId, {
+      next: (next) => {
+        setRows(next);
+        setLoading(false);
+      },
+      error: (err) => {
+        setError(err instanceof Error ? err.message : String(err));
+        setLoading(false);
+      },
+    });
+    return () => {
+      sub.unsubscribe();
+    };
+  }, [uploaderId]);
 
   if (loading) {
     return (
@@ -121,21 +105,6 @@ export function UploadsList({ uploaderId }: UploadsListProps) {
           onReprocess={handleReprocess}
         />
       ))}
-      {nextToken && (
-        <div className={styles.headRow} style={{ justifyContent: 'center' }}>
-          <Button
-            variant="ghost"
-            size="sm"
-            loading={loadingMore}
-            disabled={loadingMore}
-            onClick={() => {
-              void load(nextToken);
-            }}
-          >
-            Load more
-          </Button>
-        </div>
-      )}
     </div>
   );
 }
@@ -188,7 +157,16 @@ function UploadRowItem({ row, canReprocess, onReprocess }: UploadRowItemProps) {
           <span className={styles.idMono} title={row.id}>
             {shortId(row.id)}
           </span>
-          {row.broadcastedAt && <span>{formatTs(row.broadcastedAt)}</span>}
+          {row.createdAt && (
+            <span className={styles.tag} title={row.createdAt}>
+              Uploaded {formatTs(row.createdAt)}
+            </span>
+          )}
+          {row.broadcastedAt && (
+            <span className={styles.tag} title={row.broadcastedAt}>
+              Broadcast {formatTs(row.broadcastedAt)}
+            </span>
+          )}
         </div>
         <div className={styles.rowMeta}>
           {typeof row.frequencyKhz === 'number' && (

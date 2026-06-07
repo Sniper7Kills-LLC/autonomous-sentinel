@@ -111,6 +111,11 @@
   color: var(--text-2);
 }
 
+.link {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
 .tag {
   display: inline-block;
   font-family: var(--font-jb-mono);

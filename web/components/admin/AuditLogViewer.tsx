@@ -7,12 +7,12 @@ import {
   toCsv,
   jsonDiff,
   splitDiffPayload,
-  actorLabel,
   AUDIT_ACTIONS,
   type AuditRow,
   type AuditFilter,
   type DiffSegment,
 } from '@/lib/admin/audit';
+import { UserNameLink } from '@/components/users/UserNameLink';
 import styles from './AuditLogViewer.module.css';
 
 /**
@@ -278,11 +278,24 @@ function AuditRowView({
           <span className={styles.tag}>{row.action}</span>
         </td>
         <td className={styles.mono}>
-          {isSystem ? <span className={styles.systemTag}>SYSTEM</span> : actorLabel(row.actorId)}
+          {isSystem || !row.actorId ? (
+            <span className={styles.systemTag}>SYSTEM</span>
+          ) : (
+            <UserNameLink sub={row.actorId} className={styles.link} />
+          )}
         </td>
         <td className={styles.mono}>
           {row.targetType ?? '—'}
-          {row.targetId ? <span className={styles.muted}> · {row.targetId}</span> : null}
+          {row.targetId ? (
+            <span className={styles.muted}>
+              {' · '}
+              {row.targetType === 'User' ? (
+                <UserNameLink sub={row.targetId} className={styles.link} />
+              ) : (
+                row.targetId
+              )}
+            </span>
+          ) : null}
         </td>
         <td>{row.reason ?? '—'}</td>
         <td>

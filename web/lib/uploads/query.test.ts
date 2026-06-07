@@ -1,5 +1,32 @@
-import { describe, it, expect } from 'vitest';
-import { statusToStage, toUploadRow } from './query';
+import { describe, it, expect, vi } from 'vitest';
+import { statusToStage, toUploadRow, observeMyUploads } from './query';
+
+let capturedObserveInput: { filter: unknown; authMode: string } | null = null;
+let capturedCbs: {
+  next: (snap: { items: unknown[] }) => void;
+  error?: (e: unknown) => void;
+} | null = null;
+const unsubscribeMock = vi.fn();
+vi.mock('@/lib/amplifyClient', () => ({
+  getDataClient: () => ({
+    models: {
+      Recording: {
+        observeQuery: (input: { filter: unknown; authMode: string }) => {
+          capturedObserveInput = input;
+          return {
+            subscribe: (cbs: {
+              next: (snap: { items: unknown[] }) => void;
+              error?: (e: unknown) => void;
+            }) => {
+              capturedCbs = cbs;
+              return { unsubscribe: unsubscribeMock };
+            },
+          };
+        },
+      },
+    },
+  }),
+}));
 
 describe('toUploadRow', () => {
   it('copies known fields + threads failure metadata through', () => {
@@ -56,5 +83,39 @@ describe('statusToStage', () => {
     expect(statusToStage(null)).toBe('unknown');
     expect(statusToStage(undefined)).toBe('unknown');
     expect(statusToStage('BOGUS')).toBe('unknown');
+  });
+});
+
+describe('observeMyUploads (#774)', () => {
+  it('subscribes by uploaderId (userPool) and delivers mapped, newest-first rows', () => {
+    const next = vi.fn();
+    const sub = observeMyUploads('sub-1', { next });
+
+    // Filter scopes to the caller + excludes soft-deleted; userPool auth.
+    expect(capturedObserveInput?.authMode).toBe('userPool');
+    expect(capturedObserveInput?.filter).toEqual({
+      and: [{ uploaderId: { eq: 'sub-1' } }, { deletedAt: { attributeExists: false } }],
+    });
+
+    // A snapshot of two raw recordings, out of order, is mapped + sorted desc.
+    capturedCbs?.next({
+      items: [
+        { id: 'old', createdAt: '2026-05-01T00:00:00Z', transcriptionStatus: 'PUBLISHED' },
+        { id: 'new', createdAt: '2026-05-03T00:00:00Z', transcriptionStatus: 'QUEUED' },
+      ],
+    });
+    const rows = next.mock.calls[0]?.[0] as { id: string }[];
+    expect(rows.map((r) => r.id)).toEqual(['new', 'old']);
+
+    sub.unsubscribe();
+    expect(unsubscribeMock).toHaveBeenCalled();
+  });
+
+  it('forwards subscription errors to the error handler', () => {
+    const next = vi.fn();
+    const error = vi.fn();
+    observeMyUploads('sub-1', { next, error });
+    capturedCbs?.error?.(new Error('boom'));
+    expect(error).toHaveBeenCalledWith(new Error('boom'));
   });
 });
