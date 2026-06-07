@@ -1,0 +1,144 @@
+/*
+ * Command-terminal styling for the Amplify Authenticator (#336).
+ *
+ * Re-skins Amplify UI to the site's industrial aesthetic by setting the
+ * documented `--amplify-*` custom properties on a wrapping frame (the supported
+ * theming surface — no brittle class clobbering for colors), plus a few
+ * typographic overrides Amplify doesn't expose as tokens (uppercase mono tabs /
+ * buttons / labels). The frame itself is the bordered panel; the Authenticator's
+ * own router is flattened (transparent, no border/shadow) so it merges in.
+ */
+
+.frame {
+  position: relative;
+  width: 100%;
+  max-width: 30rem;
+  margin: 0 auto;
+  background: var(--surface-1);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  padding: var(--sp-5) var(--sp-5) var(--sp-6);
+  overflow: hidden;
+
+  /* Amplify UI theming vars → site tokens. */
+  --amplify-fonts-default-variable: var(--font-mono);
+  --amplify-fonts-default-static: var(--font-mono);
+  --amplify-colors-background-primary: var(--surface-1);
+  --amplify-colors-background-secondary: var(--surface-2);
+  --amplify-colors-font-primary: var(--text-1);
+  --amplify-colors-font-secondary: var(--text-2);
+  --amplify-colors-font-interactive: var(--color-accent);
+  --amplify-colors-border-primary: var(--color-border-strong);
+  --amplify-colors-border-secondary: var(--color-border);
+  --amplify-colors-border-focus: var(--color-accent);
+  --amplify-colors-brand-primary-80: var(--color-accent);
+  --amplify-colors-brand-primary-90: var(--color-accent-hover);
+  --amplify-colors-brand-primary-100: var(--color-accent-hover);
+  --amplify-radii-small: var(--radius-sm);
+  --amplify-radii-medium: var(--radius-md);
+
+  --amplify-components-authenticator-router-background-color: transparent;
+  --amplify-components-authenticator-router-border-width: 0;
+  --amplify-components-authenticator-router-box-shadow: none;
+
+  --amplify-components-button-primary-background-color: var(--color-accent);
+  --amplify-components-button-primary-color: var(--color-accent-fg);
+  --amplify-components-button-primary-border-color: var(--color-accent);
+  --amplify-components-button-primary-hover-background-color: var(--color-accent-hover);
+  --amplify-components-button-primary-hover-color: var(--color-accent-fg);
+  --amplify-components-button-primary-hover-border-color: var(--color-accent-hover);
+  --amplify-components-button-primary-active-background-color: var(--color-accent-hover);
+  --amplify-components-button-link-color: var(--color-accent);
+  --amplify-components-button-link-hover-color: var(--color-accent-hover);
+  --amplify-components-button-link-hover-background-color: transparent;
+
+  --amplify-components-tabs-item-color: var(--text-2);
+  --amplify-components-tabs-item-active-color: var(--color-accent);
+  --amplify-components-tabs-item-active-border-color: var(--color-accent);
+  --amplify-components-tabs-item-focus-color: var(--color-accent);
+  --amplify-components-tabs-item-hover-color: var(--text-1);
+  --amplify-components-tabs-border-color: var(--color-border);
+
+  --amplify-components-fieldcontrol-color: var(--text-1);
+  --amplify-components-fieldcontrol-background-color: var(--surface-2);
+  --amplify-components-fieldcontrol-border-color: var(--color-border-strong);
+  --amplify-components-fieldcontrol-focus-border-color: var(--color-accent);
+  --amplify-components-fieldcontrol-focus-box-shadow: 0 0 0 1px var(--color-accent);
+  --amplify-components-textfield-color: var(--text-1);
+
+  --amplify-components-heading-color: var(--text-1);
+  --amplify-components-text-color: var(--text-1);
+}
+
+/* Signal bar across the top of the panel. */
+.frame::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: var(--color-accent);
+}
+
+/* Command-style header above the form. */
+.eyebrow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-fg-faint);
+  margin-bottom: var(--sp-4);
+}
+
+.eyebrow::before {
+  content: '//';
+  color: var(--color-accent);
+  letter-spacing: 0;
+}
+
+.eyebrow::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
+}
+
+/* ---- Typographic overrides Amplify doesn't expose as tokens ---- */
+
+.frame :global(.amplify-tabs__item) {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.frame :global(.amplify-button--primary) {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.frame :global(.amplify-label) {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.frame :global(.amplify-input),
+.frame :global(.amplify-passwordfield),
+.frame :global(.amplify-field-group__control) {
+  font-family: var(--font-mono);
+}
+
+/* The "Forgot your password?" link + footer links. */
+.frame :global(.amplify-button--link) {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.04em;
+}

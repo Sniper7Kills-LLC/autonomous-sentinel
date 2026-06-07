@@ -1,17 +1,19 @@
 'use client';
 
-import { Authenticator, ThemeProvider, createTheme } from '@aws-amplify/ui-react';
+import { Authenticator } from '@aws-amplify/ui-react';
 import '@aws-amplify/ui-react/styles.css';
 import type { ComponentProps } from 'react';
 import { FederatedButtons } from './FederatedButtons';
+import styles from './AppAuthenticator.module.css';
 
 /**
- * App-wide Amplify Authenticator (#336 / theming).
+ * App-wide Amplify Authenticator (#336).
  *
- * Wraps `<Authenticator>` so every login surface (sign-in panel + all gated
- * routes) is consistent:
- *   - themed to the command aesthetic via an Amplify-UI `createTheme` mapped to
- *     the app's CSS custom properties (so it tracks light/dark automatically);
+ * One themed, federated login surface reused everywhere (sign-in panel + the
+ * /portal and /submit gates):
+ *   - re-skinned to the site's command-terminal aesthetic via `--amplify-*`
+ *     custom properties set on the framing panel (see the CSS module), so it
+ *     tracks light/dark automatically through the shared tokens;
  *   - the built-in social buttons hidden (`socialProviders={[]}`) in favour of
  *     our own Google + Discord buttons (the Authenticator can't render the
  *     custom-OIDC Discord provider), injected into both the Sign In + Create
@@ -21,66 +23,6 @@ import { FederatedButtons } from './FederatedButtons';
  * is a drop-in replacement for `<Authenticator>`.
  */
 
-const theme = createTheme({
-  name: 'sentinel-auth',
-  tokens: {
-    fonts: {
-      default: {
-        variable: { value: 'var(--font-jb-mono)' },
-        static: { value: 'var(--font-jb-mono)' },
-      },
-    },
-    colors: {
-      background: {
-        primary: { value: 'var(--surface-1)' },
-        secondary: { value: 'var(--surface-2)' },
-      },
-      font: {
-        primary: { value: 'var(--text-1)' },
-        secondary: { value: 'var(--text-2)' },
-        interactive: { value: 'var(--color-accent)' },
-      },
-      border: {
-        primary: { value: 'var(--border-1)' },
-        secondary: { value: 'var(--border-1)' },
-      },
-      brand: {
-        primary: {
-          10: { value: 'var(--surface-2)' },
-          80: { value: 'var(--color-accent)' },
-          90: { value: 'var(--color-accent)' },
-          100: { value: 'var(--color-accent)' },
-        },
-      },
-    },
-    radii: {
-      small: { value: 'var(--radius-sm)' },
-      medium: { value: 'var(--radius-md)' },
-    },
-    components: {
-      authenticator: {
-        router: {
-          backgroundColor: { value: 'var(--surface-1)' },
-          borderColor: { value: 'var(--border-1)' },
-        },
-      },
-      tabs: {
-        item: {
-          color: { value: 'var(--text-2)' },
-          _active: {
-            color: { value: 'var(--color-accent)' },
-            borderColor: { value: 'var(--color-accent)' },
-          },
-        },
-      },
-      fieldcontrol: {
-        color: { value: 'var(--text-1)' },
-        borderColor: { value: 'var(--border-1)' },
-      },
-    },
-  },
-});
-
 const federatedComponents = {
   SignIn: { Header: FederatedButtons },
   SignUp: { Header: FederatedButtons },
@@ -88,8 +30,11 @@ const federatedComponents = {
 
 export function AppAuthenticator(props: ComponentProps<typeof Authenticator>) {
   return (
-    <ThemeProvider theme={theme}>
+    <div className={styles.frame}>
+      <div className={styles.eyebrow}>
+        <span>secure access</span>
+      </div>
       <Authenticator socialProviders={[]} components={federatedComponents} {...props} />
-    </ThemeProvider>
+    </div>
   );
 }
