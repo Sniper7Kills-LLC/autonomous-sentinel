@@ -105,6 +105,27 @@
   background: var(--color-border);
 }
 
+/* ---- Layout: make the Authenticator fill the frame edge-to-edge ----
+   The frame provides the panel chrome + padding; flatten the Authenticator's
+   own container/router/form widths + internal horizontal padding so the tabs,
+   federated buttons, and fields all align to the same left/right edges instead
+   of the form column sitting narrower + left-shifted. */
+.frame :global(.amplify-authenticator),
+.frame :global([data-amplify-authenticator]),
+.frame :global([data-amplify-container]),
+.frame :global([data-amplify-router]),
+.frame :global([data-amplify-authenticator] form),
+.frame :global([data-amplify-authenticator] [role='tabpanel']) {
+  width: 100%;
+  max-width: 100%;
+  margin-inline: 0;
+}
+
+.frame :global([data-amplify-router]),
+.frame :global([data-amplify-authenticator] [role='tabpanel']) {
+  padding-inline: 0;
+}
+
 /* ---- Typographic overrides Amplify doesn't expose as tokens ---- */
 
 .frame :global(.amplify-tabs__item) {
@@ -134,6 +155,26 @@
 .frame :global(.amplify-passwordfield),
 .frame :global(.amplify-field-group__control) {
   font-family: var(--font-mono);
+}
+
+/* Typed text must be visible on the dark field surface — force the foreground
+   token + accent caret directly (the Amplify color var alone didn't apply),
+   and keep autofill text light instead of the browser's dark-on-dark. */
+.frame :global(.amplify-input) {
+  color: var(--text-1);
+  caret-color: var(--color-accent);
+}
+
+.frame :global(.amplify-input::placeholder) {
+  color: var(--text-2);
+}
+
+.frame :global(.amplify-input:-webkit-autofill),
+.frame :global(.amplify-input:-webkit-autofill:hover),
+.frame :global(.amplify-input:-webkit-autofill:focus) {
+  -webkit-text-fill-color: var(--text-1);
+  caret-color: var(--color-accent);
+  transition: background-color 9999s ease-in-out 0s;
 }
 
 /* The "Forgot your password?" link + footer links. */
