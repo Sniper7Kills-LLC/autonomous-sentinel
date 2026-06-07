@@ -166,6 +166,8 @@ async function getDataClient(): Promise<PostConfirmDataClient> {
 async function ensureUserRow(input: {
   cognitoSub: string;
   email: string | undefined;
+  displayName?: string | undefined;
+  preferredUsername?: string | undefined;
 }): Promise<void> {
   let data: PostConfirmDataClient;
   try {
@@ -209,6 +211,11 @@ async function ensureUserRow(input: {
     const result = await data.models.User.create({
       cognitoSub: input.cognitoSub,
       email: input.email ?? null,
+      // Seed the public profile from the verified IdP attributes when present
+      // (Google `name` → displayName; Discord bridge supplies both name +
+      // preferred_username). Null when absent; the user edits later.
+      displayName: input.displayName ?? null,
+      preferredUsername: input.preferredUsername ?? null,
       claimStatus: 'FRESH_SIGNUP',
       piiBlanked: false,
     });
@@ -276,10 +283,16 @@ export const handler: PostConfirmationTriggerHandler = async (event, _context, _
   // shadow row exists. Sub + email come from the verified Cognito user
   // attributes (#15 ensures email-verified is required at signup).
   if (triggerSource === 'PostConfirmation_ConfirmSignUp') {
-    const sub = event.request.userAttributes?.sub;
-    const email = event.request.userAttributes?.email;
+    const attrs = event.request.userAttributes ?? {};
+    const sub = attrs.sub;
+    const email = attrs.email;
     if (sub) {
-      await ensureUserRow({ cognitoSub: sub, email });
+      await ensureUserRow({
+        cognitoSub: sub,
+        email,
+        displayName: attrs.name || undefined,
+        preferredUsername: attrs.preferred_username || undefined,
+      });
     } else {
       console.error('postConfirmation: missing sub in userAttributes', {
         userPoolId,

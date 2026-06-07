@@ -203,6 +203,39 @@ describe('postConfirmation handler — User row creation (issue #248)', () => {
     expect(input.email).toBe('fresh@example.com');
   });
 
+  it('seeds displayName + preferredUsername from IdP attributes when present', async () => {
+    const event = makeEvent({
+      request: {
+        userAttributes: {
+          sub: 'cognito-sub-idp',
+          email: 'idp@example.com',
+          name: 'Mainsail Operator',
+          preferred_username: 'mainsail',
+        },
+      },
+    });
+
+    await handler(event, {} as Context, () => undefined);
+
+    const input = stub.createSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(input.displayName).toBe('Mainsail Operator');
+    expect(input.preferredUsername).toBe('mainsail');
+  });
+
+  it('seeds null profile fields when the IdP supplies no name attributes', async () => {
+    const event = makeEvent({
+      request: {
+        userAttributes: { sub: 'cognito-sub-bare', email: 'bare@example.com' },
+      },
+    });
+
+    await handler(event, {} as Context, () => undefined);
+
+    const input = stub.createSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(input.displayName).toBeNull();
+    expect(input.preferredUsername).toBeNull();
+  });
+
   it('sets claimStatus=FRESH_SIGNUP and piiBlanked=false on the new row', async () => {
     const event = makeEvent({
       request: {

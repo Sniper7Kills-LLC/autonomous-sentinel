@@ -58,9 +58,10 @@ describe('auth resource', () => {
     expect(typeof google.clientSecret).not.toBe('string');
   });
 
-  it('maps Google email claim to the Cognito email attribute', () => {
+  it('maps Google email + name claims to Cognito attributes', () => {
     expect(authConfig.loginWith.externalProviders.google.attributeMapping).toEqual({
       email: 'email',
+      fullname: 'name',
     });
   });
 

@@ -1,8 +1,7 @@
 'use client';
 
 import { type ReactNode } from 'react';
-import { Authenticator } from '@aws-amplify/ui-react';
-import '@aws-amplify/ui-react/styles.css';
+import { AppAuthenticator } from '@/components/auth/AppAuthenticator';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { MessageSubmitForm } from '@/components/submit/MessageSubmitForm';
 import { Alert } from '@/components/ui/Alert';
@@ -41,7 +40,7 @@ export default function SubmitPage() {
       ) : signedIn ? (
         <SubmitBody />
       ) : (
-        <Authenticator socialProviders={[]}>{() => <SubmitBody />}</Authenticator>
+        <AppAuthenticator>{() => <SubmitBody />}</AppAuthenticator>
       )}
     </>
   );

@@ -27,8 +27,8 @@ vi.mock('@/components/auth/AuthProvider', () => ({
 
 // `<Authenticator>` reaches for Amplify on mount; replace with a
 // passthrough so the guest branch still renders the body underneath.
-vi.mock('@aws-amplify/ui-react', () => ({
-  Authenticator: ({ children }: { children: () => React.ReactNode }) => children(),
+vi.mock('@/components/auth/AppAuthenticator', () => ({
+  AppAuthenticator: ({ children }: { children: () => React.ReactNode }) => children(),
 }));
 
 // MessageSubmitForm pulls aws-amplify/data; stub it for the page smoke test.

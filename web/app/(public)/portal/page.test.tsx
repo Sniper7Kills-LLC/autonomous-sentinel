@@ -6,8 +6,8 @@ import HomePage from './page';
 // Hub + Auth on mount, which we don't want to spin up in unit tests.
 // Replace it with a passthrough that renders children with a stub
 // `user` / `signOut`, exercising the portal guest path underneath.
-vi.mock('@aws-amplify/ui-react', () => ({
-  Authenticator: ({
+vi.mock('@/components/auth/AppAuthenticator', () => ({
+  AppAuthenticator: ({
     children,
   }: {
     children: (ctx: { signOut: () => void; user: unknown }) => React.ReactNode;

@@ -37,6 +37,12 @@
   color: var(--text-2);
 }
 
+.timestamp {
+  font-family: var(--font-jb-mono);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
 .spacer {
   flex: 1;
 }

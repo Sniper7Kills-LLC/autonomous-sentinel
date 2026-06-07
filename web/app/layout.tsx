@@ -50,6 +50,27 @@ if ('serviceWorker' in navigator) {
 }
 `;
 
+/**
+ * Dev counterpart: the offline-shell SW is cache-first on `/_next/static`,
+ * which is correct in production (immutable content-hashed chunks) but breaks
+ * the dev server — after every recompile the SW serves a stale chunk, the
+ * loader 404s (`ChunkLoadError`), and the page hard-reloads in a loop. So in
+ * development we never register it and actively tear down any SW + caches a
+ * prior visit left behind, self-healing the loop.
+ */
+const UNREGISTER_SW = `
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then(function (rs) {
+    rs.forEach(function (r) { r.unregister(); });
+  });
+  if (window.caches) {
+    caches.keys().then(function (ks) { ks.forEach(function (k) { caches.delete(k); }); });
+  }
+}
+`;
+
+const IS_PROD = process.env.NODE_ENV === 'production';
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${atkinson.variable} ${jbMono.variable}`} suppressHydrationWarning>
@@ -59,8 +80,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           dangerouslySetInnerHTML={{ __html: NO_FLASH_SCRIPT }}
         />
         <script
-          // Register the offline-shell service worker post-load.
-          dangerouslySetInnerHTML={{ __html: REGISTER_SW }}
+          // Register the offline-shell SW in prod; tear it down in dev so its
+          // cache-first `/_next/static` handling can't loop the dev server.
+          dangerouslySetInnerHTML={{ __html: IS_PROD ? REGISTER_SW : UNREGISTER_SW }}
         />
       </head>
       <body>

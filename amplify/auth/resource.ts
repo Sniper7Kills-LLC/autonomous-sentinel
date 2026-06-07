@@ -62,8 +62,13 @@ export const authConfig = {
         clientId: secret('GOOGLE_CLIENT_ID'),
         clientSecret: secret('GOOGLE_CLIENT_SECRET'),
         scopes: ['email', 'profile'],
+        // Pull the display name from Google's `profile` scope so the User
+        // shadow row can seed `displayName` (Google does not emit a
+        // `preferred_username`; users set that later). Discord maps both via
+        // the OIDC bridge below.
         attributeMapping: {
           email: 'email',
+          fullname: 'name',
         },
       },
       oidc: [

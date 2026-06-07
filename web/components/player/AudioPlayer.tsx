@@ -10,7 +10,6 @@ import {
   type PeaksData,
   type WordTimestamp,
 } from '@/lib/audio/sidecars';
-import { Spectrogram } from './Spectrogram';
 import styles from './AudioPlayer.module.css';
 
 interface AudioPlayerProps {
@@ -213,15 +212,6 @@ export function AudioPlayer({
           <button type="button" onClick={() => void handleDownload()} className={styles.dlLink}>
             Download .opus
           </button>
-        )}
-        {assets && (
-          <Spectrogram
-            recordingId={recordingId}
-            webCanonicalKey={webCanonicalKey}
-            currentTime={currentTime}
-            duration={duration}
-            onSeek={seek}
-          />
         )}
       </div>
       <TranscriptPane

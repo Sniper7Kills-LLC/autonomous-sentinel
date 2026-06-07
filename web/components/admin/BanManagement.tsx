@@ -281,44 +281,46 @@ function UserBansTab() {
       {!loading && count === 0 ? (
         <p className={styles.empty}>No users are currently banned.</p>
       ) : (
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th scope="col">User</th>
-              <th scope="col">Reason</th>
-              <th scope="col">Banned</th>
-              <th scope="col" className={styles.actionCol}>
-                Action
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((u) => (
-              <tr key={u.cognitoSub}>
-                <td>
-                  <div>{u.email ?? <code className={styles.mono}>{u.cognitoSub}</code>}</div>
-                  {u.displayName ? <div className={styles.sub}>{u.displayName}</div> : null}
-                </td>
-                <td>{u.bannedReason ?? <span className={styles.sub}>—</span>}</td>
-                <td className={styles.sub}>
-                  {u.bannedAt ? new Date(u.bannedAt).toLocaleString() : '—'}
-                </td>
-                <td className={styles.actionCol}>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() => {
-                      void unban(u);
-                    }}
-                  >
-                    Unban
-                  </Button>
-                </td>
+        <div className={styles.tableWrap} role="region" aria-label="Banned users" tabIndex={0}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th scope="col">User</th>
+                <th scope="col">Reason</th>
+                <th scope="col">Banned</th>
+                <th scope="col" className={styles.actionCol}>
+                  Action
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((u) => (
+                <tr key={u.cognitoSub}>
+                  <td>
+                    <div>{u.email ?? <code className={styles.mono}>{u.cognitoSub}</code>}</div>
+                    {u.displayName ? <div className={styles.sub}>{u.displayName}</div> : null}
+                  </td>
+                  <td>{u.bannedReason ?? <span className={styles.sub}>—</span>}</td>
+                  <td className={styles.sub}>
+                    {u.bannedAt ? new Date(u.bannedAt).toLocaleString() : '—'}
+                  </td>
+                  <td className={styles.actionCol}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => {
+                        void unban(u);
+                      }}
+                    >
+                      Unban
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
@@ -446,43 +448,45 @@ function CountryBansTab() {
       {!loading && count === 0 ? (
         <p className={styles.empty}>No countries are currently blocked.</p>
       ) : (
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th scope="col">Country</th>
-              <th scope="col">Scope</th>
-              <th scope="col">Reason</th>
-              <th scope="col" className={styles.actionCol}>
-                Action
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.iso2}>
-                <td>
-                  <code className={styles.mono}>{row.iso2}</code>
-                </td>
-                <td>
-                  <ScopeBadge scope={row.scope} />
-                </td>
-                <td>{row.reason ?? <span className={styles.sub}>—</span>}</td>
-                <td className={styles.actionCol}>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() => {
-                      void remove(row);
-                    }}
-                  >
-                    Unblock
-                  </Button>
-                </td>
+        <div className={styles.tableWrap} role="region" aria-label="Blocked countries" tabIndex={0}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th scope="col">Country</th>
+                <th scope="col">Scope</th>
+                <th scope="col">Reason</th>
+                <th scope="col" className={styles.actionCol}>
+                  Action
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.iso2}>
+                  <td>
+                    <code className={styles.mono}>{row.iso2}</code>
+                  </td>
+                  <td>
+                    <ScopeBadge scope={row.scope} />
+                  </td>
+                  <td>{row.reason ?? <span className={styles.sub}>—</span>}</td>
+                  <td className={styles.actionCol}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => {
+                        void remove(row);
+                      }}
+                    >
+                      Unblock
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
@@ -644,48 +648,50 @@ function IpBansTab() {
       {!loading && count === 0 ? (
         <p className={styles.empty}>No IP ranges are currently blocked.</p>
       ) : (
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th scope="col">CIDR</th>
-              <th scope="col">Scope</th>
-              <th scope="col">Reason</th>
-              <th scope="col">Expires</th>
-              <th scope="col" className={styles.actionCol}>
-                Action
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.cidr}>
-                <td>
-                  <code className={styles.mono}>{row.cidr}</code>
-                  <div className={styles.sub}>{row.ipVersion}</div>
-                </td>
-                <td>
-                  <ScopeBadge scope={row.scope} />
-                </td>
-                <td>{row.reason ?? <span className={styles.sub}>—</span>}</td>
-                <td className={styles.sub}>
-                  {row.expiresAt ? new Date(row.expiresAt).toLocaleString() : '—'}
-                </td>
-                <td className={styles.actionCol}>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() => {
-                      void remove(row);
-                    }}
-                  >
-                    Unblock
-                  </Button>
-                </td>
+        <div className={styles.tableWrap} role="region" aria-label="Blocked IP ranges" tabIndex={0}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th scope="col">CIDR</th>
+                <th scope="col">Scope</th>
+                <th scope="col">Reason</th>
+                <th scope="col">Expires</th>
+                <th scope="col" className={styles.actionCol}>
+                  Action
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.cidr}>
+                  <td>
+                    <code className={styles.mono}>{row.cidr}</code>
+                    <div className={styles.sub}>{row.ipVersion}</div>
+                  </td>
+                  <td>
+                    <ScopeBadge scope={row.scope} />
+                  </td>
+                  <td>{row.reason ?? <span className={styles.sub}>—</span>}</td>
+                  <td className={styles.sub}>
+                    {row.expiresAt ? new Date(row.expiresAt).toLocaleString() : '—'}
+                  </td>
+                  <td className={styles.actionCol}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => {
+                        void remove(row);
+                      }}
+                    >
+                      Unblock
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

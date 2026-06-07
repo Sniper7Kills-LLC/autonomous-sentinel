@@ -4,58 +4,19 @@
   max-width: 32rem;
   width: 100%;
   margin: 0 auto;
+}
+
+.signedIn {
+  display: grid;
+  gap: 0.75rem;
   padding: 2rem;
   background: var(--surface-1);
   border: 1px solid var(--border-1);
   border-radius: var(--radius-md);
 }
 
-.signedIn {
-  display: grid;
-  gap: 0.75rem;
-}
-
 .signedInLine {
   font-family: var(--font-jb-mono);
   font-size: 0.95rem;
   color: var(--text-1);
-}
-
-.federated {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.error {
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
-  color: var(--color-danger);
-  line-height: 1.4;
-}
-
-/* "or sign in with email" rule between the federated buttons + the form. */
-.divider {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--text-2);
-}
-
-.divider::before,
-.divider::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: var(--border-1);
-}
-
-/* Hide the Amplify Authenticator's own federated providers — we render styled
-   Google/Discord buttons above (#336) so they match the command aesthetic. */
-.shell :global([data-amplify-authenticator] [data-amplify-federated-sign-in-container]),
-.shell :global([data-amplify-authenticator] [data-amplify-router-content] [class*='federated']) {
-  display: none !important;
 }
