@@ -4,6 +4,19 @@
   width: 100%;
 }
 
+/* Logo + label, centered as a unit inside the full-width button. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
 .error {
   font-family: var(--font-mono);
   font-size: 0.78rem;
