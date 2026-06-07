@@ -28,10 +28,32 @@
 import { spawn } from 'node:child_process';
 
 export const DEFAULT_WHISPER_BINARY = '/opt/whisper';
-export const DEFAULT_WHISPER_MODEL_PATH = '/opt/models/medium.en.bin';
+// large-v3-turbo (#759): near-large accuracy at far lower runtime than
+// large-v3; multilingual model + the `-l en` hint covers EAM. The Dockerfile
+// downloads this ggml model to this path. Override with WHISPER_MODEL_PATH.
+export const DEFAULT_WHISPER_MODEL_PATH = '/opt/models/large-v3-turbo.bin';
 export const DEFAULT_WHISPER_LANGUAGE = 'en';
 export const DEFAULT_WHISPER_THREADS = 4;
 export const DEFAULT_STDERR_CAPTURE_BYTES = 8 * 1024;
+
+/**
+ * EAM-domain initial prompt (#757). Whisper is natural-speech-trained, so the
+ * NATO-phonetic letter strings + fixed EAM phraseology are out-of-distribution
+ * and get guessed. `--prompt` biases the decoder toward this vocabulary.
+ * Kept well under whisper's ~224-token prompt budget. Override via
+ * WHISPER_INITIAL_PROMPT (empty string disables priming).
+ */
+export const DEFAULT_WHISPER_INITIAL_PROMPT =
+  'Emergency Action Message. Skyking, Skyking, do not answer. Stand by. ' +
+  'I say again. Time. Message follows. ' +
+  'Alfa Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet Kilo Lima ' +
+  'Mike November Oscar Papa Quebec Romeo Sierra Tango Uniform Victor Whiskey ' +
+  'X-ray Yankee Zulu. One two three four five six seven eight nine zero.';
+
+/** Beam-search width (#758). 0/1 = greedy. Override via WHISPER_BEAM_SIZE. */
+export const DEFAULT_WHISPER_BEAM_SIZE = 5;
+/** Decode temperature (#761). 0 = deterministic, fewer hallucinations. */
+export const DEFAULT_WHISPER_TEMPERATURE = 0;
 
 export class WhisperError extends Error {
   /**
@@ -62,7 +84,9 @@ export class WhisperError extends Error {
  * pinned arg shape can be asserted exactly.
  *
  * @param {{ inputPath: string; outputPrefix: string; language: string;
- *          threads: number; modelPath: string }} opts
+ *          threads: number; modelPath: string; initialPrompt?: string;
+ *          beamSize?: number; temperature?: number; entropyThold?: number;
+ *          logprobThold?: number }} opts
  * @returns {string[]}
  */
 export function buildArgs(opts) {
@@ -80,7 +104,7 @@ export function buildArgs(opts) {
   // (e.g. `--print-progress`) are presence flags — a trailing
   // `'false'` is parsed as a positional input file path and the
   // run fails with `error: input file not found 'false'`.
-  return [
+  const args = [
     '-ng',
     '-m',
     opts.modelPath,
@@ -90,6 +114,32 @@ export function buildArgs(opts) {
     opts.language,
     '-t',
     String(opts.threads),
+  ];
+
+  // EAM initial prompt (#757) — `--prompt <text>`. Skip when empty so a
+  // deployment can disable priming via WHISPER_INITIAL_PROMPT="".
+  if (typeof opts.initialPrompt === 'string' && opts.initialPrompt.length > 0) {
+    args.push('--prompt', opts.initialPrompt);
+  }
+  // Beam search (#758) — `-bs N`. whisper.cpp uses greedy when beam-size
+  // <= 1; only enable beam when > 1.
+  if (typeof opts.beamSize === 'number' && opts.beamSize > 1) {
+    args.push('-bs', String(opts.beamSize));
+  }
+  // Decode tuning (#761). `-tp` temperature (0 = deterministic). Entropy /
+  // logprob thresholds gate temperature fallback — only pass when set so
+  // whisper.cpp's own defaults stand otherwise.
+  if (typeof opts.temperature === 'number') {
+    args.push('-tp', String(opts.temperature));
+  }
+  if (typeof opts.entropyThold === 'number') {
+    args.push('-et', String(opts.entropyThold));
+  }
+  if (typeof opts.logprobThold === 'number') {
+    args.push('-lpt', String(opts.logprobThold));
+  }
+
+  args.push(
     // NOTE (#527): do NOT add `-ml 1` (`--max-len 1`). It forces each
     // JSON segment to a single token, which corrupts the natural-
     // sentence transcript fed to linguistics.
@@ -106,7 +156,9 @@ export function buildArgs(opts) {
     '-ojf',
     '-of',
     opts.outputPrefix,
-  ];
+  );
+
+  return args;
 }
 
 /**
@@ -119,7 +171,29 @@ export function readWhisperConfig(env = process.env) {
     modelPath: env.WHISPER_MODEL_PATH ?? DEFAULT_WHISPER_MODEL_PATH,
     language: env.WHISPER_LANGUAGE ?? DEFAULT_WHISPER_LANGUAGE,
     threads: parseThreads(env.WHISPER_THREADS),
+    // EAM priming (#757) — WHISPER_INITIAL_PROMPT="" disables it.
+    initialPrompt: env.WHISPER_INITIAL_PROMPT ?? DEFAULT_WHISPER_INITIAL_PROMPT,
+    // Beam search (#758) + decode tuning (#761), env-tunable.
+    beamSize: parseNumber(env.WHISPER_BEAM_SIZE, DEFAULT_WHISPER_BEAM_SIZE),
+    temperature: parseNumber(env.WHISPER_TEMPERATURE, DEFAULT_WHISPER_TEMPERATURE),
+    // No baked default: unset → whisper.cpp's own thresholds apply.
+    entropyThold: parseOptionalNumber(env.WHISPER_ENTROPY_THOLD),
+    logprobThold: parseOptionalNumber(env.WHISPER_LOGPROB_THOLD),
   };
+}
+
+/** Parse an env number with a fallback; non-numeric → fallback. */
+function parseNumber(raw, fallback) {
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/** Parse an optional env number; absent/invalid → undefined (use engine default). */
+function parseOptionalNumber(raw) {
+  if (raw === undefined || raw === '') return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 /**
@@ -152,6 +226,11 @@ function parseThreads(raw) {
  *   threads?: number;
  *   whisperBinary?: string;
  *   modelPath?: string;
+ *   initialPrompt?: string;
+ *   beamSize?: number;
+ *   temperature?: number;
+ *   entropyThold?: number;
+ *   logprobThold?: number;
  *   spawnFn?: typeof spawn;
  * }} opts
  * @returns {Promise<{
@@ -185,6 +264,15 @@ export function runWhisper(opts) {
     language,
     threads,
     modelPath,
+    // Quality tunables (#757/#758/#761). Default to priming-on + beam 5 +
+    // temperature 0; `initialPrompt` defaults to the EAM prompt only when the
+    // caller doesn't pass the field at all (use '' to disable).
+    initialPrompt:
+      opts.initialPrompt === undefined ? DEFAULT_WHISPER_INITIAL_PROMPT : opts.initialPrompt,
+    beamSize: opts.beamSize ?? DEFAULT_WHISPER_BEAM_SIZE,
+    temperature: opts.temperature ?? DEFAULT_WHISPER_TEMPERATURE,
+    ...(opts.entropyThold !== undefined ? { entropyThold: opts.entropyThold } : {}),
+    ...(opts.logprobThold !== undefined ? { logprobThold: opts.logprobThold } : {}),
   });
 
   return new Promise((resolve, reject) => {

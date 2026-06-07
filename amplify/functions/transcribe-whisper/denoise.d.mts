@@ -6,7 +6,7 @@
 import type { spawn } from 'node:child_process';
 import type { copyFile } from 'node:fs/promises';
 
-export type NoiseReductionMode = 'off' | 'afftdn' | 'rnnoise';
+export type NoiseReductionMode = 'off' | 'afftdn' | 'eam' | 'rnnoise';
 
 export const NOISE_REDUCTION_MODES: readonly NoiseReductionMode[];
 export const DEFAULT_NOISE_REDUCTION_MODE: NoiseReductionMode;
@@ -33,7 +33,11 @@ export function readDenoiseConfig(env?: Record<string, string | undefined>): {
   nfDb: number;
 };
 
+export const EAM_HIGHPASS_HZ: number;
+export const EAM_LOWPASS_HZ: number;
 export function buildAfftdnFilter(nrDb: number, nfDb: number): string;
+export function buildEamFilter(nrDb: number, nfDb: number): string;
+export function filterForMode(mode: NoiseReductionMode, nrDb: number, nfDb: number): string;
 export function buildArgs(inputPath: string, outputPath: string, filter: string): string[];
 
 export interface DenoiseOpts {

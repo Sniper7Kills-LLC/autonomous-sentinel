@@ -15,6 +15,9 @@ export const DEFAULT_WHISPER_MODEL_PATH: string;
 export const DEFAULT_WHISPER_LANGUAGE: string;
 export const DEFAULT_WHISPER_THREADS: number;
 export const DEFAULT_STDERR_CAPTURE_BYTES: number;
+export const DEFAULT_WHISPER_INITIAL_PROMPT: string;
+export const DEFAULT_WHISPER_BEAM_SIZE: number;
+export const DEFAULT_WHISPER_TEMPERATURE: number;
 
 export class WhisperError extends Error {
   readonly code: number | null;
@@ -29,6 +32,11 @@ export interface BuildArgsOpts {
   language: string;
   threads: number;
   modelPath: string;
+  initialPrompt?: string;
+  beamSize?: number;
+  temperature?: number;
+  entropyThold?: number;
+  logprobThold?: number;
 }
 
 export function buildArgs(opts: BuildArgsOpts): string[];
@@ -38,6 +46,11 @@ export interface WhisperConfig {
   modelPath: string;
   language: string;
   threads: number;
+  initialPrompt: string;
+  beamSize: number;
+  temperature: number;
+  entropyThold: number | undefined;
+  logprobThold: number | undefined;
 }
 
 export function readWhisperConfig(env?: Record<string, string | undefined>): WhisperConfig;
@@ -49,6 +62,11 @@ export interface RunWhisperOpts {
   threads?: number;
   whisperBinary?: string;
   modelPath?: string;
+  initialPrompt?: string;
+  beamSize?: number;
+  temperature?: number;
+  entropyThold?: number;
+  logprobThold?: number;
   spawnFn?: typeof spawn;
 }
 

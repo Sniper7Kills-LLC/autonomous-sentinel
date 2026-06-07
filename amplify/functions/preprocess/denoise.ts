@@ -47,15 +47,18 @@ import { spawn } from 'node:child_process';
  * vitest never shells out / touches the real filesystem.
  */
 
-export type NoiseReductionMode = 'off' | 'afftdn' | 'rnnoise';
+export type NoiseReductionMode = 'off' | 'afftdn' | 'eam' | 'rnnoise';
 
 export const NOISE_REDUCTION_MODES: readonly NoiseReductionMode[] = [
   'off',
   'afftdn',
+  'eam',
   'rnnoise',
 ] as const;
 
-export const DEFAULT_NOISE_REDUCTION_MODE: NoiseReductionMode = 'afftdn';
+// `eam` (#760): HF-SSB voice chain (bandpass 300–3000 Hz + afftdn + AGC).
+// Kept in sync with the active container copy (transcribe-whisper/denoise.mjs).
+export const DEFAULT_NOISE_REDUCTION_MODE: NoiseReductionMode = 'eam';
 export const DEFAULT_NR_DB = 12;
 export const DEFAULT_NF_DB = -25;
 export const DEFAULT_FFMPEG_BINARY = 'ffmpeg';
@@ -190,6 +193,23 @@ export function buildAfftdnFilter(nrDb: number, nfDb: number): string {
   return `afftdn=nr=${nrDb}:nf=${nfDb}`;
 }
 
+/** HF voice band edges for the `eam` chain (#760). */
+export const EAM_HIGHPASS_HZ = 300;
+export const EAM_LOWPASS_HZ = 3000;
+
+/**
+ * Builds the `eam` HF-voice ffmpeg chain (#760): bandpass to the SSB voice
+ * band → afftdn FFT denoise → dynaudnorm AGC. Native ffmpeg filters only.
+ */
+export function buildEamFilter(nrDb: number, nfDb: number): string {
+  return [
+    `highpass=f=${EAM_HIGHPASS_HZ}`,
+    `lowpass=f=${EAM_LOWPASS_HZ}`,
+    buildAfftdnFilter(nrDb, nfDb),
+    'dynaudnorm',
+  ].join(',');
+}
+
 /**
  * Characters that have meaning inside an ffmpeg filtergraph (option
  * `:`/`=`, filter `,`, chain `;`, link `[]`, quoting `'`/`"`/`\`,
@@ -291,7 +311,12 @@ export async function denoise(opts: DenoiseOpts): Promise<DenoiseResult> {
   } else {
     resultNrDb = opts.nrDb ?? DEFAULT_NR_DB;
     resultNfDb = opts.nfDb ?? DEFAULT_NF_DB;
-    filter = buildAfftdnFilter(resultNrDb, resultNfDb);
+    // `eam` wraps afftdn in the HF bandpass + AGC chain (#760); plain
+    // `afftdn` stays the bare filter.
+    filter =
+      mode === 'eam'
+        ? buildEamFilter(resultNrDb, resultNfDb)
+        : buildAfftdnFilter(resultNrDb, resultNfDb);
   }
 
   const args = ['-y', '-loglevel', 'error', '-i', opts.inputPath, '-af', filter, opts.outputPath];
