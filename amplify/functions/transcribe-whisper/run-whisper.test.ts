@@ -13,6 +13,7 @@ import {
   buildArgs,
   readWhisperConfig,
   runWhisper,
+  appendCallsignsToPrompt,
 } from './run-whisper.mjs';
 
 /**
@@ -158,6 +159,21 @@ describe('buildArgs', () => {
     });
     expect(args).not.toContain('--prompt');
     expect(args).not.toContain('-bs');
+  });
+});
+
+describe('appendCallsignsToPrompt (#778)', () => {
+  it('appends the callsign list to a non-empty base', () => {
+    expect(appendCallsignsToPrompt('Prime.', 'MAINSAIL, ANDREWS')).toBe(
+      'Prime. Known callsigns: MAINSAIL, ANDREWS.',
+    );
+  });
+  it('returns the base unchanged when there are no callsigns', () => {
+    expect(appendCallsignsToPrompt('Prime.', undefined)).toBe('Prime.');
+    expect(appendCallsignsToPrompt('Prime.', '')).toBe('Prime.');
+  });
+  it('respects a disabled (empty) prompt — no re-priming', () => {
+    expect(appendCallsignsToPrompt('', 'MAINSAIL')).toBe('');
   });
 });
 

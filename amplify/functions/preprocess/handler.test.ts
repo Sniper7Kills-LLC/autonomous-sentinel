@@ -59,11 +59,13 @@ interface DataStub {
   updateSpy: ReturnType<typeof vi.fn>;
   getSpy: ReturnType<typeof vi.fn>;
   configGetSpy: ReturnType<typeof vi.fn>;
+  callsignListSpy: ReturnType<typeof vi.fn>;
 }
 
 function makeDataStub(
   currentStatus: string = 'QUEUED',
   whisperPromptValue: unknown = undefined,
+  callsigns: Array<{ normalized?: string | null }> = [],
 ): DataStub {
   const updateSpy = vi.fn().mockResolvedValue({ data: {}, errors: null });
   // #741: the stage reads current status first to guard against regressing
@@ -77,6 +79,8 @@ function makeDataStub(
     data: whisperPromptValue === undefined ? null : { value: whisperPromptValue },
     errors: null,
   });
+  // #778: approved callsign dictionary for Whisper priming.
+  const callsignListSpy = vi.fn().mockResolvedValue({ data: callsigns, errors: null });
   const client: PreprocessDataClient = {
     models: {
       Recording: {
@@ -86,9 +90,12 @@ function makeDataStub(
       LinguisticConfig: {
         get: configGetSpy as never,
       },
+      Callsign: {
+        list: callsignListSpy as never,
+      },
     },
   };
-  return { client, updateSpy, getSpy, configGetSpy };
+  return { client, updateSpy, getSpy, configGetSpy, callsignListSpy };
 }
 
 beforeEach(() => {
@@ -222,6 +229,55 @@ describe('preprocess — happy path (consolidated #514)', () => {
       sqsMock.commandCalls(SendMessageCommand)[0]?.args[0].input.MessageBody ?? '{}',
     ) as Record<string, unknown>;
     expect('initialPrompt' in body).toBe(false);
+  });
+
+  it('injects approved callsigns into the transcribe message (#778)', async () => {
+    const { client } = makeDataStub('QUEUED', undefined, [
+      { normalized: 'MAINSAIL' },
+      { normalized: 'andrews' },
+    ]);
+    __setDeps({
+      s3: new S3Client({}),
+      sqs: new SQSClient({}),
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-cs',
+        originalKey: 'recordings/originals/cs.wav',
+        contentHash: 'h',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    const body = JSON.parse(
+      sqsMock.commandCalls(SendMessageCommand)[0]?.args[0].input.MessageBody ?? '{}',
+    ) as { promptCallsigns?: string };
+    expect(body.promptCallsigns).toBe('ANDREWS, MAINSAIL');
+  });
+
+  it('omits promptCallsigns when the dictionary is empty (#778)', async () => {
+    const { client } = makeDataStub('QUEUED', undefined, []);
+    __setDeps({
+      s3: new S3Client({}),
+      sqs: new SQSClient({}),
+      dataClient: client,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-cs0',
+        originalKey: 'recordings/originals/c.wav',
+        contentHash: 'h',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    const body = JSON.parse(
+      sqsMock.commandCalls(SendMessageCommand)[0]?.args[0].input.MessageBody ?? '{}',
+    ) as Record<string, unknown>;
+    expect('promptCallsigns' in body).toBe(false);
   });
 
   it('includes an empty initialPrompt to disable priming when the row is "" (#771)', async () => {

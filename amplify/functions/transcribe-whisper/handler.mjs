@@ -50,7 +50,12 @@ import { pipeline } from 'node:stream/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { readWhisperConfig, runWhisper, WhisperError } from './run-whisper.mjs';
+import {
+  appendCallsignsToPrompt,
+  readWhisperConfig,
+  runWhisper,
+  WhisperError,
+} from './run-whisper.mjs';
 import { transcodeToOpus, transcodeToWav } from './opus-transcode.mjs';
 import { extractWordTimestamps } from './word-timestamps.mjs';
 import { extractTranscriptionConfidence } from './transcription-confidence.mjs';
@@ -328,7 +333,12 @@ async function processOne(body) {
   // Admin-configured Whisper prompt (#771) injected by the preprocess Lambda
   // and forwarded verbatim by the dispatcher. When present (incl. '' to
   // disable priming) it overrides the env/baked default; absent → default.
-  const initialPrompt = typeof body.initialPrompt === 'string' ? body.initialPrompt : undefined;
+  // Approved callsigns (#778) are appended to the effective prompt.
+  const msgPrompt = typeof body.initialPrompt === 'string' ? body.initialPrompt : undefined;
+  const initialPrompt = appendCallsignsToPrompt(
+    msgPrompt ?? config.initialPrompt,
+    typeof body.promptCallsigns === 'string' ? body.promptCallsigns : undefined,
+  );
   const tmpDir = join(tmpdir(), `whisper-${randomUUID()}`);
   await mkdir(tmpDir, { recursive: true });
 
@@ -428,8 +438,8 @@ async function processOne(body) {
       whisperBinary: config.whisperBinary,
       modelPath: config.modelPath,
       // Quality tunables (#757/#758/#761) resolved by readWhisperConfig.
-      // The admin-configured prompt (#771) from the message wins when set.
-      initialPrompt: initialPrompt ?? config.initialPrompt,
+      // initialPrompt already resolves admin prompt (#771) + callsigns (#778).
+      initialPrompt,
       beamSize: config.beamSize,
       temperature: config.temperature,
       ...(config.entropyThold !== undefined ? { entropyThold: config.entropyThold } : {}),

@@ -61,7 +61,16 @@ interface TranscribeQueueMessage {
    * Omitted when unset → the container falls back to its baked default.
    */
   initialPrompt?: string;
+  /**
+   * Approved callsign dictionary (#778), comma-joined + bounded. The Whisper
+   * container appends these to its effective prompt to bias sender/receiver
+   * recognition. Omitted when the dictionary is empty/unreadable.
+   */
+  promptCallsigns?: string;
 }
+
+/** Max approved callsigns appended to the Whisper prompt (#778), to bound size. */
+export const WHISPER_PROMPT_CALLSIGN_LIMIT = 80;
 
 /** LinguisticConfig key holding the admin-tunable Whisper prompt (#771). */
 export const WHISPER_INITIAL_PROMPT_CONFIG_KEY = 'WHISPER_INITIAL_PROMPT';
@@ -83,6 +92,37 @@ export async function loadWhisperInitialPrompt(
     return typeof value === 'string' ? value : undefined;
   } catch (err) {
     console.warn('preprocess: WHISPER_INITIAL_PROMPT read failed (using container default)', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return undefined;
+  }
+}
+
+/**
+ * Best-effort read of the approved callsign dictionary for Whisper priming
+ * (#778). Returns a comma-joined, bounded, sorted list — or undefined when
+ * empty / unreadable, so a dictionary hiccup never blocks the pipeline.
+ */
+export async function loadWhisperPromptCallsigns(
+  client: PreprocessDataClient,
+): Promise<string | undefined> {
+  try {
+    const res = await client.models.Callsign.list({
+      filter: { approved: { eq: true } },
+      limit: 1000,
+    });
+    if (res.errors) return undefined;
+    const names = Array.from(
+      new Set(
+        (res.data ?? [])
+          .map((r) => (r.normalized ?? '').trim().toUpperCase())
+          .filter((n) => n.length > 0),
+      ),
+    ).sort();
+    if (names.length === 0) return undefined;
+    return names.slice(0, WHISPER_PROMPT_CALLSIGN_LIMIT).join(', ');
+  } catch (err) {
+    console.warn('preprocess: callsign load failed (Whisper prompt unprimed)', {
       err: err instanceof Error ? err.message : String(err),
     });
     return undefined;
@@ -120,6 +160,17 @@ export interface PreprocessDataClient {
     LinguisticConfig: {
       get: (input: { key: string }) => Promise<{
         data: { value?: unknown } | null;
+        errors?: unknown;
+      }>;
+    };
+    /**
+     * Callsign dictionary (#778). The approved entries are appended to the
+     * Whisper prompt (via the transcribe message) so the model is primed
+     * with the real sender/receiver vocabulary.
+     */
+    Callsign: {
+      list: (input?: Record<string, unknown>) => Promise<{
+        data: Array<{ normalized?: string | null }> | null;
         errors?: unknown;
       }>;
     };
@@ -260,10 +311,12 @@ async function processOne(msg: PreprocessQueueMessage): Promise<ProcessOneResult
     );
   }
 
-  // Admin-tunable Whisper prompt (#771) — injected here so the lean Whisper
-  // container (no DB client) gets it via the dispatcher's verbatim forward.
-  // Best-effort: a config hiccup leaves it unset → container baked default.
+  // Admin-tunable Whisper prompt (#771) + approved callsign priming (#778),
+  // injected here so the lean Whisper container (no DB client) gets them via
+  // the dispatcher's verbatim forward. Best-effort: a config/dict hiccup
+  // leaves them unset → container baked default, no callsign priming.
   const initialPrompt = await loadWhisperInitialPrompt(client);
+  const promptCallsigns = await loadWhisperPromptCallsigns(client);
 
   const transcribeMsg: TranscribeQueueMessage = {
     recordingId: msg.recordingId,
@@ -275,6 +328,8 @@ async function processOne(msg: PreprocessQueueMessage): Promise<ProcessOneResult
     ...(msg.backendOverride ? { backendOverride: msg.backendOverride } : {}),
     // Include the prompt only when configured (incl. '' to disable priming).
     ...(initialPrompt !== undefined ? { initialPrompt } : {}),
+    // Include callsigns only when the dictionary has approved entries.
+    ...(promptCallsigns !== undefined ? { promptCallsigns } : {}),
   };
   await sqs().send(
     new SendMessageCommand({

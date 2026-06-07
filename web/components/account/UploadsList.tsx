@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { StatusPill, type PipelineStatus } from '@/components/ui/StatusPill';
 import {
+  listMyUploads,
   observeMyUploads,
   statusToStage,
   type UploadRow,
@@ -20,12 +21,40 @@ interface UploadsListProps {
 }
 
 /**
+ * Extract a human message from an arbitrary thrown/emitted value. AppSync
+ * subscription errors are plain objects (not `Error`), so a bare `String(e)`
+ * renders "[object Object]" (#774 follow-up). Digs the common GraphQL shapes.
+ */
+function errorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === 'string') return e;
+  if (e && typeof e === 'object') {
+    const o = e as { message?: unknown; error?: unknown; errors?: unknown };
+    if (typeof o.message === 'string') return o.message;
+    if (typeof o.error === 'string') return o.error;
+    if (Array.isArray(o.errors)) {
+      const msgs = o.errors
+        .map((x) => (x && typeof x === 'object' ? (x as { message?: unknown }).message : null))
+        .filter((m): m is string => typeof m === 'string');
+      if (msgs.length) return msgs.join('; ');
+    }
+    try {
+      return JSON.stringify(e);
+    } catch {
+      /* fall through */
+    }
+  }
+  return 'Unknown error';
+}
+
+/**
  * `My Uploads` list (#94, live #774).
  *
  * Lists every Recording the caller has uploaded with its current pipeline
- * stage, upload time + broadcast time. Subscribes via AppSync `observeQuery`
- * so status advances LIVE while a recording processes or is reprocessed —
- * no manual refresh. Failed rows highlight in red + surface `failedReason`.
+ * stage, upload time + broadcast time. An initial one-shot `listMyUploads`
+ * paints reliably; an AppSync `observeQuery` subscription then layers LIVE
+ * status updates on top (best-effort — a subscription error only logs, never
+ * blanks the page). Failed rows highlight in red + surface `failedReason`.
  */
 export function UploadsList({ uploaderId }: UploadsListProps) {
   const [rows, setRows] = useState<UploadRow[]>([]);
@@ -45,20 +74,56 @@ export function UploadsList({ uploaderId }: UploadsListProps) {
   }, []);
 
   useEffect(() => {
+    let active = true;
+    // Whether the live subscription has delivered a snapshot yet. Once it
+    // has, the (possibly later-resolving) initial list must not clobber the
+    // fresher live data.
+    let liveDelivered = false;
     setLoading(true);
     setError(null);
-    const sub = observeMyUploads(uploaderId, {
-      next: (next) => {
-        setRows(next);
-        setLoading(false);
-      },
-      error: (err) => {
-        setError(err instanceof Error ? err.message : String(err));
-        setLoading(false);
-      },
-    });
+
+    // Reliable first paint via a one-shot list — this is what the page used
+    // before the live layer, and it works even when the realtime subscription
+    // can't open (the source of the "[object Object]" banner, #774 follow-up).
+    void listMyUploads(uploaderId)
+      .then((res) => {
+        if (active && !liveDelivered) {
+          setRows(res.items);
+          setLoading(false);
+        }
+      })
+      .catch((e) => {
+        // Only surface a banner when the live layer hasn't already painted.
+        if (active && !liveDelivered) {
+          setError(errorMessage(e));
+          setLoading(false);
+        }
+      });
+
+    // Live updates layered on top — best-effort. A subscription error must
+    // NOT blank the page (the list already painted), so it only logs.
+    let sub: { unsubscribe: () => void } | undefined;
+    try {
+      sub = observeMyUploads(uploaderId, {
+        next: (next) => {
+          if (active) {
+            liveDelivered = true;
+            setRows(next);
+            setLoading(false);
+            setError(null);
+          }
+        },
+        error: (err) => {
+          console.warn('UploadsList: live updates unavailable (showing last list)', err);
+        },
+      });
+    } catch (err) {
+      console.warn('UploadsList: could not start live updates', err);
+    }
+
     return () => {
-      sub.unsubscribe();
+      active = false;
+      sub?.unsubscribe();
     };
   }, [uploaderId]);
 

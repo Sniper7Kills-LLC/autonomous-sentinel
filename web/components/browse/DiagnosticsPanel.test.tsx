@@ -27,6 +27,41 @@ vi.mock('@/lib/admin/linguistic', () => ({
   setRuleEnabled: (id: string, enabled: boolean) => setRuleEnabled(id, enabled),
 }));
 
+interface CallsignStub {
+  id: string;
+  normalized: string;
+  variants: string[];
+  source: 'LEGACY' | 'ADMIN' | 'AI_SUGGESTED' | null;
+  confidence: number | null;
+  approved: boolean;
+  notes: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+const findCallsignByNormalized = vi.fn<(n: string) => Promise<CallsignStub | null>>();
+const approveCallsign = vi.fn<(id: string) => Promise<CallsignStub>>();
+const deleteCallsign = vi.fn<(id: string) => Promise<void>>();
+vi.mock('@/lib/admin/callsigns', () => ({
+  findCallsignByNormalized: (n: string) => findCallsignByNormalized(n),
+  approveCallsign: (id: string) => approveCallsign(id),
+  deleteCallsign: (id: string) => deleteCallsign(id),
+}));
+
+function callsign(overrides: Partial<CallsignStub> = {}): CallsignStub {
+  return {
+    id: 'cs-1',
+    normalized: 'MAINSAIL',
+    variants: [],
+    source: 'AI_SUGGESTED',
+    confidence: null,
+    approved: false,
+    notes: null,
+    createdAt: null,
+    updatedAt: null,
+    ...overrides,
+  };
+}
+
 function trace(overrides: Partial<DisplayTrace> = {}): DisplayTrace {
   return {
     id: 'trace-1',
@@ -75,6 +110,12 @@ describe('DiagnosticsPanel (#745)', () => {
     listRules.mockResolvedValue([]);
     setRuleEnabled.mockReset();
     setRuleEnabled.mockResolvedValue();
+    findCallsignByNormalized.mockReset();
+    findCallsignByNormalized.mockResolvedValue(null);
+    approveCallsign.mockReset();
+    approveCallsign.mockResolvedValue(callsign({ approved: true }));
+    deleteCallsign.mockReset();
+    deleteCallsign.mockResolvedValue();
   });
 
   it('renders nothing for a member (no diagnostics access)', () => {
@@ -228,5 +269,88 @@ describe('DiagnosticsPanel (#745)', () => {
     fireEvent.click(screen.getByTestId('diagnostics-open'));
     const link = await screen.findByRole('link', { name: /linguistic logic config/i });
     expect(link).toHaveAttribute('href', '/admin/linguistic');
+  });
+
+  it('looks up the parse callsigns and skips ALL STATIONS (#777)', async () => {
+    callerGroups = { groups: ['diagnostics'], loading: false };
+    listTracesForRecording.mockResolvedValue([
+      trace({ finalResult: { sender: 'mainsail', receiver: 'ALL STATIONS', source: 'bedrock' } }),
+    ]);
+    findCallsignByNormalized.mockResolvedValue(callsign());
+    render(<DiagnosticsPanel recordingId="rec-1" />);
+    fireEvent.click(screen.getByTestId('diagnostics-open'));
+
+    await screen.findByTestId('callsign-review');
+    await waitFor(() => expect(findCallsignByNormalized).toHaveBeenCalledWith('MAINSAIL'));
+    // Collective receiver is never a callsign — no lookup, no chip.
+    expect(findCallsignByNormalized).not.toHaveBeenCalledWith('ALL STATIONS');
+    expect(screen.getByTestId('callsign-chip-MAINSAIL')).toBeInTheDocument();
+    expect(screen.queryByTestId('callsign-chip-ALL STATIONS')).not.toBeInTheDocument();
+  });
+
+  it('shows confirm/reject for a pending suggested callsign to an admin (#777)', async () => {
+    callerGroups = { groups: ['admin'], loading: false };
+    listTracesForRecording.mockResolvedValue([
+      trace({ finalResult: { sender: 'MAINSAIL', source: 'bedrock' } }),
+    ]);
+    findCallsignByNormalized.mockResolvedValue(callsign({ id: 'cs-9', approved: false }));
+    render(<DiagnosticsPanel recordingId="rec-1" />);
+    fireEvent.click(screen.getByTestId('diagnostics-open'));
+
+    const confirm = await screen.findByTestId('callsign-confirm-MAINSAIL');
+    fireEvent.click(confirm);
+    await waitFor(() => expect(approveCallsign).toHaveBeenCalledWith('cs-9'));
+    await waitFor(() =>
+      expect(screen.getByTestId('callsign-state-MAINSAIL')).toHaveTextContent(/in dictionary/i),
+    );
+  });
+
+  it('rejects a suggested callsign on demand (#777)', async () => {
+    callerGroups = { groups: ['admin'], loading: false };
+    listTracesForRecording.mockResolvedValue([
+      trace({ finalResult: { sender: 'MAINSAIL', source: 'bedrock' } }),
+    ]);
+    findCallsignByNormalized.mockResolvedValue(callsign({ id: 'cs-9', approved: false }));
+    render(<DiagnosticsPanel recordingId="rec-1" />);
+    fireEvent.click(screen.getByTestId('diagnostics-open'));
+
+    const reject = await screen.findByTestId('callsign-reject-MAINSAIL');
+    fireEvent.click(reject);
+    await waitFor(() => expect(deleteCallsign).toHaveBeenCalledWith('cs-9'));
+    await waitFor(() =>
+      expect(screen.getByTestId('callsign-state-MAINSAIL')).toHaveTextContent(/rejected/i),
+    );
+  });
+
+  it('does NOT offer confirm/reject to a non-admin diagnostics viewer (#777)', async () => {
+    callerGroups = { groups: ['diagnostics'], loading: false };
+    listTracesForRecording.mockResolvedValue([
+      trace({ finalResult: { sender: 'MAINSAIL', source: 'bedrock' } }),
+    ]);
+    findCallsignByNormalized.mockResolvedValue(callsign({ approved: false }));
+    render(<DiagnosticsPanel recordingId="rec-1" />);
+    fireEvent.click(screen.getByTestId('diagnostics-open'));
+
+    await screen.findByTestId('callsign-chip-MAINSAIL');
+    await waitFor(() =>
+      expect(screen.getByTestId('callsign-state-MAINSAIL')).toHaveTextContent(/pending review/i),
+    );
+    expect(screen.queryByTestId('callsign-confirm-MAINSAIL')).not.toBeInTheDocument();
+  });
+
+  it('marks an already-approved callsign as in-dictionary with no actions (#777)', async () => {
+    callerGroups = { groups: ['admin'], loading: false };
+    listTracesForRecording.mockResolvedValue([
+      trace({ finalResult: { sender: 'MAINSAIL', source: 'bedrock' } }),
+    ]);
+    findCallsignByNormalized.mockResolvedValue(callsign({ source: 'LEGACY', approved: true }));
+    render(<DiagnosticsPanel recordingId="rec-1" />);
+    fireEvent.click(screen.getByTestId('diagnostics-open'));
+
+    await screen.findByTestId('callsign-chip-MAINSAIL');
+    await waitFor(() =>
+      expect(screen.getByTestId('callsign-state-MAINSAIL')).toHaveTextContent(/in dictionary/i),
+    );
+    expect(screen.queryByTestId('callsign-confirm-MAINSAIL')).not.toBeInTheDocument();
   });
 });

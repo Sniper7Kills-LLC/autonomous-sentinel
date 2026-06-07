@@ -224,6 +224,29 @@ export async function listCallsigns(): Promise<CallsignRow[]> {
   return rows;
 }
 
+/**
+ * Look up a single dictionary row by its normalized callsign (#777).
+ *
+ * Used by the diagnostics panel to show the dictionary state of a parse's
+ * sender/receiver and offer admin confirm/reject of `AI_SUGGESTED` rows.
+ * Matches on the row's `normalized` OR any of its `variants`
+ * (case-insensitive), so a callsign already merged in as a variant resolves
+ * to its canonical row. Returns `null` when the callsign is not in the
+ * dictionary.
+ */
+export async function findCallsignByNormalized(normalized: string): Promise<CallsignRow | null> {
+  const target = normalized.trim().toUpperCase();
+  if (!target) return null;
+  const rows = await listCallsigns();
+  return (
+    rows.find(
+      (r) =>
+        r.normalized.trim().toUpperCase() === target ||
+        r.variants.some((v) => v.trim().toUpperCase() === target),
+    ) ?? null
+  );
+}
+
 export async function createCallsign(input: CallsignInput): Promise<CallsignRow> {
   const client = getDataClient();
   const createFn = client.models.Callsign.create as unknown as (

@@ -88,6 +88,10 @@ export const AuditLog = a
       'TRANSMITTER_UPDATE',
       'TRANSMITTER_DELETE',
       'CALLSIGN_MERGE',
+      // Pipeline auto-suggested a new callsign from a parse (#776). Emitted
+      // by the linguistic Lambda when a parsed sender/receiver is absent from
+      // the dictionary and lands as an AI_SUGGESTED/approved=false row.
+      'CALLSIGN_SUGGEST',
       'LINGUISTIC_CONFIG_UPDATE',
       'BAN_REGION_PAGE_UPDATE',
       'PROMPT_VERSION_BUMP',
