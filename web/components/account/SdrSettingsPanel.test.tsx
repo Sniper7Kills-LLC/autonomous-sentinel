@@ -3,6 +3,11 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SdrSettingsPanel } from './SdrSettingsPanel';
 import type { SdrRow } from '@/lib/sdr';
 
+vi.mock('@/components/auth/AuthProvider', () => ({
+  useAuth: () => ({ sub: 'cog-member-001', loading: false }),
+  useCallerGroups: () => ({ groups: ['member'], loading: false }),
+}));
+
 /**
  * Tests for SdrSettingsPanel (#785).
  * Mocks the data layer (listMySdrs, createOwnedSdr, submitPublicSdr).

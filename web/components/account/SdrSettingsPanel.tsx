@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
+import { useAuth } from '@/components/auth/AuthProvider';
 import { Button } from '@/components/ui/Button';
 import {
   listMySdrs,
@@ -51,6 +52,7 @@ const REVIEW_STATUS_TONES: Record<string, string> = {
 };
 
 export function SdrSettingsPanel() {
+  const { sub } = useAuth();
   const [tab, setTab] = useState<ActiveTab>('list');
   const [sdrs, setSdrs] = useState<SdrRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -71,16 +73,17 @@ export function SdrSettingsPanel() {
   const [publicError, setPublicError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
+    if (!sub) return;
     setLoading(true);
     setListError(null);
     try {
-      setSdrs(await listMySdrs());
+      setSdrs(await listMySdrs(sub));
     } catch (e) {
       setListError(e instanceof Error ? e.message : 'Failed to load SDRs.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [sub]);
 
   useEffect(() => {
     void reload();

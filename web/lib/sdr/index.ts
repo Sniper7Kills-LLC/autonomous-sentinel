@@ -273,9 +273,18 @@ export const EMPTY_PUBLIC_FORM: PublicSdrFormValues = {
 
 /**
  * List the caller's SDRs (both OWNED and PUBLIC submissions).
- * Uses resolveAuthMode so the correct auth path is chosen.
+ *
+ * Accepts `callerSub` (the Cognito sub from `useAuth()`) so we can filter
+ * server-side rows to the caller's own entries. The Sdr model grants
+ * `allow.authenticated().to(['read'])` (pre-existing), meaning a full
+ * `Sdr.list` returns all rows to any signed-in user. Without the caller-sub
+ * filter the member panel would expose other members' SDR names and
+ * submitterIds. We filter client-side here; a server-side GSI query by
+ * ownerId/submitterId is the right long-term fix but requires a Lambda.
+ *
+ * @param callerSub - Cognito sub of the signed-in user (from `useAuth().sub`).
  */
-export async function listMySdrs(): Promise<SdrRow[]> {
+export async function listMySdrs(callerSub: string): Promise<SdrRow[]> {
   const client = getDataClient();
   const listFn = client.models.Sdr.list as unknown as (
     input?: Record<string, unknown>,
@@ -283,11 +292,15 @@ export async function listMySdrs(): Promise<SdrRow[]> {
   const authMode = await resolveAuthMode();
   const raw = await listFn({ authMode });
   throwOnErrors(raw.errors, 'listMySdrs');
-  return (raw.data ?? []).map(toSdrRow).sort((a, b) => {
-    // Owned first, then public; within each kind sort by name
-    if (a.kind !== b.kind) return (a.kind ?? '') < (b.kind ?? '') ? -1 : 1;
-    return a.name.localeCompare(b.name);
-  });
+  return (raw.data ?? [])
+    .map(toSdrRow)
+    // Only return rows owned by or submitted by this caller.
+    .filter((r) => r.ownerId === callerSub || r.submitterId === callerSub)
+    .sort((a, b) => {
+      // Owned first, then public; within each kind sort by name
+      if (a.kind !== b.kind) return (a.kind ?? '') < (b.kind ?? '') ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
 }
 
 /**

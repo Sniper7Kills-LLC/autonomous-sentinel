@@ -172,7 +172,9 @@ async function dispatchSubmitPublicSdr(
     submitterId: sub,
     reviewStatus: 'PENDING',
     publicVisible: false,
-    // ownerId intentionally null — PUBLIC SDRs have no member owner
+    // ownerId omitted (undefined → key absent → sparse GSI, safe per #718) —
+    // PUBLIC SDRs have no member owner; the submitterId field identifies the
+    // submitting member instead.
     ownerId: undefined,
     ...(latitude !== null ? { latitude } : {}),
     ...(longitude !== null ? { longitude } : {}),

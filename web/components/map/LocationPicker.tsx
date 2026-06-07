@@ -43,6 +43,9 @@ export function LocationPicker({ latitude, longitude, onChange, label }: Locatio
   const hostRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MlMap | null>(null);
   const markerRef = useRef<MlMarker | null>(null);
+  // Track whether the marker has been added to the map — avoids probing
+  // MapLibre's private `_map` field (not in the public API).
+  const markerAddedRef = useRef(false);
   const [mounted, setMounted] = useState(false);
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(
     latitude !== null && longitude !== null && latitude !== undefined && longitude !== undefined
@@ -107,6 +110,7 @@ export function LocationPicker({ latitude, longitude, onChange, label }: Locatio
           latitude !== undefined && longitude !== undefined
         ) {
           marker.setLngLat([longitude, latitude]).addTo(map);
+          markerAddedRef.current = true;
         }
 
         markerRef.current = marker;
@@ -125,8 +129,9 @@ export function LocationPicker({ latitude, longitude, onChange, label }: Locatio
           const lat = roundCoord(e.lngLat.lat);
           const lng = roundCoord(e.lngLat.lng);
           marker.setLngLat([lng, lat]);
-          if (!marker._map) {
+          if (!markerAddedRef.current) {
             marker.addTo(map);
+            markerAddedRef.current = true;
           }
           setCoords({ lat, lng });
           onChange(lat, lng);
@@ -141,6 +146,7 @@ export function LocationPicker({ latitude, longitude, onChange, label }: Locatio
 
     return () => {
       disposed = true;
+      markerAddedRef.current = false;
       if (markerRef.current) {
         try {
           markerRef.current.remove();
@@ -169,8 +175,9 @@ export function LocationPicker({ latitude, longitude, onChange, label }: Locatio
     const lat = roundCoord(latitude);
     const lng = roundCoord(longitude);
     markerRef.current.setLngLat([lng, lat]);
-    if (!(markerRef.current as unknown as { _map?: unknown })._map) {
+    if (!markerAddedRef.current) {
       markerRef.current.addTo(mapRef.current);
+      markerAddedRef.current = true;
     }
     setCoords({ lat, lng });
   }, [latitude, longitude]);
