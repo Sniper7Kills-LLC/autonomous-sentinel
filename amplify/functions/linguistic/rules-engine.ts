@@ -96,6 +96,33 @@ export interface RuleSummary {
   confidence: number;
 }
 
+/**
+ * One rule's evaluation against a transcript, captured for the diagnostics
+ * trace (#744). Every loaded rule produces exactly one of these per run, so
+ * a diagnostics viewer can see which regexes ran, which matched, and what
+ * each captured — not just the winning rule the parse kept.
+ */
+export interface RuleEvaluation {
+  ruleId: string;
+  component: RuleComponent;
+  messageType: string;
+  appliesToType: string | null;
+  pattern: string;
+  confidence: number;
+  /** Whether this rule's regex matched the transcript. */
+  matched: boolean;
+  /** The full matched substring (`match[0]`), or null when no match. */
+  matchedText: string | null;
+  /** Mapped named-group captures (field → value); empty when no match. */
+  captures: Record<string, string>;
+}
+
+/** Traced match result (#744): the winner plus every rule's evaluation. */
+export interface TracedMatch {
+  match: RuleMatch | null;
+  evaluations: RuleEvaluation[];
+}
+
 interface CompiledRule {
   id: string;
   re: RegExp;
@@ -198,24 +225,50 @@ export class LinguisticRulesEngine {
    * match, or null when nothing matches.
    */
   async tryMatch(transcript: string): Promise<RuleMatch | null> {
+    return (await this.tryMatchTraced(transcript)).match;
+  }
+
+  /**
+   * Same selection as {@link tryMatch} (first TYPE rule wins, components
+   * compose onto it, lowest component confidence wins), but additionally
+   * returns one {@link RuleEvaluation} for EVERY loaded rule so the #744
+   * diagnostics trace can show what each regex did — not just the winner.
+   *
+   * Every rule's regex is evaluated exactly once here (and the result is
+   * reused for both the trace and the winner derivation), so the winner is
+   * identical to the lazy `tryMatch` path; the only difference is that
+   * rules after the winning TYPE rule are also evaluated for the trace.
+   */
+  async tryMatchTraced(transcript: string): Promise<TracedMatch> {
+    const evaluations: RuleEvaluation[] = [];
     if (typeof transcript !== 'string' || transcript.length === 0) {
-      return null;
+      return { match: null, evaluations };
     }
     const rules = await this.loadRules(); // priority-desc
 
-    // 1. Type detection — first matching TYPE rule wins.
-    let typeRule: CompiledRule | undefined;
-    let typeM: RegExpMatchArray | undefined;
-    for (const rule of rules) {
-      if (rule.component !== 'TYPE') continue;
+    // Evaluate every rule once; reuse each match for both the trace record
+    // and the winner derivation below.
+    const evaluated = rules.map((rule) => {
       const m = transcript.match(rule.re);
-      if (m) {
-        typeRule = rule;
-        typeM = m;
-        break;
-      }
-    }
-    if (!typeRule || !typeM) return null;
+      evaluations.push({
+        ruleId: rule.id,
+        component: rule.component,
+        messageType: rule.messageType,
+        appliesToType: rule.appliesToType,
+        pattern: rule.re.source,
+        confidence: rule.confidence,
+        matched: m !== null,
+        matchedText: m ? m[0] : null,
+        captures: m ? this.mapCaptures(m, rule.captureMap) : {},
+      });
+      return { rule, m };
+    });
+
+    // 1. Type detection — first matching TYPE rule wins (priority-desc order).
+    const typeHit = evaluated.find((e) => e.rule.component === 'TYPE' && e.m);
+    if (!typeHit?.m) return { match: null, evaluations };
+    const typeRule = typeHit.rule;
+    const typeM = typeHit.m;
 
     const messageType = typeRule.messageType;
     // The TYPE rule may also extract fields (whole-message style); those
@@ -228,10 +281,9 @@ export class LinguisticRulesEngine {
     for (const component of ['SENDER', 'RECEIVER', 'BODY'] as const) {
       const field = COMPONENT_FIELD[component];
       if (fields[field]) continue; // TYPE rule already filled it
-      for (const rule of rules) {
+      for (const { rule, m } of evaluated) {
         if (rule.component !== component) continue;
         if (rule.appliesToType && rule.appliesToType !== messageType) continue;
-        const m = transcript.match(rule.re);
         if (!m) continue;
         const value = this.extractComponentValue(m, rule.captureMap, field);
         if (value) {
@@ -243,12 +295,15 @@ export class LinguisticRulesEngine {
     }
 
     return {
-      ruleId: typeRule.id,
-      promptVersion: typeRule.promptVersion,
-      // Aggregate: a shaky component drags the whole parse down so the
-      // #540 gate can route it to the AI.
-      confidence: Math.min(...confidences),
-      message: { messageType, fields },
+      match: {
+        ruleId: typeRule.id,
+        promptVersion: typeRule.promptVersion,
+        // Aggregate: a shaky component drags the whole parse down so the
+        // #540 gate can route it to the AI.
+        confidence: Math.min(...confidences),
+        message: { messageType, fields },
+      },
+      evaluations,
     };
   }
 

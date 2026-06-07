@@ -391,3 +391,62 @@ describe('LinguisticRulesEngine — cache TTL', () => {
     expect(invocations).toBe(2);
   });
 });
+
+describe('LinguisticRulesEngine — tryMatchTraced (#744)', () => {
+  it('records an evaluation for EVERY loaded rule (matched + unmatched)', async () => {
+    const engine = new LinguisticRulesEngine(
+      stubLoader([
+        makeRule({ id: 't', component: 'TYPE', messageType: 'SKYKING', pattern: 'SKYKING' }),
+        makeRule({ id: 'miss', component: 'TYPE', messageType: 'SKYBIRD', pattern: 'SKYBIRD' }),
+        makeRule({
+          id: 's',
+          component: 'SENDER',
+          pattern: 'THIS IS (?<sender>\\w+)',
+          captureMap: { sender: 'sender' },
+        }),
+      ]),
+    );
+    const { match, evaluations } = await engine.tryMatchTraced('SKYKING THIS IS MAINSAIL');
+
+    expect(evaluations).toHaveLength(3);
+    const byId = new Map(evaluations.map((e) => [e.ruleId, e]));
+    expect(byId.get('t')?.matched).toBe(true);
+    expect(byId.get('t')?.matchedText).toBe('SKYKING');
+    expect(byId.get('miss')?.matched).toBe(false);
+    expect(byId.get('miss')?.matchedText).toBeNull();
+    expect(byId.get('s')?.matched).toBe(true);
+    expect(byId.get('s')?.captures).toEqual({ sender: 'MAINSAIL' });
+    // Winner is unchanged from the lazy tryMatch path.
+    expect(match?.message.messageType).toBe('SKYKING');
+    expect(match?.message.fields.sender).toBe('MAINSAIL');
+  });
+
+  it('returns a null match with full evaluations when no TYPE rule matches', async () => {
+    const engine = new LinguisticRulesEngine(
+      stubLoader([
+        makeRule({ id: 't', component: 'TYPE', messageType: 'SKYKING', pattern: 'SKYKING' }),
+      ]),
+    );
+    const { match, evaluations } = await engine.tryMatchTraced('nothing relevant here');
+    expect(match).toBeNull();
+    expect(evaluations).toHaveLength(1);
+    expect(evaluations[0]?.matched).toBe(false);
+  });
+
+  it('tryMatch returns the same winner tryMatchTraced derives', async () => {
+    const rules = [
+      makeRule({ id: 't', component: 'TYPE', messageType: 'SKYKING', pattern: 'SKYKING' }),
+      makeRule({
+        id: 's',
+        component: 'SENDER',
+        pattern: 'THIS IS (?<sender>\\w+)',
+        captureMap: { sender: 'sender' },
+      }),
+    ];
+    const engineA = new LinguisticRulesEngine(stubLoader(rules));
+    const engineB = new LinguisticRulesEngine(stubLoader(rules));
+    const lazy = await engineA.tryMatch('SKYKING THIS IS MAINSAIL');
+    const traced = (await engineB.tryMatchTraced('SKYKING THIS IS MAINSAIL')).match;
+    expect(traced).toEqual(lazy);
+  });
+});
