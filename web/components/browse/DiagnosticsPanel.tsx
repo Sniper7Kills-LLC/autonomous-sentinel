@@ -5,7 +5,11 @@ import { Button } from '@/components/ui/Button';
 import { Drawer } from '@/components/ui/Drawer';
 import { useCallerGroups } from '@/components/auth/AuthProvider';
 import { hasDiagnosticsAccess } from '@/lib/auth/roles';
-import { listTracesForRecording, type DisplayTrace } from '@/lib/messages/traces';
+import {
+  listTracesForRecording,
+  fetchTraceOverflow,
+  type DisplayTrace,
+} from '@/lib/messages/traces';
 import { diffTranscript, type DiffSegment } from '@/lib/revisions/diff';
 import styles from './DiagnosticsPanel.module.css';
 
@@ -159,6 +163,80 @@ function prettyJson(v: unknown): string {
   }
 }
 
+/**
+ * Renders a large trace field: the inline value when present, or — when the
+ * field was spilled to S3 by the size guard (#749) — a button that fetches
+ * the blob on demand via a signed URL. Falls back to a dropped-marker when
+ * the field was truncated without a spill (no bucket configured).
+ */
+function OverflowField({
+  inline,
+  overflowKey,
+  testId,
+}: {
+  inline: string | null;
+  overflowKey?: string;
+  testId: string;
+}) {
+  const [fetched, setFetched] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (inline !== null) {
+    return (
+      <pre className={styles.pre} data-testid={testId}>
+        {inline}
+      </pre>
+    );
+  }
+
+  if (fetched !== null) {
+    return (
+      <pre className={styles.pre} data-testid={testId}>
+        {fetched}
+      </pre>
+    );
+  }
+
+  if (!overflowKey) {
+    return (
+      <pre className={styles.pre} data-testid={testId}>
+        (dropped — trace truncated, no spill bucket)
+      </pre>
+    );
+  }
+
+  return (
+    <div data-testid={testId}>
+      <p className={styles.muted}>This field was offloaded to S3 (large trace).</p>
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        loading={loading}
+        disabled={loading}
+        onClick={() => {
+          setLoading(true);
+          setError(null);
+          fetchTraceOverflow(overflowKey)
+            .then(setFetched)
+            .catch((e: unknown) =>
+              setError(e instanceof Error ? e.message : 'Failed to load from S3.'),
+            )
+            .finally(() => setLoading(false));
+        }}
+      >
+        Load from S3
+      </Button>
+      {error && (
+        <p className={styles.error} role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function RunDetail({ trace }: { trace: DisplayTrace }) {
   return (
     <div className={styles.detail}>
@@ -232,16 +310,19 @@ function RunDetail({ trace }: { trace: DisplayTrace }) {
               <dd>{trace.bedrockPromptVersion ?? '—'}</dd>
             </dl>
             <h5 className={styles.subheading}>Rendered prompt</h5>
-            <pre className={styles.pre} data-testid="bedrock-prompt">
-              {trace.bedrockRenderedPrompt ??
-                (trace.truncated ? '(dropped — trace truncated)' : '—')}
-            </pre>
+            <OverflowField
+              inline={trace.bedrockRenderedPrompt}
+              overflowKey={trace.overflowKeys.renderedPrompt}
+              testId="bedrock-prompt"
+            />
             <h5 className={styles.subheading}>Raw response</h5>
-            <pre className={styles.pre}>
-              {trace.bedrockRawResponse === null && trace.truncated
-                ? '(dropped — trace truncated)'
-                : prettyJson(trace.bedrockRawResponse)}
-            </pre>
+            <OverflowField
+              inline={
+                trace.bedrockRawResponse === null ? null : prettyJson(trace.bedrockRawResponse)
+              }
+              overflowKey={trace.overflowKeys.rawResponse}
+              testId="bedrock-response"
+            />
             <h5 className={styles.subheading}>Proposed rules</h5>
             <pre className={styles.pre}>{prettyJson(trace.bedrockProposedRules)}</pre>
           </>

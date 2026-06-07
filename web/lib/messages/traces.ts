@@ -166,3 +166,21 @@ export async function listTracesForRecording(recordingId: string): Promise<Displ
   }
   return (raw.data ?? []).map(toDisplayTrace).sort((a, b) => b.runAt.localeCompare(a.runAt));
 }
+
+/**
+ * Fetch a spilled trace blob (#749) from its S3 `diagnostics/` key. When a
+ * trace is too large for a single DynamoDB row the linguistic Lambda offloads
+ * the rendered prompt + raw response to S3 and stores the keys in
+ * `overflowKeys`; the popout calls this on demand to display them. Read is
+ * authorized by the `diagnostics/*` storage rule (admin/moderator/diagnostics)
+ * — a signed URL is minted, then fetched as text.
+ */
+export async function fetchTraceOverflow(key: string): Promise<string> {
+  const { getUrl } = await import('aws-amplify/storage');
+  const { url } = await getUrl({ path: key });
+  const res = await fetch(url.toString());
+  if (!res.ok) {
+    throw new Error(`Failed to fetch diagnostics blob (${res.status})`);
+  }
+  return res.text();
+}

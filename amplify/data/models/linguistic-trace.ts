@@ -22,14 +22,13 @@ import { a } from '@aws-amplify/backend';
  *     traces automatically. Configured via a CfnTable override in
  *     `backend.ts` (the Gen 2 DSL has no TTL primitive).
  *   - Size guard: when the serialized row would exceed the DDB item limit
- *     the linguistic Lambda truncates the two large text fields
- *     (`bedrockRenderedPrompt`, `bedrockRawResponse`) and sets
- *     `truncated=true`. The S3 SPILL — moving those fields to a
- *     `diagnostics/` object keyed in `overflowKeys` — is supported by the
- *     size-guard helper but NOT wired at v1: granting the data-stack
- *     linguistic Lambda an S3 bucket-token reference is a known CFN-cycle
- *     trigger (#644), so it is a #744 follow-up. Until then oversized rows
- *     drop the prompt/response blob but keep every structured field.
+ *     the linguistic Lambda moves the two large text fields
+ *     (`bedrockRenderedPrompt`, `bedrockRawResponse`) to a `diagnostics/`
+ *     S3 object, records the keys in `overflowKeys`, and sets
+ *     `truncated=true` (#749). The diagnostics popout (#745) signed-URL-
+ *     fetches those blobs on demand. If no diagnostics bucket is configured
+ *     the guard falls back to dropping the fields (still `truncated=true`),
+ *     so a write never fails. Either way every structured field is kept.
  *
  * Authz: read for admin + moderator + diagnostics (the diagnostics group
  * is the additive capability group from #743); writes come only from the

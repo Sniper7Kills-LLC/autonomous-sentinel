@@ -161,6 +161,17 @@ export function attachStorageLifecycle(
         prefix: 'exports/',
         expirationInDays: 7,
       },
+      {
+        // Linguistic diagnostics-trace spill (#749). Oversized
+        // LinguisticTrace rows offload their prompt/response blobs here;
+        // expire at 90 days to match the LinguisticTrace DynamoDB TTL so
+        // the two retention windows stay aligned.
+        id: 'diagnostics-90d',
+        status: 'Enabled',
+        prefix: 'diagnostics/',
+        expirationInDays: 90,
+        abortIncompleteMultipartUpload: { daysAfterInitiation: 1 },
+      },
     ],
   };
 }
