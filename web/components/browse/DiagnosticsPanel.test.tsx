@@ -16,6 +16,17 @@ vi.mock('@/lib/messages/traces', async (orig) => ({
   fetchTraceOverflow: (key: string) => fetchTraceOverflow(key),
 }));
 
+interface AdminRuleStub {
+  id: string;
+  enabled: boolean;
+}
+const listRules = vi.fn<() => Promise<AdminRuleStub[]>>();
+const setRuleEnabled = vi.fn<(id: string, enabled: boolean) => Promise<void>>();
+vi.mock('@/lib/admin/linguistic', () => ({
+  listRules: () => listRules(),
+  setRuleEnabled: (id: string, enabled: boolean) => setRuleEnabled(id, enabled),
+}));
+
 function trace(overrides: Partial<DisplayTrace> = {}): DisplayTrace {
   return {
     id: 'trace-1',
@@ -60,6 +71,10 @@ describe('DiagnosticsPanel (#745)', () => {
     callerGroups = { groups: [], loading: false };
     listTracesForRecording.mockReset();
     fetchTraceOverflow.mockReset();
+    listRules.mockReset();
+    listRules.mockResolvedValue([]);
+    setRuleEnabled.mockReset();
+    setRuleEnabled.mockResolvedValue();
   });
 
   it('renders nothing for a member (no diagnostics access)', () => {
@@ -180,5 +195,38 @@ describe('DiagnosticsPanel (#745)', () => {
     await screen.findByTestId('bedrock-prompt');
     fireEvent.click(screen.getByRole('button', { name: /load from s3/i }));
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/signed url expired/i));
+  });
+
+  it('lets an admin disable a rule inline from the rules table (#746)', async () => {
+    callerGroups = { groups: ['admin'], loading: false };
+    listTracesForRecording.mockResolvedValue([trace()]); // rule id 'r1'
+    listRules.mockResolvedValue([{ id: 'r1', enabled: true }]);
+    render(<DiagnosticsPanel recordingId="rec-1" />);
+    fireEvent.click(screen.getByTestId('diagnostics-open'));
+
+    const toggle = await screen.findByTestId('rule-toggle-r1');
+    expect(toggle).toHaveTextContent('Disable');
+    fireEvent.click(toggle);
+    await waitFor(() => expect(setRuleEnabled).toHaveBeenCalledWith('r1', false));
+    await waitFor(() => expect(screen.getByTestId('rule-toggle-r1')).toHaveTextContent('Enable'));
+  });
+
+  it('does NOT show rule toggles to a non-admin diagnostics viewer (#746)', async () => {
+    callerGroups = { groups: ['diagnostics'], loading: false };
+    listTracesForRecording.mockResolvedValue([trace()]);
+    render(<DiagnosticsPanel recordingId="rec-1" />);
+    fireEvent.click(screen.getByTestId('diagnostics-open'));
+    await screen.findByTestId('rules-table');
+    expect(listRules).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('rule-toggle-r1')).not.toBeInTheDocument();
+  });
+
+  it('links an admin to the full Linguistic Logic config page (#746)', async () => {
+    callerGroups = { groups: ['admin'], loading: false };
+    listTracesForRecording.mockResolvedValue([trace()]);
+    render(<DiagnosticsPanel recordingId="rec-1" />);
+    fireEvent.click(screen.getByTestId('diagnostics-open'));
+    const link = await screen.findByRole('link', { name: /linguistic logic config/i });
+    expect(link).toHaveAttribute('href', '/admin/linguistic');
   });
 });
