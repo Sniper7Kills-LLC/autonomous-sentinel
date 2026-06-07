@@ -12,10 +12,13 @@ const observeMock = vi.fn((_uploaderId: string, handlers: Handlers) => {
   captured = handlers;
   return { unsubscribe: unsubscribeMock };
 });
+// Initial one-shot list (reliable first paint). Default: empty.
+const listMock = vi.fn<() => Promise<{ items: UploadRow[]; nextToken: string | null }>>();
 vi.mock('@/lib/uploads/query', async (importActual) => {
   const actual = await importActual<Record<string, unknown>>();
   return {
     ...actual,
+    listMyUploads: () => listMock(),
     observeMyUploads: (uploaderId: string, handlers: Handlers) => observeMock(uploaderId, handlers),
   };
 });
@@ -69,6 +72,8 @@ describe('UploadsList (#774 live)', () => {
     captured = null;
     observeMock.mockClear();
     unsubscribeMock.mockClear();
+    listMock.mockReset();
+    listMock.mockResolvedValue({ items: [], nextToken: null });
     groupsMock.mockReset();
     groupsMock.mockReturnValue([]);
     reprocessMock.mockReset();
@@ -135,10 +140,24 @@ describe('UploadsList (#774 live)', () => {
     await waitFor(() => expect(screen.getByText('Published')).toBeInTheDocument());
   });
 
-  it('renders an error banner when the subscription errors', async () => {
+  it('keeps showing the list when the live subscription errors (no blanking) (#774 fix)', async () => {
+    listMock.mockResolvedValue({ items: [row({ id: 'rec-keep' })], nextToken: null });
     render(<UploadsList uploaderId="sub-1" />);
-    act(() => captured?.error?.(new Error('Unauthorized')));
-    expect(await screen.findByRole('alert')).toHaveTextContent(/Unauthorized/i);
+    // Initial list paints.
+    await waitFor(() => expect(screen.getByText('whisper.cpp exit 1')).toBeInTheDocument());
+    // A subscription error must NOT blank the page or show a banner.
+    act(() => captured?.error?.({ errors: [{ message: 'connection lost' }] }));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByText('whisper.cpp exit 1')).toBeInTheDocument();
+  });
+
+  it('shows a readable error (not "[object Object]") when the initial list fails (#774 fix)', async () => {
+    // AppSync errors are plain objects, not Error instances.
+    listMock.mockRejectedValue({ errors: [{ message: 'Unauthorized' }] });
+    render(<UploadsList uploaderId="sub-1" />);
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/Unauthorized/i);
+    expect(alert).not.toHaveTextContent(/\[object Object\]/);
   });
 
   it('unsubscribes on unmount', () => {
