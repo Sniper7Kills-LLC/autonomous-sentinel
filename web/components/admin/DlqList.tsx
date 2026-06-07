@@ -221,77 +221,79 @@ export function DlqList() {
       ) : visible.length === 0 ? (
         <p className={styles.empty}>No stuck messages on the {STAGE_LABELS[stage]} DLQ. 🎉</p>
       ) : (
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th scope="col" className={styles.checkCol}>
-                <input
-                  type="checkbox"
-                  checked={allVisibleSelected}
-                  onChange={toggleAll}
-                  aria-label="Select all visible messages"
-                />
-              </th>
-              <th scope="col">Recording</th>
-              <th scope="col">Attempts</th>
-              <th scope="col">Enqueued</th>
-              <th scope="col">Error</th>
-              <th scope="col" className={styles.actionsCol}>
-                Actions
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {visible.map((m) => (
-              <tr key={m.messageId} className={styles.row}>
-                <td className={styles.checkCol}>
+        <div className={styles.tableWrap} role="region" aria-label="DLQ messages" tabIndex={0}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th scope="col" className={styles.checkCol}>
                   <input
                     type="checkbox"
-                    checked={selected.has(m.messageId)}
-                    onChange={() => toggle(m.messageId)}
-                    aria-label={`Select message ${m.messageId}`}
+                    checked={allVisibleSelected}
+                    onChange={toggleAll}
+                    aria-label="Select all visible messages"
                   />
-                </td>
-                <td>
-                  {m.recordingId ? (
-                    <code className={styles.recId}>{m.recordingId}</code>
-                  ) : (
-                    <span className={styles.muted}>—</span>
-                  )}
-                </td>
-                <td>
-                  <Badge tone={m.approximateReceiveCount >= 3 ? 'danger' : 'warn'}>
-                    {m.approximateReceiveCount}
-                  </Badge>
-                </td>
-                <td className={styles.muted}>
-                  {m.enqueuedAt ? new Date(m.enqueuedAt).toLocaleString() : '—'}
-                </td>
-                <td className={styles.errorCell} title={m.errorReason ?? undefined}>
-                  {m.errorReason ?? <span className={styles.muted}>—</span>}
-                </td>
-                <td className={styles.actionsCol}>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() => confirmAndRun([m], 'requeue')}
-                  >
-                    Retry
-                  </Button>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() => confirmAndRun([m], 'drop')}
-                  >
-                    Drop
-                  </Button>
-                </td>
+                </th>
+                <th scope="col">Recording</th>
+                <th scope="col">Attempts</th>
+                <th scope="col">Enqueued</th>
+                <th scope="col">Error</th>
+                <th scope="col" className={styles.actionsCol}>
+                  Actions
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {visible.map((m) => (
+                <tr key={m.messageId} className={styles.row}>
+                  <td className={styles.checkCol}>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(m.messageId)}
+                      onChange={() => toggle(m.messageId)}
+                      aria-label={`Select message ${m.messageId}`}
+                    />
+                  </td>
+                  <td>
+                    {m.recordingId ? (
+                      <code className={styles.recId}>{m.recordingId}</code>
+                    ) : (
+                      <span className={styles.muted}>—</span>
+                    )}
+                  </td>
+                  <td>
+                    <Badge tone={m.approximateReceiveCount >= 3 ? 'danger' : 'warn'}>
+                      {m.approximateReceiveCount}
+                    </Badge>
+                  </td>
+                  <td className={styles.muted}>
+                    {m.enqueuedAt ? new Date(m.enqueuedAt).toLocaleString() : '—'}
+                  </td>
+                  <td className={styles.errorCell} title={m.errorReason ?? undefined}>
+                    {m.errorReason ?? <span className={styles.muted}>—</span>}
+                  </td>
+                  <td className={styles.actionsCol}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => confirmAndRun([m], 'requeue')}
+                    >
+                      Retry
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => confirmAndRun([m], 'drop')}
+                    >
+                      Drop
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </section>
   );
