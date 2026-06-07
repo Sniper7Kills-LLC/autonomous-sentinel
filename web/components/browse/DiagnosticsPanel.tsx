@@ -1,15 +1,17 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { Drawer } from '@/components/ui/Drawer';
 import { useCallerGroups } from '@/components/auth/AuthProvider';
-import { hasDiagnosticsAccess } from '@/lib/auth/roles';
+import { hasDiagnosticsAccess, isAdmin } from '@/lib/auth/roles';
 import {
   listTracesForRecording,
   fetchTraceOverflow,
   type DisplayTrace,
 } from '@/lib/messages/traces';
+import { listRules, setRuleEnabled } from '@/lib/admin/linguistic';
 import { diffTranscript, type DiffSegment } from '@/lib/revisions/diff';
 import styles from './DiagnosticsPanel.module.css';
 
@@ -38,6 +40,12 @@ export function DiagnosticsPanel({ recordingId }: DiagnosticsPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [compareId, setCompareId] = useState<string | null>(null);
+  // Admin-only (#746): live enabled-state of LinguisticRules, keyed by id,
+  // so the rules table can toggle each rule. null until fetched / for
+  // non-admins (who never see the toggle).
+  const [ruleEnabled, setRuleEnabledState] = useState<Record<string, boolean> | null>(null);
+
+  const admin = isAdmin(groups);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -46,13 +54,34 @@ export function DiagnosticsPanel({ recordingId }: DiagnosticsPanelProps) {
       const rows = await listTracesForRecording(recordingId);
       setTraces(rows);
       setSelectedId(rows[0]?.id ?? null);
+      // Admin-only: fetch current rule enabled-state for the inline toggle.
+      // Best-effort — a failure just leaves the toggles hidden, never blocks
+      // the (already-loaded) trace view.
+      if (admin) {
+        try {
+          const rules = await listRules();
+          setRuleEnabledState(Object.fromEntries(rules.map((r) => [r.id, r.enabled])));
+        } catch {
+          setRuleEnabledState(null);
+        }
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load diagnostics.');
       setTraces([]);
     } finally {
       setLoading(false);
     }
-  }, [recordingId]);
+  }, [recordingId, admin]);
+
+  const toggleRule = useCallback((ruleId: string, next: boolean) => {
+    // Optimistic flip; revert on failure. Fire-and-forget so the handler
+    // matches the void-returning onToggleRule prop (no floating promise in a
+    // JSX attribute).
+    setRuleEnabledState((m) => (m ? { ...m, [ruleId]: next } : m));
+    void setRuleEnabled(ruleId, next).catch(() => {
+      setRuleEnabledState((m) => (m ? { ...m, [ruleId]: !next } : m));
+    });
+  }, []);
 
   useEffect(() => {
     // Lazy: only fetch the first time the drawer is opened.
@@ -101,6 +130,16 @@ export function DiagnosticsPanel({ recordingId }: DiagnosticsPanelProps) {
           </p>
         )}
 
+        {admin && (
+          <p className={styles.muted}>
+            Admin: toggle a rule below, or open the{' '}
+            <Link href="/admin/linguistic" className={styles.link}>
+              Linguistic Logic config
+            </Link>{' '}
+            for thresholds, schemas + the Bedrock prompt.
+          </p>
+        )}
+
         {traces && traces.length > 0 && (
           <>
             <div className={styles.runBar}>
@@ -137,7 +176,14 @@ export function DiagnosticsPanel({ recordingId }: DiagnosticsPanelProps) {
               </label>
             </div>
 
-            {selected && !compare && <RunDetail trace={selected} />}
+            {selected && !compare && (
+              <RunDetail
+                trace={selected}
+                admin={admin}
+                ruleEnabled={ruleEnabled}
+                onToggleRule={toggleRule}
+              />
+            )}
             {selected && compare && <RunDiff base={compare} next={selected} />}
           </>
         )}
@@ -237,7 +283,19 @@ function OverflowField({
   );
 }
 
-function RunDetail({ trace }: { trace: DisplayTrace }) {
+function RunDetail({
+  trace,
+  admin,
+  ruleEnabled,
+  onToggleRule,
+}: {
+  trace: DisplayTrace;
+  admin: boolean;
+  ruleEnabled: Record<string, boolean> | null;
+  onToggleRule: (ruleId: string, next: boolean) => void;
+}) {
+  // Show the admin toggle column only when we have live rule state to act on.
+  const showToggle = admin && ruleEnabled !== null;
   return (
     <div className={styles.detail}>
       <section>
@@ -271,27 +329,52 @@ function RunDetail({ trace }: { trace: DisplayTrace }) {
                 <th scope="col">matched</th>
                 <th scope="col">confidence</th>
                 <th scope="col">captures</th>
+                {showToggle && <th scope="col">enabled</th>}
               </tr>
             </thead>
             <tbody>
-              {trace.rulesEvaluated.map((r, i) => (
-                <tr key={`${r.ruleId}-${i}`} data-matched={r.matched}>
-                  <td>
-                    <code className={styles.code}>{r.pattern}</code>
-                    <div className={styles.ruleId}>{r.ruleId}</div>
-                  </td>
-                  <td>{r.component ?? '—'}</td>
-                  <td>{r.matched ? '✓' : '·'}</td>
-                  <td>{r.confidence === null ? '—' : r.confidence.toFixed(2)}</td>
-                  <td>
-                    {Object.keys(r.captures).length > 0 ? (
-                      <code className={styles.code}>{JSON.stringify(r.captures)}</code>
-                    ) : (
-                      '—'
+              {trace.rulesEvaluated.map((r, i) => {
+                // Default to enabled: the engine only evaluates enabled rules,
+                // so a rule present in the trace was on at run time. A rule
+                // deleted since won't be in the map → no toggle for that row.
+                const known = ruleEnabled !== null && r.ruleId in ruleEnabled;
+                const on = ruleEnabled?.[r.ruleId] ?? true;
+                return (
+                  <tr key={`${r.ruleId}-${i}`} data-matched={r.matched}>
+                    <td>
+                      <code className={styles.code}>{r.pattern}</code>
+                      <div className={styles.ruleId}>{r.ruleId}</div>
+                    </td>
+                    <td>{r.component ?? '—'}</td>
+                    <td>{r.matched ? '✓' : '·'}</td>
+                    <td>{r.confidence === null ? '—' : r.confidence.toFixed(2)}</td>
+                    <td>
+                      {Object.keys(r.captures).length > 0 ? (
+                        <code className={styles.code}>{JSON.stringify(r.captures)}</code>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    {showToggle && (
+                      <td>
+                        {known ? (
+                          <Button
+                            type="button"
+                            variant={on ? 'secondary' : 'primary'}
+                            size="sm"
+                            data-testid={`rule-toggle-${r.ruleId}`}
+                            onClick={() => onToggleRule(r.ruleId, !on)}
+                          >
+                            {on ? 'Disable' : 'Enable'}
+                          </Button>
+                        ) : (
+                          <span className={styles.ruleId}>deleted</span>
+                        )}
+                      </td>
                     )}
-                  </td>
-                </tr>
-              ))}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

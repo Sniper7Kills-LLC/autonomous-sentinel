@@ -7,6 +7,11 @@
   margin: 0 0 var(--sp-3);
 }
 
+.link {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
 .error {
   color: var(--danger);
   margin: 0 0 var(--sp-3);
