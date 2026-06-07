@@ -1,0 +1,128 @@
+.wrap {
+  display: inline-flex;
+}
+
+.muted {
+  color: var(--text-2);
+  margin: 0 0 var(--sp-3);
+}
+
+.error {
+  color: var(--danger);
+  margin: 0 0 var(--sp-3);
+}
+
+.runBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+  padding-bottom: var(--sp-3);
+  margin-bottom: var(--sp-4);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.runSelect {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.runSelect select {
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font: inherit;
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+
+.heading {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-h5);
+  color: var(--text-1);
+}
+
+.subheading {
+  margin: var(--sp-3) 0 var(--sp-1);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--sp-1) var(--sp-3);
+  margin: 0;
+}
+
+.dl dt {
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+
+.dl dd {
+  margin: 0;
+  color: var(--text-1);
+}
+
+.pre {
+  margin: 0;
+  padding: var(--sp-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono-sm);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 24rem;
+  overflow-y: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: var(--sp-1) var(--sp-2);
+  border-bottom: 1px solid var(--border-1);
+  vertical-align: top;
+}
+
+.table tr[data-matched='true'] {
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+}
+
+.code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono-sm);
+  color: var(--text-1);
+}
+
+.ruleId {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+
+.added {
+  background: color-mix(in srgb, var(--color-success) 28%, transparent);
+  text-decoration: none;
+}
+
+.removed {
+  background: color-mix(in srgb, var(--color-danger) 28%, transparent);
+}

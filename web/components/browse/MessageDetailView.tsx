@@ -9,6 +9,7 @@ import { AbuseReportButton } from '@/components/abuse/AbuseReportButton';
 import { CommentsSection } from '@/components/comments/CommentsSection';
 import { useSessionState } from '@/components/account/SessionGreeting';
 import { DebugDetailsPanel } from './DebugDetailsPanel';
+import { DiagnosticsPanel } from './DiagnosticsPanel';
 import { RecordingAdminControls } from './RecordingAdminControls';
 import { MessageAdminControls } from './MessageAdminControls';
 import { UserAttribution } from '@/components/users/UserAttribution';
@@ -220,6 +221,7 @@ export function MessageDetailView({ messageId }: MessageDetailViewProps) {
                   hasTranscript={Boolean(r.transcript)}
                   onDeleted={() => setRecordings((rs) => rs.filter((rec) => rec.id !== r.id))}
                 />
+                <DiagnosticsPanel recordingId={r.id} />
               </article>
             ))}
           </div>
