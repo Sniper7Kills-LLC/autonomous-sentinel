@@ -11,6 +11,22 @@ import styles from './MessagesList.module.css';
 
 const PAGE_SIZE = 25;
 
+/**
+ * Order messages newest-first by `broadcastTs` (#754). ISO-8601 strings sort
+ * lexicographically == chronologically. Rows with no broadcast time sort
+ * last. Pure + exported for testing; does not mutate the input.
+ */
+export function sortByBroadcastDesc(items: DisplayMessage[]): DisplayMessage[] {
+  return [...items].sort((a, b) => {
+    const at = a.broadcastTs ?? '';
+    const bt = b.broadcastTs ?? '';
+    if (at === bt) return 0;
+    if (!at) return 1;
+    if (!bt) return -1;
+    return bt.localeCompare(at);
+  });
+}
+
 export interface MessagesListProps {
   /** Forces a `type` filter regardless of URL params (used by /skykings, /skybird). */
   forcedType?: MessageFilters['type'];
@@ -49,7 +65,13 @@ export function MessagesList({ forcedType, limit, hideLoadMore }: MessagesListPr
           pageSize: PAGE_SIZE,
         });
         setItems((prev) => {
-          const mergedFull = token ? [...prev, ...result.items] : result.items;
+          const merged = token ? [...prev, ...result.items] : result.items;
+          // DynamoDB list() returns scan order, so order the loaded set
+          // newest-first by broadcast time for display (#754). Deep
+          // pagination can still surface cross-page gaps (scan doesn't
+          // guarantee the newest set per page) — the global time GSI fix is
+          // tracked separately.
+          const mergedFull = sortByBroadcastDesc(merged);
           const next = limit ? mergedFull.slice(0, limit) : mergedFull;
           // Decide pagination cap from the same merged length the
           // list will display — using a closure-captured `items.length`
