@@ -30,3 +30,13 @@ export function isModeratorOrAdmin(groups: readonly string[]): boolean {
 export function isAdmin(groups: readonly string[]): boolean {
   return groups.includes('admin');
 }
+
+/**
+ * Diagnostics gate (#743/#745). The deep linguistic-trace debug surface is
+ * readable by the additive `diagnostics` capability group IN ADDITION TO
+ * moderators + admins. The `LinguisticTrace` model enforces the same group
+ * set server-side; this only decides what to render.
+ */
+export function hasDiagnosticsAccess(groups: readonly string[]): boolean {
+  return groups.includes('admin') || groups.includes('moderator') || groups.includes('diagnostics');
+}
