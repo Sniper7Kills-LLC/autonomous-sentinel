@@ -2,18 +2,17 @@
 
 import { useMemo, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { codewordFrequency } from '@/lib/stats/frequency';
-import type { DisplayMessage } from '@/lib/messages/types';
+import type { CodewordFrequencyBucket } from '@/lib/stats/frequency';
 
 interface CodewordFrequencyChartProps {
-  messages: Pick<DisplayMessage, 'body'>[];
+  /** Precomputed SKYKING codeword-frequency buckets (#780). */
+  data: CodewordFrequencyBucket[];
   /** How many top codewords to chart. */
   topN?: number;
 }
 
-export function CodewordFrequencyChart({ messages, topN = 20 }: CodewordFrequencyChartProps) {
+export function CodewordFrequencyChart({ data: all, topN = 20 }: CodewordFrequencyChartProps) {
   const [query, setQuery] = useState('');
-  const all = useMemo(() => codewordFrequency(messages), [messages]);
   const filtered = useMemo(() => {
     const q = query.trim().toUpperCase();
     return q ? all.filter((row) => row.codeword.includes(q)) : all;
@@ -21,7 +20,7 @@ export function CodewordFrequencyChart({ messages, topN = 20 }: CodewordFrequenc
   const charted = useMemo(() => filtered.slice(0, topN), [filtered, topN]);
 
   if (all.length === 0) {
-    return <EmptyChart label="No codewords in this window yet." />;
+    return <EmptyChart label="No codewords yet." />;
   }
 
   return (
@@ -113,7 +112,7 @@ export function CodewordFrequencyChart({ messages, topN = 20 }: CodewordFrequenc
         </summary>
         <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '0.5rem' }}>
           <caption style={{ textAlign: 'left', fontSize: '0.78rem', color: 'var(--text-2)' }}>
-            Per-codeword occurrence counts across message bodies in the window, ranked.
+            Per-codeword occurrence counts across all published SKYKING bodies, ranked.
           </caption>
           <thead>
             <tr>

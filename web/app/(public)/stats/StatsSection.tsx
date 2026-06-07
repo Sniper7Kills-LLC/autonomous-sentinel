@@ -1,20 +1,25 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
+import { useMemo } from 'react';
 import Link from 'next/link';
 import { ChartShell } from '@/components/charts/ChartShell';
 import { DailyCountChart } from '@/components/charts/DailyCountChart';
+import { DailyTypeCountChart } from '@/components/charts/DailyTypeCountChart';
 import { CharacterFrequencyChart } from '@/components/charts/CharacterFrequencyChart';
 import { CodewordFrequencyChart } from '@/components/charts/CodewordFrequencyChart';
-import { useStatsMessages } from '@/components/charts/StatsLoader';
-import type { DisplayMessage } from '@/lib/messages/types';
+import { UsageBarChart } from '@/components/charts/UsageBarChart';
+import { StreakList } from '@/components/charts/StreakList';
+import { useChartAggregate } from '@/components/charts/StatsLoader';
+import {
+  STAT_METRICS,
+  toCharFrequency,
+  toCodewordFrequency,
+  toRanking,
+  toDailyTypeCounts,
+  toStreaks,
+} from '@/lib/stats/aggregates';
 import styles from './StatsSection.module.css';
-
-const allstations = (messages: DisplayMessage[]) =>
-  messages.filter((m) => m.type === 'ALLSTATIONS');
-
-const WINDOW_NOTE =
-  'Aggregated over the most-recent-N Message window (not the full historical corpus); server-side full-corpus aggregation is deferred — see #499 / #500.';
 
 const DEEP_LINKS: { href: string; label: string }[] = [
   { href: '/stats', label: 'Overview' },
@@ -44,88 +49,166 @@ export function StatsDeepNav() {
   );
 }
 
+/* ------------------------------------------------------------------ *
+ * Per-metric panels — each reads one precomputed ChartAggregate
+ * partition and renders its chart. Used both small (overview grid) and
+ * full-size (deep pages).
+ * ------------------------------------------------------------------ */
+
+function DailyTypePanel() {
+  const { rows, loading, error } = useChartAggregate(STAT_METRICS.DAILY_COUNT);
+  const { dates, types } = useMemo(() => toDailyTypeCounts(rows), [rows]);
+  return (
+    <Async loading={loading} error={error}>
+      <DailyTypeCountChart dates={dates} types={types} />
+    </Async>
+  );
+}
+
+function DailyTotalsPanel() {
+  const { rows, loading, error } = useChartAggregate(STAT_METRICS.DAILY_COUNT);
+  const data = useMemo(
+    () => toDailyTypeCounts(rows).dates.map((d) => ({ date: d.date, count: d.total })),
+    [rows],
+  );
+  return (
+    <Async loading={loading} error={error}>
+      <DailyCountChart data={data} />
+    </Async>
+  );
+}
+
+function CharFreqPanel() {
+  const { rows, loading, error } = useChartAggregate(STAT_METRICS.CHAR_FREQ_ALLSTATIONS);
+  const data = useMemo(() => toCharFrequency(rows), [rows]);
+  return (
+    <Async loading={loading} error={error}>
+      <CharacterFrequencyChart data={data} />
+    </Async>
+  );
+}
+
+function CodewordPanel() {
+  const { rows, loading, error } = useChartAggregate(STAT_METRICS.CODEWORD_SKYKING);
+  const data = useMemo(() => toCodewordFrequency(rows), [rows]);
+  return (
+    <Async loading={loading} error={error}>
+      <CodewordFrequencyChart data={data} />
+    </Async>
+  );
+}
+
+function CallsignPanel() {
+  const { rows, loading, error } = useChartAggregate(STAT_METRICS.CALLSIGN_USAGE);
+  const data = useMemo(() => toRanking(rows), [rows]);
+  return (
+    <Async loading={loading} error={error}>
+      <UsageBarChart data={data} emptyLabel="No callsign usage yet." fill="var(--color-success)" />
+    </Async>
+  );
+}
+
+function PreamblePanel() {
+  const { rows, loading, error } = useChartAggregate(STAT_METRICS.PREAMBLE_FIRST2);
+  const data = useMemo(() => toRanking(rows), [rows]);
+  return (
+    <Async loading={loading} error={error}>
+      <UsageBarChart
+        data={data}
+        emptyLabel="No preamble data yet."
+        fill="var(--color-warning)"
+        labelWidth={48}
+      />
+    </Async>
+  );
+}
+
+function StreaksPanel() {
+  const { rows, loading, error } = useChartAggregate(STAT_METRICS.DAILY_COUNT);
+  const streaks = useMemo(() => toStreaks(rows), [rows]);
+  return (
+    <Async loading={loading} error={error}>
+      <StreakList streaks={streaks} />
+    </Async>
+  );
+}
+
 export function StatsOverview() {
-  const { messages, loading, error } = useStatsMessages(500);
   return (
     <>
       <p className={styles.statusLine}>
-        {loading
-          ? 'Loading the most recent 500 Messages…'
-          : error
-            ? `Error: ${error}`
-            : `Aggregating ${messages.length} recent Messages.`}
+        Precomputed corpus-wide aggregates (excludes deleted, flagged + unpublished messages).
       </p>
       <div className={styles.indexGrid}>
-        <ChartShell title="Daily counts" eyebrow="§03.A" small>
-          <DailyCountChart messages={messages} />
+        <ChartShell title="Daily counts by type" eyebrow="§03.A" small>
+          <DailyTypePanel />
         </ChartShell>
         <ChartShell title="Character frequency" eyebrow="§03.B" small>
-          <CharacterFrequencyChart messages={allstations(messages)} />
+          <CharFreqPanel />
         </ChartShell>
         <ChartShell title="Codeword frequency" eyebrow="§03.C" small>
-          <CodewordFrequencyChart messages={messages} />
+          <CodewordPanel />
+        </ChartShell>
+        <ChartShell title="Callsign usage" eyebrow="§03.D" small>
+          <CallsignPanel />
+        </ChartShell>
+        <ChartShell title="Preamble (first 2)" eyebrow="§03.E" small>
+          <PreamblePanel />
+        </ChartShell>
+        <ChartShell title="Consecutive-day streaks" eyebrow="§03.F" small>
+          <StreaksPanel />
         </ChartShell>
       </div>
       <p className={styles.indexFootnote}>
-        Aggregations run client-side over the most recent 500 Messages. Deep pages render the same
-        chart at full size with a wider sample window when DDB GSIs land.
+        All charts read precomputed counters from the ChartAggregate table — full-corpus, updated as
+        messages are published, corrected, or deleted. No client-side aggregation.
       </p>
     </>
   );
 }
 
 export function StatsDailyCounts() {
-  const { messages, loading, error } = useStatsMessages(1000);
   return (
-    <ChartShell
-      eyebrow="§03.A"
-      title="Daily message counts"
-      note={
-        <>
-          One bar per UTC date. Rebroadcasts of the same Message body still count once per received
-          broadcast — multi-SDR captures of the same broadcast collapse upstream via content-hash
-          dedupe, not here.
-        </>
-      }
-    >
-      {loading ? (
-        <Loading />
-      ) : error ? (
-        <ErrorBox text={error} />
-      ) : (
-        <DailyCountChart messages={messages} />
-      )}
-    </ChartShell>
+    <>
+      <ChartShell
+        eyebrow="§03.A"
+        title="Daily message counts by type"
+        note={
+          <>
+            One stacked bar per UTC date, split by message type. Rebroadcasts of the same Message
+            body still count once per received broadcast — multi-SDR captures of the same broadcast
+            collapse upstream via content-hash dedupe, not here.
+          </>
+        }
+      >
+        <DailyTypePanel />
+      </ChartShell>
+      <ChartShell eyebrow="§03.A2" title="Daily totals (all types)">
+        <DailyTotalsPanel />
+      </ChartShell>
+    </>
   );
 }
 
 export function StatsCharacterCounts() {
-  const { messages, loading, error } = useStatsMessages(1000);
   return (
     <ChartShell
       eyebrow="§03.B"
       title="Character frequency"
       note={
         <>
-          How many times each character (A–Z, 0–9) appears across ALLSTATIONS message bodies in the
-          window — a per-character frequency ranking of the decoded alphabet, not a body-length
-          distribution. {WINDOW_NOTE}
+          How many times each character (A–Z, 0–9) appears across all published ALLSTATIONS message
+          bodies — a per-character frequency ranking of the decoded alphabet, not a body-length
+          distribution.
         </>
       }
     >
-      {loading ? (
-        <Loading />
-      ) : error ? (
-        <ErrorBox text={error} />
-      ) : (
-        <CharacterFrequencyChart messages={allstations(messages)} />
-      )}
+      <CharFreqPanel />
     </ChartShell>
   );
 }
 
 export function StatsCodewordCounts() {
-  const { messages, loading, error } = useStatsMessages(1000);
   return (
     <ChartShell
       eyebrow="§03.C"
@@ -133,20 +216,27 @@ export function StatsCodewordCounts() {
       note={
         <>
           How many times each distinct codeword (contiguous [A-Z0-9] groups of 3+ characters) was
-          used across message bodies in the window, ranked. Not a per-message codeword-count
-          distribution. {WINDOW_NOTE}
+          used across all published SKYKING message bodies, ranked.
         </>
       }
     >
-      {loading ? (
-        <Loading />
-      ) : error ? (
-        <ErrorBox text={error} />
-      ) : (
-        <CodewordFrequencyChart messages={messages} />
-      )}
+      <CodewordPanel />
     </ChartShell>
   );
+}
+
+function Async({
+  loading,
+  error,
+  children,
+}: {
+  loading: boolean;
+  error: string | null;
+  children: React.ReactNode;
+}) {
+  if (loading) return <Loading />;
+  if (error) return <ErrorBox text={error} />;
+  return <>{children}</>;
 }
 
 function Loading() {
