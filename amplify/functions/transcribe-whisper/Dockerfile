@@ -33,7 +33,7 @@
 # propose a bump in the PR description. v1.7.x ships the CLI as
 # `bin/main`; v1.8.x+ ships it as `bin/whisper-cli` (the `COPY
 # --from=builder` source path below must match the tag).
-ARG WHISPER_CPP_VERSION=v1.8.4
+ARG WHISPER_CPP_VERSION=v1.8.6
 
 # ----- stage 1: build whisper.cpp -----------------------------------
 FROM public.ecr.aws/lambda/nodejs:22 AS builder
