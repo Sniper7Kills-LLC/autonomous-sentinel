@@ -10,6 +10,7 @@ import {
 } from './rules-engine';
 import { persistTrace, type TraceInput, type TraceBedrock, type TraceRow } from './trace';
 import { makeDiagnosticsPutObject } from './trace-s3';
+import { callsignCandidates, loadApprovedCallsigns, suggestCallsigns } from './callsign-suggest';
 import { loadRulesFromDdb } from './load-rules-ddb';
 import { type ConfidenceConfig, isFlagged } from './threshold';
 import {
@@ -315,6 +316,24 @@ export interface LinguisticDataClient {
     LinguisticTrace: {
       create: (input: TraceRow) => Promise<{ data?: unknown; errors?: unknown }>;
     };
+    /**
+     * Callsign dictionary (#776 suggest, #778 prompt feed). The handler
+     * reads approved entries to prime Bedrock + suggests unknown parsed
+     * callsigns as AI_SUGGESTED/approved=false rows for admin review.
+     */
+    Callsign: {
+      list: (input?: Record<string, unknown>) => Promise<{
+        data: Array<{ id: string; normalized?: string | null; variants?: string[] | null }> | null;
+        errors?: unknown;
+      }>;
+      create: (input: {
+        normalized: string;
+        source: 'LEGACY' | 'ADMIN' | 'AI_SUGGESTED';
+        approved: boolean;
+        confidence?: number | null;
+        notes?: string | null;
+      }) => Promise<{ data: { id?: string } | null; errors?: unknown }>;
+    };
   };
 }
 
@@ -530,7 +549,14 @@ const CONTEXT_RULE_LIMIT = 50;
  * rule-engine attempt + the current active ruleset, so the model refines
  * existing rules instead of only generating fresh ones.
  */
-function buildBedrockContext(result: ClassifyResult, summaries: RuleSummary[]): string {
+/** Max known callsigns listed in the Bedrock context, to bound prompt size (#778). */
+const CONTEXT_CALLSIGN_LIMIT = 80;
+
+function buildBedrockContext(
+  result: ClassifyResult,
+  summaries: RuleSummary[],
+  knownCallsigns: string[] = [],
+): string {
   const lines = ['The rules engine could not confidently parse this transcript.'];
   const fieldsNote =
     result.fields && Object.keys(result.fields).length > 0
@@ -553,6 +579,18 @@ function buildBedrockContext(result: ClassifyResult, summaries: RuleSummary[]): 
     }
   } else {
     lines.push('', 'There are no rules yet — propose rules to bootstrap the ruleset.');
+  }
+  // Known-callsign priming (#778): bias sender/receiver extraction toward the
+  // curated dictionary. Bounded to keep the prompt small.
+  if (knownCallsigns.length > 0) {
+    const shown = knownCallsigns.slice(0, CONTEXT_CALLSIGN_LIMIT);
+    lines.push(
+      '',
+      `Known callsigns (prefer these for sender/receiver when they fit): ${shown.join(', ')}` +
+        (knownCallsigns.length > CONTEXT_CALLSIGN_LIMIT
+          ? ` …and ${knownCallsigns.length - CONTEXT_CALLSIGN_LIMIT} more.`
+          : ''),
+    );
   }
   return lines.join('\n');
 }
@@ -1434,7 +1472,17 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
         err: err instanceof Error ? err.message : String(err),
       });
     }
-    fbOpts.context = buildBedrockContext(result, summaries);
+    // Known-callsign priming (#778) — best-effort; a dictionary hiccup just
+    // omits the callsign list from the context.
+    let knownCallsigns: string[] = [];
+    try {
+      knownCallsigns = await loadApprovedCallsigns(client);
+    } catch (err) {
+      console.warn('linguistic: callsign load failed; AI context omits it', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+    fbOpts.context = buildBedrockContext(result, summaries, knownCallsigns);
     // Always invoke on the fallback path. We deliberately do NOT skip the
     // call when a prior bedrock success is logged: the attempt log stores
     // only the result *hash*, not the parsed type/fields, so a skip would
@@ -1770,6 +1818,45 @@ async function processTranscript(msg: TranscriptQueueMessage): Promise<void> {
       recordingId: msg.recordingId,
       err: err instanceof Error ? err.message : String(err),
     });
+  }
+
+  // Callsign suggestion (#776). Any parsed sender/receiver not already in the
+  // dictionary lands as an AI_SUGGESTED/approved=false row for admin
+  // confirm/reject (#777). Best-effort AFTER the authoritative update — a
+  // dictionary write must never block publish. Skip on the failed-parse
+  // branch (fields unreliable).
+  if (!aiParseFailed) {
+    try {
+      const candidates = callsignCandidates(normalized.sender, normalized.receiver);
+      const created = await suggestCallsigns(client, candidates);
+      if (created.length > 0) {
+        console.info('linguistic: suggested callsigns', {
+          recordingId: msg.recordingId,
+          created,
+        });
+        for (const normalizedCallsign of created) {
+          try {
+            await auditFn(
+              { identity: null, request: { headers: {} } },
+              {
+                action: 'CALLSIGN_SUGGEST',
+                targetType: 'Callsign',
+                targetId: normalizedCallsign,
+                after: { normalized: normalizedCallsign, source: 'AI_SUGGESTED', approved: false },
+                reason: `auto-suggested from recording ${msg.recordingId}`,
+              },
+            );
+          } catch {
+            // Audit is non-fatal; the suggestion already landed.
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('linguistic: callsign suggestion failed (non-fatal)', {
+        recordingId: msg.recordingId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   // Reputation recompute on publish (#480). A PUBLISHED recording is a

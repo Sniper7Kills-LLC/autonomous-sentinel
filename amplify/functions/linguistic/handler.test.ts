@@ -46,6 +46,8 @@ interface DataStub {
   promptListSpy: ReturnType<typeof vi.fn>;
   ruleCreateSpy: ReturnType<typeof vi.fn>;
   traceCreateSpy: ReturnType<typeof vi.fn>;
+  callsignListSpy: ReturnType<typeof vi.fn>;
+  callsignCreateSpy: ReturnType<typeof vi.fn>;
 }
 
 /**
@@ -85,6 +87,10 @@ function makeDataStub(
   const promptListSpy = vi.fn().mockResolvedValue({ data: [], errors: null });
   const ruleCreateSpy = vi.fn().mockResolvedValue({ data: { id: 'rule-1' }, errors: null });
   const traceCreateSpy = vi.fn().mockResolvedValue({ data: { id: 'trace-1' }, errors: null });
+  // Callsign dictionary (#776/#778): empty dict by default → unknown parsed
+  // callsigns get suggested; tests override the list to assert dedup.
+  const callsignListSpy = vi.fn().mockResolvedValue({ data: [], errors: null });
+  const callsignCreateSpy = vi.fn().mockResolvedValue({ data: { id: 'cs-1' }, errors: null });
   const client: LinguisticDataClient = {
     models: {
       Message: {
@@ -105,6 +111,7 @@ function makeDataStub(
       },
       LinguisticRule: { create: ruleCreateSpy as never },
       LinguisticTrace: { create: traceCreateSpy as never },
+      Callsign: { list: callsignListSpy as never, create: callsignCreateSpy as never },
     },
   };
   return {
@@ -121,6 +128,8 @@ function makeDataStub(
     promptListSpy,
     ruleCreateSpy,
     traceCreateSpy,
+    callsignListSpy,
+    callsignCreateSpy,
   };
 }
 
@@ -2655,5 +2664,102 @@ describe('rule dedup helpers (#575)', () => {
       { component: 'TYPE', pattern: 'SKYKING', confidence: 0.7 },
     ];
     expect(filterNewProposedRules(proposed, [])).toHaveLength(1);
+  });
+});
+
+describe('linguistic — callsign suggestion + priming (#776/#778)', () => {
+  it('suggests an unknown parsed callsign as AI_SUGGESTED/approved=false', async () => {
+    const { client, callsignCreateSpy } = makeDataStub();
+    __setDeps({
+      dataClient: client,
+      bedrockFallback: bedrockOk({ type: 'SKYKING', sender: 'MAINSAIL', body: 'do not answer' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-uuid-1',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-1',
+        transcript: 'Skyking do not answer',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(callsignCreateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ normalized: 'MAINSAIL', source: 'AI_SUGGESTED', approved: false }),
+    );
+  });
+
+  it('does NOT suggest a callsign already in the dictionary', async () => {
+    const { client, callsignListSpy, callsignCreateSpy } = makeDataStub();
+    callsignListSpy.mockResolvedValue({
+      data: [{ id: 'c1', normalized: 'MAINSAIL' }],
+      errors: null,
+    });
+    __setDeps({
+      dataClient: client,
+      bedrockFallback: bedrockOk({ type: 'SKYKING', sender: 'MAINSAIL', body: 'x' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-uuid-1',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-1',
+        transcript: 'Skyking',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(callsignCreateSpy).not.toHaveBeenCalled();
+  });
+
+  it('primes the Bedrock context with the approved callsign dictionary (#778)', async () => {
+    const { client, callsignListSpy } = makeDataStub();
+    callsignListSpy.mockResolvedValue({
+      data: [{ id: 'c1', normalized: 'ANDREWS' }],
+      errors: null,
+    });
+    const fb = bedrockOk({ type: 'SKYKING', body: 'x' });
+    __setDeps({
+      dataClient: client,
+      bedrockFallback: fb,
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-uuid-1',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-1',
+        transcript: 'Skyking',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    const opts = fb.mock.calls[0]?.[1] as { context?: string } | undefined;
+    expect(opts?.context ?? '').toContain('ANDREWS');
+  });
+
+  it('publishes even when callsign suggestion fails (best-effort)', async () => {
+    const { client, callsignListSpy, updateSpy } = makeDataStub();
+    callsignListSpy.mockRejectedValue(new Error('dict down'));
+    __setDeps({
+      dataClient: client,
+      bedrockFallback: bedrockOk({ type: 'SKYKING', sender: 'MAINSAIL', body: 'x' }),
+      now: () => new Date('2026-05-24T18:00:00Z'),
+      uuid: () => 'msg-uuid-1',
+    });
+    await handler(
+      makeEvent({
+        recordingId: 'rec-1',
+        transcript: 'Skyking',
+        enqueuedAt: '2026-05-24T17:55:00Z',
+      }),
+      {} as never,
+      () => undefined,
+    );
+    expect(updateSpy.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({ transcriptionStatus: 'PUBLISHED' }),
+    );
   });
 });

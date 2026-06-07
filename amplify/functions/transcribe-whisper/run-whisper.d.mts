@@ -18,6 +18,7 @@ export const DEFAULT_STDERR_CAPTURE_BYTES: number;
 export const DEFAULT_WHISPER_INITIAL_PROMPT: string;
 export const DEFAULT_WHISPER_BEAM_SIZE: number;
 export const DEFAULT_WHISPER_TEMPERATURE: number;
+export function appendCallsignsToPrompt(base: string, callsignsCsv: string | undefined): string;
 
 export class WhisperError extends Error {
   readonly code: number | null;

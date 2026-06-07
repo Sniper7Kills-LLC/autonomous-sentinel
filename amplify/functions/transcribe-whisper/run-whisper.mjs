@@ -50,6 +50,21 @@ export const DEFAULT_WHISPER_INITIAL_PROMPT =
   'Mike November Oscar Papa Quebec Romeo Sierra Tango Uniform Victor Whiskey ' +
   'X-ray Yankee Zulu. One two three four five six seven eight nine zero.';
 
+/**
+ * Append the approved callsign dictionary (#778) to a base prompt. The
+ * preprocess Lambda passes the comma-joined list on the transcribe message;
+ * the container has no DB client. Respects a disabled prompt (empty `base`
+ * stays empty — no re-priming) and a missing list (returns `base`).
+ *
+ * @param {string} base
+ * @param {string | undefined} callsignsCsv
+ * @returns {string}
+ */
+export function appendCallsignsToPrompt(base, callsignsCsv) {
+  if (!callsignsCsv || base === '') return base;
+  return `${base} Known callsigns: ${callsignsCsv}.`;
+}
+
 /** Beam-search width (#758). 0/1 = greedy. Override via WHISPER_BEAM_SIZE. */
 export const DEFAULT_WHISPER_BEAM_SIZE = 5;
 /** Decode temperature (#761). 0 = deterministic, fewer hallucinations. */

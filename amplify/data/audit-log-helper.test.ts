@@ -429,8 +429,9 @@ describe('audit helper — every action enum value works', () => {
     // Source of truth is `amplify/data/models/audit-log.ts`.
     // + #107 (DLQ_REQUEUE + DLQ_DROP) → 29.
     // + #736 (USER_PROFILE_UPDATE) → 30.
-    expect(AUDIT_ACTIONS).toHaveLength(30);
-    expect(new Set(AUDIT_ACTIONS).size).toBe(30);
+    // + #776 (CALLSIGN_SUGGEST) → 31.
+    expect(AUDIT_ACTIONS).toHaveLength(31);
+    expect(new Set(AUDIT_ACTIONS).size).toBe(31);
   });
 
   it('exports every value defined on the AuditLog.action enum', () => {
@@ -462,6 +463,7 @@ describe('audit helper — every action enum value works', () => {
         'TRANSMITTER_UPDATE',
         'TRANSMITTER_DELETE',
         'CALLSIGN_MERGE',
+        'CALLSIGN_SUGGEST',
         'LINGUISTIC_CONFIG_UPDATE',
         'BAN_REGION_PAGE_UPDATE',
         'PROMPT_VERSION_BUMP',
