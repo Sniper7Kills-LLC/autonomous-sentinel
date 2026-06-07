@@ -136,6 +136,24 @@ describe('AudioPlayer', () => {
     });
   });
 
+  it('separates words with a space outside the button so they are not glued (#753)', async () => {
+    render(
+      <AudioPlayer
+        recordingId="rec-1"
+        webCanonicalKey="recordings/web/rec-1.opus"
+        wordTimestampsKey="recordings/web/rec-1.words.json"
+      />,
+    );
+    await waitForWavesurferMount();
+    const pane = await screen.findByLabelText('Synchronised transcript');
+    // Each word button holds ONLY the word (no trailing space) — the space
+    // lives as a sibling text node so inline-block edges don't collapse it.
+    expect(screen.getByRole('button', { name: 'SKYKING' }).textContent).toBe('SKYKING');
+    expect(screen.getByRole('button', { name: 'PT3' }).textContent).toBe('PT3');
+    // The rendered pane text shows the inter-word space.
+    expect(pane.textContent).toContain('SKYKING PT3');
+  });
+
   it('seeks to the word start when a transcript word is clicked', async () => {
     render(
       <AudioPlayer

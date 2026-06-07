@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import { getRecordingAssetUrl } from '@/lib/audio/url';
 import {
@@ -246,19 +246,21 @@ function TranscriptPane({ words, activeIdx, onJump, fallbackText }: TranscriptPa
     return (
       <div className={styles.transcript} aria-label="Synchronised transcript">
         {words.map((w, i) => (
-          <button
-            type="button"
-            // Index-based key — start times can collide on malformed
-            // pipelines without breaking the render.
-            key={`word-${i}`}
-            className={`${styles.word} ${styles.wordHover} ${
-              i === activeIdx ? styles.wordActive : ''
-            }`}
-            onClick={() => onJump(w.start)}
-            aria-current={i === activeIdx ? 'true' : undefined}
-          >
-            {w.word + ' '}
-          </button>
+          // The inter-word space is a sibling text node OUTSIDE the button:
+          // a trailing space inside the inline-block button collapses at its
+          // edge, gluing words together (#753).
+          <Fragment key={`word-${i}`}>
+            <button
+              type="button"
+              className={`${styles.word} ${styles.wordHover} ${
+                i === activeIdx ? styles.wordActive : ''
+              }`}
+              onClick={() => onJump(w.start)}
+              aria-current={i === activeIdx ? 'true' : undefined}
+            >
+              {w.word}
+            </button>{' '}
+          </Fragment>
         ))}
       </div>
     );
