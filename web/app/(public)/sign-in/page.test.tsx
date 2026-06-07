@@ -49,8 +49,9 @@ describe('SignInPage', () => {
     expect(screen.getByRole('heading', { name: /sign in/i })).toBeInTheDocument();
   });
 
-  it('flags federated providers as deferred (#336)', () => {
+  it('renders federated sign-in buttons (#336)', () => {
     render(<SignInPage />);
-    expect(screen.getByText(/deferred to #336/i)).toBeInTheDocument();
+    expect(screen.getByTestId('signin-google')).toBeInTheDocument();
+    expect(screen.getByTestId('signin-discord')).toBeInTheDocument();
   });
 });

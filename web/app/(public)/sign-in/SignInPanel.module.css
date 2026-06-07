@@ -29,19 +29,40 @@
   color: var(--text-1);
 }
 
-.federatedDefer {
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-2);
-  border-top: 1px solid var(--border-1);
-  padding-top: 0.75rem;
+.federated {
+  display: grid;
+  gap: 0.75rem;
 }
 
-/* Hide the Amplify Authenticator's federated providers — issue #336
-   tracks the styled Google/Discord buttons. v1 ships email/password
-   only, and the hidden buttons would otherwise flash on load. */
+.error {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--color-danger);
+  line-height: 1.4;
+}
+
+/* "or sign in with email" rule between the federated buttons + the form. */
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-1);
+}
+
+/* Hide the Amplify Authenticator's own federated providers — we render styled
+   Google/Discord buttons above (#336) so they match the command aesthetic. */
 .shell :global([data-amplify-authenticator] [data-amplify-federated-sign-in-container]),
 .shell :global([data-amplify-authenticator] [data-amplify-router-content] [class*='federated']) {
   display: none !important;
