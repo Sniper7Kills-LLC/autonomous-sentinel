@@ -21,10 +21,15 @@ import { a } from '@aws-amplify/backend';
  *   - DynamoDB TTL on `ttl` (epoch seconds; default 90 days) expires old
  *     traces automatically. Configured via a CfnTable override in
  *     `backend.ts` (the Gen 2 DSL has no TTL primitive).
- *   - Size guard: the linguistic Lambda spills the two large text fields
- *     (`bedrockRenderedPrompt`, `bedrockRawResponse`) to an S3
- *     `diagnostics/` object when the serialized row would exceed the DDB
- *     item limit, storing the S3 keys in `overflowKeys` + `truncated=true`.
+ *   - Size guard: when the serialized row would exceed the DDB item limit
+ *     the linguistic Lambda truncates the two large text fields
+ *     (`bedrockRenderedPrompt`, `bedrockRawResponse`) and sets
+ *     `truncated=true`. The S3 SPILL — moving those fields to a
+ *     `diagnostics/` object keyed in `overflowKeys` — is supported by the
+ *     size-guard helper but NOT wired at v1: granting the data-stack
+ *     linguistic Lambda an S3 bucket-token reference is a known CFN-cycle
+ *     trigger (#644), so it is a #744 follow-up. Until then oversized rows
+ *     drop the prompt/response blob but keep every structured field.
  *
  * Authz: read for admin + moderator + diagnostics (the diagnostics group
  * is the additive capability group from #743); writes come only from the
