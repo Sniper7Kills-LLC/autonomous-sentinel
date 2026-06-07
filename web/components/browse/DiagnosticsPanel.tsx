@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { Drawer } from '@/components/ui/Drawer';
@@ -480,70 +480,80 @@ const PENDING_STATE: CallsignState = {
 function CallsignReview({ trace, admin }: { trace: DisplayTrace; admin: boolean }) {
   const candidates = useMemo(() => callsignsFromResult(trace.finalResult), [trace.finalResult]);
   const [state, setState] = useState<Record<string, CallsignState>>({});
+  // A monotonic "generation" bumped whenever the reviewed run changes. Every
+  // async settle (lookup, confirm, reject) captures the generation it started
+  // in and only applies its setState if still current — so a late completion
+  // from a previous run never clobbers the freshly-loaded state (race on a
+  // quick run switch, including the same callsign appearing in both runs).
+  const genRef = useRef(0);
 
   useEffect(() => {
+    genRef.current += 1;
+    const gen = genRef.current;
     if (candidates.length === 0) {
       setState({});
       return;
     }
-    let active = true;
     setState(Object.fromEntries(candidates.map((c) => [c, PENDING_STATE])));
     for (const c of candidates) {
       findCallsignByNormalized(c)
         .then((row) => {
-          if (active)
+          if (genRef.current === gen)
             setState((s) => ({ ...s, [c]: { ...(s[c] ?? PENDING_STATE), loading: false, row } }));
         })
         .catch(() => {
-          if (active)
+          if (genRef.current === gen)
             setState((s) => ({
               ...s,
               [c]: { ...(s[c] ?? PENDING_STATE), loading: false, row: null },
             }));
         });
     }
-    return () => {
-      active = false;
-    };
   }, [candidates]);
 
   const confirm = useCallback((c: string, id: string) => {
+    const gen = genRef.current;
     setState((s) => ({ ...s, [c]: { ...(s[c] ?? PENDING_STATE), busy: true, error: null } }));
     approveCallsign(id)
-      .then((row) =>
-        setState((s) => ({ ...s, [c]: { ...(s[c] ?? PENDING_STATE), busy: false, row } })),
-      )
-      .catch((e: unknown) =>
-        setState((s) => ({
-          ...s,
-          [c]: {
-            ...(s[c] ?? PENDING_STATE),
-            busy: false,
-            error: e instanceof Error ? e.message : 'Confirm failed.',
-          },
-        })),
-      );
+      .then((row) => {
+        if (genRef.current === gen)
+          setState((s) => ({ ...s, [c]: { ...(s[c] ?? PENDING_STATE), busy: false, row } }));
+      })
+      .catch((e: unknown) => {
+        if (genRef.current === gen)
+          setState((s) => ({
+            ...s,
+            [c]: {
+              ...(s[c] ?? PENDING_STATE),
+              busy: false,
+              error: e instanceof Error ? e.message : 'Confirm failed.',
+            },
+          }));
+      });
   }, []);
 
   const reject = useCallback((c: string, id: string) => {
+    const gen = genRef.current;
     setState((s) => ({ ...s, [c]: { ...(s[c] ?? PENDING_STATE), busy: true, error: null } }));
     deleteCallsign(id)
-      .then(() =>
-        setState((s) => ({
-          ...s,
-          [c]: { ...(s[c] ?? PENDING_STATE), busy: false, removed: true, row: null },
-        })),
-      )
-      .catch((e: unknown) =>
-        setState((s) => ({
-          ...s,
-          [c]: {
-            ...(s[c] ?? PENDING_STATE),
-            busy: false,
-            error: e instanceof Error ? e.message : 'Reject failed.',
-          },
-        })),
-      );
+      .then(() => {
+        if (genRef.current === gen)
+          setState((s) => ({
+            ...s,
+            [c]: { ...(s[c] ?? PENDING_STATE), busy: false, removed: true, row: null },
+          }));
+      })
+      .catch((e: unknown) => {
+        if (genRef.current === gen)
+          setState((s) => ({
+            ...s,
+            [c]: {
+              ...(s[c] ?? PENDING_STATE),
+              busy: false,
+              error: e instanceof Error ? e.message : 'Reject failed.',
+            },
+          }));
+      });
   }, []);
 
   if (candidates.length === 0) return null;
