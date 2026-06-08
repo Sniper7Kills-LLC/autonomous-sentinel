@@ -69,17 +69,9 @@ describe('UserMenu', () => {
 
     const viewProfile = screen.getByRole('menuitem', { name: /view profile/i });
     expect(viewProfile).toHaveAttribute('href', '/users/view?id=sub-123');
-    expect(screen.getByRole('menuitem', { name: /edit profile/i })).toHaveAttribute(
+    expect(screen.getByRole('menuitem', { name: /^settings$/i })).toHaveAttribute(
       'href',
-      '/settings/profile',
-    );
-    expect(screen.getByRole('menuitem', { name: /notification preferences/i })).toHaveAttribute(
-      'href',
-      '/settings/notifications',
-    );
-    expect(screen.getByRole('menuitem', { name: /security/i })).toHaveAttribute(
-      'href',
-      '/settings/security',
+      '/settings',
     );
     expect(screen.getByRole('menuitem', { name: /sign out/i })).toBeInTheDocument();
   });

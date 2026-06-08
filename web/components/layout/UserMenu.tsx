@@ -113,19 +113,8 @@ export function UserMenu() {
           >
             View profile
           </Link>
-          <Link href="/settings/profile" role="menuitem" className={styles.item} onClick={close}>
-            Edit profile
-          </Link>
-          <Link
-            href="/settings/notifications"
-            role="menuitem"
-            className={styles.item}
-            onClick={close}
-          >
-            Notification preferences
-          </Link>
-          <Link href="/settings/security" role="menuitem" className={styles.item} onClick={close}>
-            Security
+          <Link href="/settings" role="menuitem" className={styles.item} onClick={close}>
+            Settings
           </Link>
 
           <div className={styles.separator} role="separator" />
