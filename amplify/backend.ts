@@ -33,6 +33,7 @@ import { preAuth } from './functions/preAuth/resource';
 import { discordOidcBridge } from './functions/discordOidcBridge/resource';
 import { userMutations } from './functions/userMutations/resource';
 import { messageMutations } from './functions/messageMutations/resource';
+import { sdrMutations } from './functions/sdrMutations/resource';
 import { recordingMutations } from './functions/recordingMutations/resource';
 import { promptTemplateMutations } from './functions/promptTemplateMutations/resource';
 import { commentMutations } from './functions/commentMutations/resource';
@@ -82,6 +83,7 @@ const backend = defineBackend({
   discordOidcBridge,
   userMutations,
   messageMutations,
+  sdrMutations,
   recordingMutations,
   promptTemplateMutations,
   commentMutations,

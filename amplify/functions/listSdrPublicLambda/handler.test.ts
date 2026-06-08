@@ -3,6 +3,7 @@ import type { AppSyncResolverEvent, Context } from 'aws-lambda';
 import {
   handler,
   blurForPublic,
+  isPubliclyVisible,
   __setDeps,
   __resetDeps,
   type ListSdrPublicDeps,
@@ -10,13 +11,14 @@ import {
 } from './handler';
 
 /**
- * Tests for the `listSdrPublic` Lambda (#286).
+ * Tests for the `listSdrPublic` Lambda (#286, updated #785).
  *
  * Covers:
  *   - filtering soft-deleted rows (every caller),
- *   - publicVisible filter for non-admin callers,
+ *   - OWNED publicVisible filter for non-admin callers (legacy behavior),
+ *   - PUBLIC reviewStatus=APPROVED filter for non-admin callers (#785),
  *   - lat/lon blur math per granularity (EXACT/CITY/REGION/unset),
- *   - admin-bypass returns raw rows,
+ *   - admin-bypass returns raw rows (including PENDING/REJECTED public SDRs),
  *   - guest caller treated as non-admin,
  *   - degenerate inputs (non-finite, missing) handled defensively.
  */
@@ -293,5 +295,64 @@ describe('listSdrPublic Lambda (#286)', () => {
     const event = makeEvent({ sub: 'user-only', groups: null });
     const result = (await handler(event, {} as Context, () => undefined)) as SdrRow[];
     expect(result[0]?.latitude).toBe(37.8);
+  });
+});
+
+describe('isPubliclyVisible — #785 OWNED vs PUBLIC visibility rules', () => {
+  it('OWNED row with publicVisible=true is visible', () => {
+    expect(isPubliclyVisible({ id: 's1', kind: 'OWNED', publicVisible: true })).toBe(true);
+  });
+
+  it('OWNED row with publicVisible=false is not visible', () => {
+    expect(isPubliclyVisible({ id: 's2', kind: 'OWNED', publicVisible: false })).toBe(false);
+  });
+
+  it('PUBLIC row with reviewStatus=APPROVED is visible', () => {
+    expect(
+      isPubliclyVisible({ id: 's3', kind: 'PUBLIC', reviewStatus: 'APPROVED', publicVisible: false }),
+    ).toBe(true);
+  });
+
+  it('PUBLIC row with reviewStatus=PENDING is not visible', () => {
+    expect(
+      isPubliclyVisible({ id: 's4', kind: 'PUBLIC', reviewStatus: 'PENDING', publicVisible: true }),
+    ).toBe(false);
+  });
+
+  it('PUBLIC row with reviewStatus=REJECTED is not visible', () => {
+    expect(
+      isPubliclyVisible({ id: 's5', kind: 'PUBLIC', reviewStatus: 'REJECTED' }),
+    ).toBe(false);
+  });
+
+  it('legacy row without kind (pre-#785) treated as OWNED — respects publicVisible', () => {
+    expect(isPubliclyVisible({ id: 's6', publicVisible: true })).toBe(true);
+    expect(isPubliclyVisible({ id: 's7', publicVisible: false })).toBe(false);
+  });
+
+  it('PUBLIC APPROVED SDRs appear in public map listing', async () => {
+    __setDeps(
+      makeStubs([
+        { id: 'approved', kind: 'PUBLIC', reviewStatus: 'APPROVED', locationGranularity: 'EXACT', latitude: 1.0, longitude: 2.0 },
+        { id: 'pending', kind: 'PUBLIC', reviewStatus: 'PENDING', locationGranularity: 'EXACT', latitude: 3.0, longitude: 4.0 },
+        { id: 'rejected', kind: 'PUBLIC', reviewStatus: 'REJECTED', locationGranularity: 'EXACT', latitude: 5.0, longitude: 6.0 },
+      ]),
+    );
+    const event = makeEvent();
+    const result = (await handler(event, {} as Context, () => undefined)) as SdrRow[];
+    expect(result.map((r) => r.id)).toEqual(['approved']);
+  });
+
+  it('admin sees all PUBLIC SDRs regardless of reviewStatus', async () => {
+    __setDeps(
+      makeStubs([
+        { id: 'approved', kind: 'PUBLIC', reviewStatus: 'APPROVED', locationGranularity: 'EXACT' },
+        { id: 'pending', kind: 'PUBLIC', reviewStatus: 'PENDING', locationGranularity: 'EXACT' },
+        { id: 'rejected', kind: 'PUBLIC', reviewStatus: 'REJECTED', locationGranularity: 'EXACT' },
+      ]),
+    );
+    const event = makeEvent({ sub: 'admin-1', groups: ['admin'] });
+    const result = (await handler(event, {} as Context, () => undefined)) as SdrRow[];
+    expect(result.map((r) => r.id).sort()).toEqual(['approved', 'pending', 'rejected']);
   });
 });

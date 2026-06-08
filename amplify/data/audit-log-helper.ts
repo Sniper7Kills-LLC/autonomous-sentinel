@@ -59,6 +59,10 @@ export const AUDIT_ACTIONS = [
   'USER_CLAIM',
   'USER_CLAIM_FANOUT',
   'SDR_PII_BLANK',
+  // #785 — member submitted a PUBLIC SDR for admin review
+  'SDR_SUBMIT_PUBLIC',
+  // #785 — admin approved or rejected a PUBLIC SDR submission
+  'SDR_REVIEW',
   'FIELDVOTE_ORPHAN_SWEEP',
   'TRANSMITTER_CREATE',
   'TRANSMITTER_UPDATE',

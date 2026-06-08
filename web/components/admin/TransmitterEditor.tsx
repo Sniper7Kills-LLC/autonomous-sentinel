@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { Button } from '@/components/ui/Button';
 import {
   listTransmitters,
@@ -15,6 +16,13 @@ import {
   type TransmitterFieldErrors,
 } from '@/lib/admin/transmitters';
 import styles from './TransmitterEditor.module.css';
+
+// LocationPicker uses maplibre-gl (browser + WebGL only) — dynamic import required
+// for the static-export Next.js build (output:'export') and SSR safety.
+const LocationPicker = dynamic(
+  () => import('@/components/map/LocationPicker').then((m) => m.LocationPicker),
+  { ssr: false, loading: () => <div className={styles.mapPlaceholder}>Loading map…</div> },
+);
 
 /**
  * Admin transmitter editor (#108).
@@ -184,42 +192,54 @@ export function TransmitterEditor() {
               />
             </div>
 
-            <div className={styles.field}>
-              <label className={styles.label} htmlFor="tx-lat">
-                Latitude *
-              </label>
-              <input
-                id="tx-lat"
-                className={styles.input}
-                inputMode="decimal"
-                value={form.latitude}
-                onChange={(e) => setField('latitude', e.target.value)}
-                aria-invalid={fieldErrors.latitude ? true : undefined}
+            <div className={styles.field} style={{ gridColumn: '1 / -1' }}>
+              <span className={styles.label}>Location * (click or drag the marker)</span>
+              <LocationPicker
+                latitude={form.latitude ? parseFloat(form.latitude) : null}
+                longitude={form.longitude ? parseFloat(form.longitude) : null}
+                onChange={(lat, lng) => {
+                  setField('latitude', String(lat));
+                  setField('longitude', String(lng));
+                }}
               />
-              {fieldErrors.latitude && (
-                <span className={styles.fieldError} role="alert">
-                  {fieldErrors.latitude}
-                </span>
-              )}
-            </div>
-
-            <div className={styles.field}>
-              <label className={styles.label} htmlFor="tx-lon">
-                Longitude *
-              </label>
-              <input
-                id="tx-lon"
-                className={styles.input}
-                inputMode="decimal"
-                value={form.longitude}
-                onChange={(e) => setField('longitude', e.target.value)}
-                aria-invalid={fieldErrors.longitude ? true : undefined}
-              />
-              {fieldErrors.longitude && (
-                <span className={styles.fieldError} role="alert">
-                  {fieldErrors.longitude}
-                </span>
-              )}
+              <div className={styles.coordFallbacks}>
+                <div className={styles.field}>
+                  <label className={styles.label} htmlFor="tx-lat">
+                    Latitude *
+                  </label>
+                  <input
+                    id="tx-lat"
+                    className={styles.input}
+                    inputMode="decimal"
+                    value={form.latitude}
+                    onChange={(e) => setField('latitude', e.target.value)}
+                    aria-invalid={fieldErrors.latitude ? true : undefined}
+                  />
+                  {fieldErrors.latitude && (
+                    <span className={styles.fieldError} role="alert">
+                      {fieldErrors.latitude}
+                    </span>
+                  )}
+                </div>
+                <div className={styles.field}>
+                  <label className={styles.label} htmlFor="tx-lon">
+                    Longitude *
+                  </label>
+                  <input
+                    id="tx-lon"
+                    className={styles.input}
+                    inputMode="decimal"
+                    value={form.longitude}
+                    onChange={(e) => setField('longitude', e.target.value)}
+                    aria-invalid={fieldErrors.longitude ? true : undefined}
+                  />
+                  {fieldErrors.longitude && (
+                    <span className={styles.fieldError} role="alert">
+                      {fieldErrors.longitude}
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
 
             <div className={styles.field}>
@@ -254,9 +274,6 @@ export function TransmitterEditor() {
               onChange={(e) => setField('notes', e.target.value)}
             />
           </div>
-
-          {/* #83: lat/lon map preview + click-to-set picker deferred to the
-              propagation-map work (owns the maplibre-gl dependency). */}
 
           <div className={styles.formActions}>
             <Button type="submit" loading={saving}>
@@ -353,10 +370,6 @@ export function TransmitterEditor() {
         </p>
       )}
 
-      <p className={styles.deferNote}>
-        Map preview + click-to-set lat/lon picker are deferred to #83 (propagation map). Coordinates
-        are entered numerically here.
-      </p>
     </section>
   );
 }

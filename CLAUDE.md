@@ -160,9 +160,14 @@ Live updates pushed via AppSync subscription to all connected clients
 - **Recording** — audio file. UUID PK. **One Message → 0..N Recordings** (multiple SDRs catch the same broadcast; legacy + recording-less submissions land with zero). Hash-deduplicated: identical content_hash rejected on upload (logged for review as possible malicious actor). Has `frequency_khz` (int), `modulation` (USB/LSB/AM/FM enum), `broadcasted_at`, `automated`, `sdr_id`, `transcription_failed` flag, soft-delete flag.
 - **Revision** — append-only change log on Messages and Transcripts. Tracks actor + diff + timestamp. Visible to users.
 - **AuditLog** — every admin/mod action with diff. Visible where appropriate. Retained forever.
-- **SDR** — registered radio. Owned by a User. Has `name`, `location` (lat/lon, user-chosen via map selector with user-selectable granularity), `transmitter_id` (optional, admin-assigned).
-- **Transmitter** — admin-managed, **publicly visible** on propagation map. Pre-populated at launch by researching public sources (HFGCS Wikipedia, reference sites) and seeding initial JSON for owner review before commit.
-- **SDR public visibility** — per-SDR owner toggle: public (shown on propagation map at owner's chosen granularity) vs admins-only.
+- **SDR** — registered radio. Two kinds (decided #785):
+  - **OWNED** — a receiver a member operates and feeds the site from. Member owns the row. `publicVisible` toggle (owner-chosen) controls map visibility; no admin review required.
+  - **PUBLIC** — a third-party public receiver (KiwiSDR / WebSDR / U.Twente) that a member submits (with its stream URL). Lands with `reviewStatus=PENDING`; only `APPROVED` rows appear on the propagation map. Admin review required before public visibility.
+  - Common fields: `name`, `location` (lat/lon, user-chosen via map selector with user-selectable granularity), `transmitter_id` (optional, admin-assigned), `kind`, `url` (PUBLIC only), `reviewStatus` / `reviewedBy` / `reviewedAt` / `reviewNote` (PUBLIC workflow), `submitterId` (PUBLIC submissions).
+- **Transmitter** — admin-managed, **publicly visible** on propagation map. Pre-populated at launch by researching public sources (HFGCS Wikipedia, reference sites) and seeding initial JSON for owner review before commit. Lat/lon set via MapLibre LocationPicker in the admin editor (#785).
+- **SDR public visibility** — two rules (supersedes the old owner-toggle-only rule, decided #785):
+  - OWNED SDRs: visible on the map when `publicVisible=true` (owner's toggle).
+  - PUBLIC SDRs: visible on the map only when `reviewStatus=APPROVED` (admin review required).
 - **User** — Cognito-backed account. Roles: `admin`, `moderator`, `member`. Public profile page per user with submission stats. Profile fields blankable on self-deletion (account + data + audit retained). Reputation score tracks validated submissions (drives vote weight).
 - **Vote** — community validation primitive. Two surfaces:
   - **Per-field on the parsed Message** (sender / receiver / body / type each have their own vote tally).

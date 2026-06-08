@@ -4,25 +4,24 @@ import { unmarshall } from '@aws-sdk/util-dynamodb';
 import { getDdbClient } from '../legacyClaimWorker/fan-out-production';
 
 /**
- * `listSdrPublic` Lambda (#286) — PII-aware Sdr listing.
+ * `listSdrPublic` Lambda (#286, updated #785) — PII-aware Sdr listing.
  *
  * Behaviour:
  *   - Reads every Sdr row via paginated Scan.
  *   - Drops soft-deleted rows (`deletedAt` set) for every caller.
  *   - Admin callers (Cognito group `admin`) get the rest unmodified
  *     so the admin propagation-map view can pin exact locations.
- *   - Non-admin + guest callers see only `publicVisible=true` rows
+ *   - Non-admin + guest callers see:
+ *       * OWNED rows where `publicVisible=true` (owner toggle)
+ *       * PUBLIC rows where `reviewStatus=APPROVED` (admin-approved)
  *     with lat/lon blurred per the owner's `locationGranularity`:
  *       * `EXACT` → no blur (owner opted into full disclosure).
  *       * `CITY` → round to 1 decimal place (~11 km).
  *       * `REGION` → round to 0 decimal places (~111 km).
  *       * unset / unknown → drop lat/lon (fail closed).
  *
- * The granularity mapping treats the `locationGranularity` enum as
- * the owner's disclosure preference, not a "blur one notch further"
- * downgrade — i.e. picking EXACT means "fine, show my real lat/lon."
- * Reviewer may want to invert this to always blur one notch; PR body
- * calls it out so the call is reviewable.
+ * Legacy rows without `kind` set are treated as OWNED for backward
+ * compatibility (they predate the OWNED/PUBLIC split from #785).
  *
  * Why Scan rather than a GSI Query: `publicVisible` is a boolean
  * (two partitions — a degenerate GSI). Sdr row count is bounded by
@@ -48,6 +47,11 @@ export type SdrRow = {
   transmitterId?: string | null;
   ownerId?: string | null;
   deletedAt?: string | null;
+  // #785 — kind + reviewStatus drive map visibility for PUBLIC SDRs
+  kind?: 'OWNED' | 'PUBLIC' | null;
+  reviewStatus?: 'PENDING' | 'APPROVED' | 'REJECTED' | null;
+  submitterId?: string | null;
+  url?: string | null;
   [k: string]: unknown;
 };
 
@@ -155,6 +159,24 @@ export function blurForPublic(row: SdrRow): SdrRow {
   return out;
 }
 
+/**
+ * Determine whether a non-admin caller should see this SDR on the public map (#785).
+ *
+ * OWNED rows: visible when `publicVisible=true` (owner toggle, legacy behavior).
+ * PUBLIC rows: visible only when `reviewStatus=APPROVED` (admin-reviewed).
+ * Rows without `kind` (legacy rows predating #785): treated as OWNED.
+ */
+export function isPubliclyVisible(row: SdrRow): boolean {
+  const kind = row.kind;
+  if (!kind || kind === 'OWNED') {
+    return row.publicVisible === true;
+  }
+  if (kind === 'PUBLIC') {
+    return row.reviewStatus === 'APPROVED';
+  }
+  return false;
+}
+
 export const handler: AppSyncResolverHandler<Record<string, never>, SdrRow[]> = async (
   event,
   _context,
@@ -168,5 +190,5 @@ export const handler: AppSyncResolverHandler<Record<string, never>, SdrRow[]> = 
     return live;
   }
 
-  return live.filter((r) => r.publicVisible === true).map(blurForPublic);
+  return live.filter(isPubliclyVisible).map(blurForPublic);
 };

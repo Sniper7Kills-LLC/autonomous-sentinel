@@ -430,8 +430,9 @@ describe('audit helper — every action enum value works', () => {
     // + #107 (DLQ_REQUEUE + DLQ_DROP) → 29.
     // + #736 (USER_PROFILE_UPDATE) → 30.
     // + #776 (CALLSIGN_SUGGEST) → 31.
-    expect(AUDIT_ACTIONS).toHaveLength(31);
-    expect(new Set(AUDIT_ACTIONS).size).toBe(31);
+    // + #785 (SDR_SUBMIT_PUBLIC + SDR_REVIEW) → 33.
+    expect(AUDIT_ACTIONS).toHaveLength(33);
+    expect(new Set(AUDIT_ACTIONS).size).toBe(33);
   });
 
   it('exports every value defined on the AuditLog.action enum', () => {
@@ -458,6 +459,8 @@ describe('audit helper — every action enum value works', () => {
         'USER_CLAIM',
         'USER_CLAIM_FANOUT',
         'SDR_PII_BLANK',
+        'SDR_SUBMIT_PUBLIC',
+        'SDR_REVIEW',
         'FIELDVOTE_ORPHAN_SWEEP',
         'TRANSMITTER_CREATE',
         'TRANSMITTER_UPDATE',
