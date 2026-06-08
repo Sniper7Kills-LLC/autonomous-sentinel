@@ -1,0 +1,111 @@
+.page {
+  display: grid;
+  gap: var(--sp-6);
+}
+
+.group {
+  display: grid;
+  gap: var(--sp-3);
+}
+
+.groupHead {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-fg-faint);
+}
+
+.groupHead::before {
+  content: '//';
+  color: var(--color-accent);
+}
+
+.groupHead::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: var(--sp-3);
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-4);
+  min-height: 6.5rem;
+  background: var(--surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  color: inherit;
+  transition:
+    border-color 120ms ease,
+    transform 120ms ease,
+    background 120ms ease;
+}
+
+.card:hover {
+  border-color: var(--color-accent);
+  background: var(--surface-2);
+  transform: translateY(-1px);
+}
+
+.card:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+.cardTitle {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-1);
+}
+
+.cardDesc {
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--text-2);
+  flex: 1;
+}
+
+.arrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+/* Not-yet-built tools: visible but inert. */
+.soon {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.soon:hover {
+  border-color: var(--color-border);
+  background: var(--surface-1);
+  transform: none;
+}
+
+.soonTag {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-fg-faint);
+}
