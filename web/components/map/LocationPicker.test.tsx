@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { LocationPicker } from './LocationPicker';
 
 /**
@@ -15,13 +15,13 @@ import { LocationPicker } from './LocationPicker';
 
 // jsdom has no WebGL — stub maplibre with a minimal fake
 let clickHandler: ((e: { lngLat: { lat: number; lng: number } }) => void) | null = null;
-let dragEndHandler: (() => void) | null = null;
+let _dragEndHandler: (() => void) | null = null;
 let markerLngLat: [number, number] | null = null;
-let markerAddedToMap = false;
+let _markerAddedToMap = false;
 
 const fakeDragEndTarget = {
   on: (event: string, fn: () => void) => {
-    if (event === 'dragend') dragEndHandler = fn;
+    if (event === 'dragend') _dragEndHandler = fn;
     return fakeDragEndTarget;
   },
   getLngLat: () => ({ lat: markerLngLat?.[1] ?? 0, lng: markerLngLat?.[0] ?? 0 }),
@@ -30,7 +30,7 @@ const fakeDragEndTarget = {
     return fakeDragEndTarget;
   },
   addTo: () => {
-    markerAddedToMap = true;
+    _markerAddedToMap = true;
     return fakeDragEndTarget;
   },
   remove: () => fakeDragEndTarget,
@@ -54,10 +54,10 @@ vi.mock('maplibre-gl', () => {
     constructor(_opts: { draggable?: boolean; color?: string } = {}) {
       this.draggable = _opts.draggable ?? false;
       markerLngLat = null;
-      markerAddedToMap = false;
+      _markerAddedToMap = false;
     }
     on(event: string, fn: () => void) {
-      if (event === 'dragend') dragEndHandler = fn;
+      if (event === 'dragend') _dragEndHandler = fn;
       return this;
     }
     getLngLat() {
@@ -68,7 +68,7 @@ vi.mock('maplibre-gl', () => {
       return this;
     }
     addTo() {
-      markerAddedToMap = true;
+      _markerAddedToMap = true;
       return this;
     }
     remove() {}
@@ -87,9 +87,9 @@ vi.mock('maplibre-gl', () => {
 describe('LocationPicker component (#785)', () => {
   beforeEach(() => {
     clickHandler = null;
-    dragEndHandler = null;
+    _dragEndHandler = null;
     markerLngLat = null;
-    markerAddedToMap = false;
+    _markerAddedToMap = false;
   });
 
   it('renders without crashing with no initial coords', () => {
@@ -156,15 +156,10 @@ describe('LocationPicker component (#785)', () => {
     );
   });
 
-  it('accepts an optional label prop', async () => {
+  it('accepts an optional label prop', () => {
     const onChange = vi.fn();
     render(
-      <LocationPicker
-        latitude={null}
-        longitude={null}
-        onChange={onChange}
-        label="SDR Location"
-      />,
+      <LocationPicker latitude={null} longitude={null} onChange={onChange} label="SDR Location" />,
     );
     expect(screen.getByText('SDR Location')).toBeInTheDocument();
   });

@@ -72,8 +72,10 @@ export function LocationPicker({ latitude, longitude, onChange, label }: Locatio
         if (disposed || !hostRef.current) return;
 
         const initialCenter: [number, number] =
-          latitude !== null && longitude !== null &&
-          latitude !== undefined && longitude !== undefined
+          latitude !== null &&
+          longitude !== null &&
+          latitude !== undefined &&
+          longitude !== undefined
             ? [longitude, latitude]
             : DEFAULT_CENTER;
 
@@ -94,8 +96,10 @@ export function LocationPicker({ latitude, longitude, onChange, label }: Locatio
           },
           center: initialCenter,
           zoom:
-            latitude !== null && longitude !== null &&
-            latitude !== undefined && longitude !== undefined
+            latitude !== null &&
+            longitude !== null &&
+            latitude !== undefined &&
+            longitude !== undefined
               ? 8
               : DEFAULT_ZOOM,
         });
@@ -106,8 +110,10 @@ export function LocationPicker({ latitude, longitude, onChange, label }: Locatio
         const marker = new maplibre.Marker({ draggable: true, color: '#21c0c0' });
 
         if (
-          latitude !== null && longitude !== null &&
-          latitude !== undefined && longitude !== undefined
+          latitude !== null &&
+          longitude !== null &&
+          latitude !== undefined &&
+          longitude !== undefined
         ) {
           marker.setLngLat([longitude, latitude]).addTo(map);
           markerAddedRef.current = true;
@@ -164,13 +170,21 @@ export function LocationPicker({ latitude, longitude, onChange, label }: Locatio
         mapRef.current = null;
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Map init runs once on mount; latitude/longitude/onChange are synced by
+    // the separate effect below, so re-running here (which would re-create the
+    // map) is intentionally avoided.
+    // eslint-disable-next-line @eslint-react/exhaustive-deps, react-hooks/exhaustive-deps
   }, [mounted]);
 
   // Sync external prop changes into the marker (e.g. form reset)
   useEffect(() => {
     if (!mapRef.current || !markerRef.current) return;
-    if (latitude === null || longitude === null || latitude === undefined || longitude === undefined)
+    if (
+      latitude === null ||
+      longitude === null ||
+      latitude === undefined ||
+      longitude === undefined
+    )
       return;
     const lat = roundCoord(latitude);
     const lng = roundCoord(longitude);

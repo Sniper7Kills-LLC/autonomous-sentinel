@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SdrSettingsPanel } from './SdrSettingsPanel';
 import type { SdrRow } from '@/lib/sdr';
+import type * as SdrModule from '@/lib/sdr';
 
 vi.mock('@/components/auth/AuthProvider', () => ({
   useAuth: () => ({ sub: 'cog-member-001', loading: false }),
@@ -14,11 +15,11 @@ vi.mock('@/components/auth/AuthProvider', () => ({
  */
 
 const mockListMySdrs = vi.fn<() => Promise<SdrRow[]>>();
-const mockCreateOwnedSdr = vi.fn();
-const mockSubmitPublicSdr = vi.fn();
+const mockCreateOwnedSdr = vi.fn<(...args: unknown[]) => Promise<unknown>>();
+const mockSubmitPublicSdr = vi.fn<(...args: unknown[]) => Promise<unknown>>();
 
 vi.mock('@/lib/sdr', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/sdr')>('@/lib/sdr');
+  const actual = await vi.importActual<typeof SdrModule>('@/lib/sdr');
   return {
     ...actual,
     listMySdrs: () => mockListMySdrs(),
@@ -29,7 +30,13 @@ vi.mock('@/lib/sdr', async () => {
 
 // Stub LocationPicker (no WebGL in jsdom)
 vi.mock('@/components/map/LocationPicker', () => ({
-  LocationPicker: ({ onChange, label }: { onChange: (lat: number, lng: number) => void; label?: string }) => (
+  LocationPicker: ({
+    onChange,
+    label,
+  }: {
+    onChange: (lat: number, lng: number) => void;
+    label?: string;
+  }) => (
     <div>
       <span>{label}</span>
       <button onClick={() => onChange(51.5074, -0.1278)}>Set location</button>
@@ -41,7 +48,13 @@ vi.mock('@/components/map/LocationPicker', () => ({
 vi.mock('next/dynamic', () => ({
   default: (fn: () => Promise<{ LocationPicker: unknown }>) => {
     // Return a synchronous component that just calls the stub
-    const Component = ({ onChange, label }: { onChange: (lat: number, lng: number) => void; label?: string }) => (
+    const Component = ({
+      onChange,
+      label,
+    }: {
+      onChange: (lat: number, lng: number) => void;
+      label?: string;
+    }) => (
       <div>
         <span>{label ?? ''}</span>
         <button onClick={() => onChange(51.5074, -0.1278)}>Set location</button>
@@ -101,7 +114,7 @@ describe('SdrSettingsPanel', () => {
     mockListMySdrs.mockResolvedValue([]);
   });
 
-  it('renders the three tabs', async () => {
+  it('renders the three tabs', () => {
     render(<SdrSettingsPanel />);
     expect(screen.getByRole('tab', { name: /My SDRs/ })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /Register Owned SDR/ })).toBeInTheDocument();

@@ -2,16 +2,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SdrReviewQueue } from './SdrReviewQueue';
 import type { SdrRow } from '@/lib/sdr';
+import type * as SdrModule from '@/lib/sdr';
 
 /**
  * Tests for SdrReviewQueue admin component (#785).
  */
 
 const mockListPending = vi.fn<() => Promise<SdrRow[]>>();
-const mockReviewSdr = vi.fn();
+const mockReviewSdr = vi.fn<(...args: unknown[]) => Promise<unknown>>();
 
 vi.mock('@/lib/sdr', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/sdr')>('@/lib/sdr');
+  const actual = await vi.importActual<typeof SdrModule>('@/lib/sdr');
   return {
     ...actual,
     listPendingPublicSdrs: () => mockListPending(),
