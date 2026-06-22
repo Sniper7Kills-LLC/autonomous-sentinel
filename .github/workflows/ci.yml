@@ -19,7 +19,7 @@ jobs:
       client: ${{ steps.filter.outputs.client }}
       root: ${{ steps.filter.outputs.root }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
         id: filter
         with:
@@ -47,7 +47,7 @@ jobs:
     if: needs.detect-changes.outputs.root == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version-file: '.nvmrc'
@@ -62,7 +62,7 @@ jobs:
       needs.detect-changes.outputs.root == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version-file: '.nvmrc'
@@ -94,7 +94,7 @@ jobs:
       needs.detect-changes.outputs.root == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version-file: '.nvmrc'
@@ -118,7 +118,7 @@ jobs:
       needs.detect-changes.outputs.root == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version-file: '.nvmrc'
